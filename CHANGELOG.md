@@ -186,3 +186,17 @@ This document does not change any Volume's version number — it's a build-seque
 **Expected impact:** None beyond the volumes themselves. All five volumes plus the roadmap are now internally consistent with their own version headers. This closes out the full v2.0 rollout — no further known header/body drift remains as of this entry. Corrected files need to replace what's already committed to the repo.
 
 **Process note:** Two rounds of this pattern (v2.0.1, v2.0.2) is a signal worth naming plainly: batch header-only updates across multiple volumes create exactly this risk. Going forward, a version bump to any volume should be treated as incomplete until the body is verified against the header's claims in the same pass — not assumed correct because the header was updated with good intentions.
+
+---
+
+## CLAUDE.md — 2026-08-05 — Addendum (not a volume, no version bump)
+
+**Document affected:** `CLAUDE.md` (project instructions, repo root)
+
+**Reason:** Mac asked how Claude Code would actually connect to Railway and how OpenAI/Anthropic API keys would get provided — a real operational gap in CLAUDE.md, which had no guidance on credential or connection handling before this point.
+
+**Decision:** Added a "Credentials & Connections" section distinguishing two categories: (1) OAuth-based platform connections (Railway, GitHub, Supabase) — one-time authorize click, persists after that; (2) API keys (OpenAI, Anthropic, sports/data providers, Twilio) — Mac must generate these himself on each provider's site, Claude Code cannot obtain them, and once provided they're set as Railway environment variables per Volume 2 §9, never hardcoded or echoed back in full after being set. Core rule: never assume a credential or connection exists — ask explicitly before a phase that needs one, rather than discovering the gap mid-build.
+
+**Alternatives considered:** Leaving this undocumented and handling it ad hoc when each phase hit the need — rejected, since this is exactly the kind of gap that's cheap to close now and expensive to discover mid-Phase-4 when the AI Orchestrator needs both model API keys at once.
+
+**Expected impact:** No architectural change to any volume. Applies going forward starting with Phase 0 (Railway authorization) and becomes directly relevant again in Phase 4 (OpenAI/Anthropic keys) and Phase 7 (Twilio credentials).

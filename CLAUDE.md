@@ -83,7 +83,20 @@ Every phase in the roadmap has explicit testing requirements — treat them as p
 
 ---
 
-## Working Style
+## Credentials & Connections
+
+Two different things happen here, and they're not interchangeable — never treat one as covering the other.
+
+**Platform connections (Railway, GitHub, Supabase):** These use OAuth — a one-time authorization click. When a phase first needs one (Railway in Phase 0, Supabase in Phase 1), stop and explicitly prompt Mac to authorize it rather than assuming a connection exists or silently trying to proceed without one. Once authorized, it persists — don't re-ask for the same connection in a later session unless it actually fails.
+
+**API keys (OpenAI, Anthropic, any sports/odds data provider, Twilio):** These are not something you can obtain or generate. Mac has to create the account and generate the key himself on each provider's own site, outside of this session entirely. Your job is to:
+1. Tell him clearly which key is needed, when it's actually needed (not preemptively — e.g., don't ask for Twilio credentials during Phase 1), and where to get it (which provider's dashboard).
+2. Once he provides it, set it as a Railway environment variable (Volume 2 §9's secrets management) — never hardcode it, never commit it to the repo, and don't echo the full key value back in conversation once it's been set.
+3. If a key is missing when a phase needs it, that phase is blocked — say so plainly and name exactly which key is missing, rather than building around it with a placeholder that could accidentally ship.
+
+**Never assume a credential exists.** If a task needs Railway access, a specific API key, or any other external connection and you're not certain it's already set up, ask before proceeding — this is the same "stop and flag rather than silently improvise" principle as the blueprint-vs-reality section above, just applied to credentials instead of architecture.
+
+---
 
 - Build complete, working code — not scaffolding with TODOs unless a task is explicitly phased for later.
 - Match the stack decisions already locked in Volume 2 (FastAPI/Python backend, Next.js/React frontend, Supabase/PostgreSQL, Railway deployment) — don't introduce a different framework or pattern without flagging it as a blueprint deviation per the section above.
