@@ -1,0 +1,425 @@
+# The Playbook — Engineering Roadmap & Build Order
+
+**Version:** v2.0
+**Last updated:** 2026-08-05
+**Type:** Companion document — not a Volume. Volumes 1–5 describe *what* the system is. This document describes *the order in which to build it* and *how to know each piece is actually done* before moving to the next.
+**v2.0 note:** Amended per external architecture review, which arrived before any phase began building — no phase needed to be reopened, but Phases 1, 4, 5, and 6 gained new scope. See `v2.0-amendments-architecture-review.md` §7 for the full impact summary.
+**Depends on:** All five volumes. Every phase below cites the specific volume/section it implements.
+**Rule for using this document:** No phase starts before the prior phase's acceptance criteria are met. This isn't bureaucracy for its own sake — Phase 5 (Recommendation Pipeline) will silently produce wrong or unreproducible output if Phase 1 (Database Foundation) has a schema gap, and that kind of bug is far more expensive to find in Phase 9 than in Phase 1.
+
+---
+
+## How to Read This Document
+
+Each phase has five parts:
+- **Milestones** — the 2–4 major checkpoints inside the phase
+- **Key Tasks** — concrete build items
+- **Dependencies** — what must already be true before this phase can start
+- **Acceptance Criteria** — the specific, checkable conditions that mean this phase is actually done, not just "mostly working"
+- **Testing Requirements** — what must be tested, and how, before moving on
+
+---
+
+## Phase Dependency Overview
+
+```
+Phase 0 (Repo/CI/CD)
+   │
+Phase 1 (Database Foundation)
+   │
+Phase 2 (Authentication)
+   │
+Phase 3 (Sports Intelligence Layer) ──┐
+   │                                    │
+Phase 4 (AI Orchestrator) ─────────────┤
+   │                                    │
+Phase 5 (Recommendation Pipeline) ◄────┘
+   │
+Phase 6 (Dashboard / Core Frontend)
+   │
+   ├── Phase 7 (Twilio) ──────┐
+   ├── Phase 8 (OCR) ─────────┤  (7, 8, 9 can run in parallel once Phase 6 is stable)
+   └── Phase 9 (Analytics) ───┘
+   │
+Phase 10 (Beta)
+   │
+Phase 11 (Production Launch)
+```
+
+Phases 7, 8, and 9 are the first genuine parallelization point — everything before Phase 6 is strictly sequential because each layer is load-bearing for the next.
+
+---
+
+## Phase 0 — Repository, Environments, CI/CD
+
+**Implements:** Volume 2 §5 (Railway environments), §9 (CI/CD, secrets, observability)
+
+**Milestones:**
+1. Monorepo or multi-repo structure decided and initialized
+2. Three Railway environments (`dev`, `staging`, `production`) provisioned
+3. CI/CD pipeline running on every push, deploying to `dev` automatically
+
+**Key Tasks:**
+- Initialize repo(s): API Gateway, AI Orchestrator, Sports Intel Layer, Workers, Frontend (decide monorepo vs. separate repos before Phase 1 — this is expensive to change later)
+- Set up GitHub Actions workflows matching Volume 2 §9's branch-to-environment mapping
+- Provision Railway projects for all three environments with the four-service shape from Volume 2 §5
+- Set up Sentry (or equivalent) error tracking, wired to all services from day one, even before there's meaningful traffic
+- Establish secrets management convention (Railway env vars, never committed) and document the rotation schedule for API keys
+
+**Dependencies:** None — this is the starting phase.
+
+**Acceptance Criteria:**
+- A trivial code change pushed to the `dev` branch deploys automatically and is visible in the `dev` environment within the CI/CD pipeline's expected time
+- All three environments exist and are network-isolated from each other per Volume 2 §5
+- Error tracking captures and reports a deliberately-triggered test error in each service
+
+**Testing Requirements:**
+- CI pipeline itself is tested: a failing test must block deployment (verify this by intentionally committing a failing test and confirming it doesn't reach `dev`)
+- Rollback tested once, manually, to confirm the one-click rollback path (Volume 2 §9) actually works before it's ever needed under pressure
+
+---
+
+## Phase 1 — Database Foundation
+
+**Implements:** Volume 3, full document
+
+**Milestones:**
+1. Core user/account tables live (§3)
+2. Sports data tables live (§4)
+3. AI intelligence tables live (§5)
+4. Performance attribution + postgame + config tables live (§6–§8)
+5. RLS policies and triggers applied to every table (§10–§11)
+
+**Key Tasks:**
+- Write migrations in the exact order Volume 3 presents tables (dependencies flow top to bottom in that document — `user_profiles` before `subscriptions`, `games` before `odds_snapshots`, etc.)
+- Apply RLS to every table as it's created, not as a batch at the end — this avoids a window where tables exist unprotected
+- Implement both triggers from Volume 3 §11, especially the append-only enforcement trigger on `recommendation_agent_outputs`
+- Set up the Supabase CLI migration workflow described in Volume 3 §12 (dev → staging → production promotion)
+
+**Dependencies:** Phase 0 complete (need environments to migrate into).
+
+**v2.0 addition:** also build `feature_flags`, `prompt_registry`, `model_registry`, `recommendation_costs`, and the expanded `audit_log` (all specified in `v2.0-amendments-architecture-review.md` §1). Add AI versioning columns and soft-delete columns to their respective tables. Use UUIDv7 for `odds_snapshots`, `recommendation_agent_outputs`, and `market_monitoring_events` specifically.
+
+**Acceptance Criteria:**
+- Every table from Volume 3 (including the v2.0 additions above) exists in `dev` with correct types, constraints, and foreign keys
+- RLS policies verified by attempting a cross-user read (e.g., User A querying User B's `user_profiles` row) and confirming it returns zero rows, not an error and not the data
+- The append-only trigger on `recommendation_agent_outputs` verified by attempting an `UPDATE` and confirming it raises the expected exception
+- A full migration replay from empty database to current state completes without manual intervention
+
+**Testing Requirements:**
+- Automated RLS test suite: for every table with a policy, a test that confirms both the "owner can access" and "non-owner cannot access" cases
+- Migration reversibility check on at least the additive migrations (Volume 3 §12's backward-compatible preference)
+- Seed script producing realistic fake data for every table, needed for Phase 3–5 development without depending on live provider data yet
+
+---
+
+## Phase 2 — Authentication
+
+**Implements:** Volume 2 §6 (JWT validation, internal service token), Volume 3 §3 (`user_profiles` linkage to `auth.users`)
+
+**Milestones:**
+1. Supabase Auth configured and issuing JWTs
+2. API Gateway validating JWTs on every protected route
+3. Internal service token implemented for service-to-service calls
+4. Onboarding data collection wired to `user_profiles` (jurisdiction gating live)
+
+**Key Tasks:**
+- Configure Supabase Auth (email/password at minimum; evaluate OAuth providers as a nice-to-have, not a blocker)
+- Implement JWT validation middleware in the API Gateway
+- Generate and securely store the internal service token; update Orchestrator/Workers to use it exclusively for internal calls, never a user JWT
+- Build the jurisdiction-state collection step and enforce the `not null` constraint's intent at the application layer too (clear error messaging, not just a database rejection)
+
+**Dependencies:** Phase 1 complete (tables must exist to link auth users to profiles).
+
+**Acceptance Criteria:**
+- A user can sign up, and a corresponding `user_profiles` row is created automatically (via trigger or application code — decide and document which)
+- An expired or tampered JWT is rejected by the Gateway with a proper 401, not a 500
+- A request using a user JWT against an internal-only endpoint is rejected; a request using the internal service token succeeds
+- Attempting to complete onboarding without a jurisdiction value is blocked with a clear message, not a silent failure
+
+**Testing Requirements:**
+- Auth flow tested end-to-end: signup → profile creation → login → authenticated request
+- Negative tests: expired token, malformed token, token for a deleted user
+- Internal token isolation explicitly tested (this is a security-critical boundary from Volume 2 §10, worth its own dedicated test)
+
+---
+
+## Phase 3 — Sports Intelligence Layer
+
+**Implements:** Volume 2 §8
+
+**Milestones:**
+1. First provider adapter (odds) built against the shared internal interface
+2. Additional adapters (injuries, weather, rosters, schedules) built
+3. Caching layer live with category-appropriate TTLs
+4. Normalized data flowing into `games` / `odds_snapshots` and supporting tables
+
+**Key Tasks:**
+- Define the shared internal adapter interface first, before writing any specific provider's adapter — this is the enforcement point for the "no other service imports a provider SDK directly" rule
+- Build odds adapter first (highest-priority data category), verify normalization into `odds_snapshots`
+- Build remaining adapters (injuries, weather, rosters, schedules), each against a documented fallback provider per Volume 2 §8
+- Implement caching per category with the TTLs specified in Volume 2 §8
+
+**Dependencies:** Phase 1 complete (target tables must exist).
+
+**Acceptance Criteria:**
+- Real (or sandboxed) provider data flows end-to-end into `games` and `odds_snapshots` with correct normalization
+- Switching a provider adapter's underlying implementation (tested with a mock swap) requires no changes outside the Sports Intelligence Layer itself — this is the actual test of whether the adapter pattern was implemented correctly, not just described correctly
+- Cache hit rate is measurable and matches expected TTL behavior per category
+
+**Testing Requirements:**
+- Adapter interface conformance tests — every adapter implements the full shared interface, verified automatically, not by code review alone
+- Simulated provider outage test: confirm the system degrades gracefully (uses cached data, doesn't crash downstream services) when a provider call fails
+- Load test against expected Sunday-slate polling volume before this phase is considered done, not deferred to Phase 10
+
+---
+
+## Phase 4 — AI Orchestrator
+
+**Implements:** Volume 4 §1–§6 (agent committee through adaptive weighting), Volume 2 §7
+
+**Milestones:**
+1. Shared agent output contract implemented (Volume 4 §2.1), including the v2.0 `evidence_classification` field
+2. All 21 fan-out agents plus the Meta Agent (22nd, post-consensus) built and returning structured output against real/sandboxed data
+3. Async fan-out execution working per the flow in Volume 4 §3.1
+4. Consensus Engine computing aggregate confidence and agreement variance, with the Meta Agent's confidence_adjustment applied afterward
+5. Model routing table live and driving actual model selection, informed by `model_registry` cost/latency data
+6. Agents load prompts from `prompt_registry` rather than hardcoded text
+
+**Key Tasks:**
+- Build the shared agent output contract and a test harness that validates any agent's output against it before wiring it into the real pipeline
+- Build agents in the four functional groups from Volume 4 §2, starting with Context & Data Agents since Matchup and Decision agents depend on their output
+- Implement the async fan-out orchestration flow, respecting the sequential dependency in steps 4–6 of Volume 4 §3.1 (Probability Modeling → EV → Risk/Bankroll)
+- Implement the Consensus Engine formula from Volume 4 §4.1, and the Elite second-pass trigger from §4.3
+- Populate `model_routing_rules` with the launch defaults from Volume 4 §3.2
+
+**Dependencies:** Phase 3 complete (agents need real normalized sports data to reason over) and Phase 1 (agent output tables must exist).
+
+**Acceptance Criteria:**
+- All 21 fan-out agents plus the Meta Agent produce output conforming to the shared contract against a real game snapshot
+- Meta Agent's `confidence_adjustment` is verified to only ever reduce aggregate confidence, never increase it, tested with a deliberate attempt to produce a positive adjustment
+- A full orchestration run completes and produces a correct `consensus_snapshots` row with plausible aggregate confidence
+- Disabling/zero-weighting a single agent measurably changes the aggregate confidence calculation in the expected direction — proof the weighting math is actually wired in, not decorative
+- The 0.55 "No Bet Today" floor from Volume 4 §4.2 correctly suppresses a recommendation in a deliberately low-confidence test scenario
+
+**Testing Requirements:**
+- Unit tests per agent against known input/output pairs (this is where the pre-launch backtesting data from Volume 4 §11 starts getting collected, even informally)
+- Consensus Engine math validated against hand-calculated expected values for at least a handful of constructed scenarios
+- Latency test on the full 21-agent fan-out — this is the flow the natural-language chat interface (Phase 6+) depends on feeling responsive, so a latency regression here should block the phase from closing
+
+---
+
+## Phase 5 — Recommendation Pipeline
+
+**Implements:** Volume 4 §7–§10 (NL Engine, Explainability Engine, Recommendation Strategy Engine, Continuous Learning loop), Volume 3 §5–§7
+
+**Milestones:**
+1. Recommendation Strategy Engine deciding output shape per Volume 4 §9's priority order
+2. Explainability Engine populating all nine question fields
+3. Time Machine snapshot writing correctly to `recommendation_snapshots`
+4. Postgame Review worker generating reviews on game completion
+5. Continuous Learning loop updating agent weights under guardrails
+
+**Key Tasks:**
+- Implement the Recommendation Strategy Engine's decision logic exactly per the priority order in Volume 4 §9 — this order matters and should be tested in that order, not just as independent cases
+- Wire the Explainability Engine's field-by-field sourcing from Volume 4 §8's table
+- Implement `recommendation_snapshots` writing as part of the same transaction/flow that creates a recommendation — this must never be a separate, best-effort step that can silently fail
+- Build the scheduled worker that triggers on `games.status = 'final'` and generates `postgame_reviews`
+- Implement the adaptive weighting algorithm from Volume 4 §6, with all three guardrails (sample size, max change, evaluation window) enforced in code, not just documented as intent
+- **v2.0 addition:** wire `RecommendationCreated`, `RecommendationUpdated`, and `RecommendationWithdrawn` events (Postgres LISTEN/NOTIFY, per `v2.0-amendments-architecture-review.md` §2) as part of the same transaction that writes `recommendation_snapshots` — not a best-effort afterthought
+
+**Dependencies:** Phase 4 complete (needs the full agent committee and consensus output to build a recommendation from) and Phase 2 (needs user profiles for Bankroll Coach personalization).
+
+**Acceptance Criteria:**
+- A recommendation created today can be fully reconstructed via `/v1/recommendations/{id}/snapshot` and matches what was actually shown to the user at creation time — this is the single most important acceptance test in the entire roadmap, since it's the Time Machine guarantee the whole product's trust claim depends on
+- Attempting to force a weight update below the minimum sample size is rejected by the guardrail, verified with a deliberate test case
+- A completed game correctly triggers a postgame review within the expected worker cycle time, with correct/underperforming agents populated
+
+**Testing Requirements:**
+- End-to-end reproducibility test: create a recommendation, wait, mutate the live `agents.current_weight` value directly, then confirm the snapshot reconstruction still shows the *original* weight, not the current one
+- Guardrail tests for all three weighting constraints, each with a case designed to violate it and confirm rejection
+- Full pipeline integration test: game snapshot in → recommendation out → postgame review generated → weight update attempted, all as one traced flow using the correlation ID from Volume 2 §9
+
+---
+
+## Phase 6 — Dashboard / Core Frontend
+
+**Implements:** Volume 5 §2–§6
+
+**Milestones:**
+1. Design tokens implemented and consumed by Tailwind config (Volume 5 §4)
+2. Core component library built (Recommendation Card, Game Card, Explainability Panel, etc.)
+3. Navigation/routing per Volume 5 §3 live
+4. Onboarding flow complete, ending in a live first recommendation in the same session
+5. No Bet Today and Bankroll Preservation states implemented as distinct UI treatments
+
+**Key Tasks:**
+- Implement design tokens first, before any component — matches the LEGO/component-library sequencing from the Designer Guide and Volume 1 §3
+- Build components against the exact prop shapes from Volume 5 §5, not ad hoc shapes that "seem close enough" to what the API returns
+- Build the four-step onboarding flow from Volume 1 §6 / Volume 5 §6, with the same-session first-recommendation requirement as a hard completion gate for this milestone
+- Build both distinct empty/alternate states (No Bet Today, Bankroll Preservation) rather than one generic fallback
+- **v2.0 addition:** build the AI Transparency Meter and Recommendation Timeline components as part of the Explainability Panel work (`v2.0-amendments-architecture-review.md` §4)
+
+**Dependencies:** Phase 5 complete (needs a working recommendation pipeline to render real data against) and Phase 2 (needs auth for onboarding).
+
+**Acceptance Criteria:**
+- A new user can complete onboarding and see either a real recommendation or a correctly-differentiated No Bet Today / Bankroll Preservation state, in the same session, with no dead-end or blank screen at any step
+- Every component consuming backend data uses the typed contracts from Volume 5 §5 with no untyped `any` shortcuts on the data layer
+- Mobile-width rendering verified for the dashboard and recommendation feed specifically, per Volume 5 §8's mobile-first requirement
+
+**Testing Requirements:**
+- Full onboarding flow tested as an automated end-to-end test, not just manually clicked through once
+- Visual regression testing on the core component set once the design system is locked, to catch accidental drift from the token system
+- Accessibility audit against the WCAG 2.1 AA baseline from Volume 5 §8 — keyboard navigation and screen-reader labeling specifically, before this phase is called done
+
+---
+
+## Phase 7 — Twilio Integration
+
+**Implements:** Volume 5 §7
+
+**Milestones:**
+1. Outbound SMS for time-sensitive notification types live
+2. Inbound SMS routed through the same NL Engine intent classification as web chat
+3. `notifications` table populated correctly across channels
+
+**Key Tasks:**
+- Wire outbound SMS for `new_recommendation` and `market_alert` notification types only, per Volume 5 §7's anti-spam reasoning — resist scope creep into every notification type
+- Build the inbound Twilio webhook (`/v1/webhooks/twilio`, Volume 2 §6) and route it through the Volume 4 §7 NL Engine, not a separate SMS-specific parser
+- Confirm a user can reply to an SMS alert conversationally and get a response that reflects the same intent classification as the `/chat` web interface
+
+**Dependencies:** Phase 6 complete (needs the NL Engine's web-chat integration proven first, since SMS reuses it) and Phase 5 (needs real recommendations to notify about).
+
+**Acceptance Criteria:**
+- A test recommendation triggers an outbound SMS within the expected latency
+- Replying "give me something safer" via SMS produces the same classified intent as typing it in `/chat`, verified by comparing the two paths' output
+- Notification records are correctly written to the `notifications` table for both directions
+
+**Testing Requirements:**
+- Twilio sandbox/test number used for all pre-production testing — never test against a real user-facing number in `staging`
+- Load test for a Sunday-slate-scale burst of simultaneous outbound notifications, since this is a realistic peak scenario the master spec's scalability requirement should be validated against
+
+---
+
+## Phase 8 — OCR / Bet Slip Verification
+
+**Implements:** Volume 3 §6 (`bet_slips`, `verified_bets`), master spec OCR requirement
+
+**Milestones:**
+1. Image upload to Supabase Storage working
+2. OCR extraction pipeline producing structured data from bet slip images
+3. Extracted data correctly linked to `verified_bets` and, where applicable, a `recommendation_id`
+
+**Key Tasks:**
+- Build the upload flow, explicitly optional per Volume 1 §6 / master spec — verify the rest of the product functions completely with zero bet slips ever uploaded, as a deliberate test, not an assumption
+- Integrate an OCR/vision pipeline to extract stake, odds, bet type, sportsbook, legs, payout, event details
+- Build the matching logic that links an uploaded slip to an existing recommendation where the details plausibly match, without forcing a match where one doesn't exist
+
+**Dependencies:** Phase 6 complete (needs the frontend upload UI) and Phase 1 (target tables must exist).
+
+**Acceptance Criteria:**
+- A representative sample of real-format bet slip images (multiple sportsbooks) extracts correctly at an acceptable accuracy threshold — define this threshold explicitly before calling the phase done, don't leave it implicit
+- A user who never uploads a bet slip experiences zero degraded functionality anywhere else in the product
+- Extracted data correctly populates `verified_bets`, and `verified_user_performance` reflects it distinctly from projected performance, per the Volume 3 §6 separation
+
+**Testing Requirements:**
+- OCR accuracy tested against a curated set of real (or realistic mock) slip images per major sportsbook format
+- Explicit test that verified performance and projected performance remain in separate tables/charts after a slip is uploaded and processed — this is the one place in the whole build where accidental blending is easiest to introduce by mistake, so it deserves its own dedicated regression test
+
+---
+
+## Phase 9 — Analytics
+
+**Implements:** Volume 5 §5 (Charts), Volume 1 §8 (Success Metrics)
+
+**Milestones:**
+1. `/analytics`, `/performance`, `/ai-insights`, `/agent-performance` pages live
+2. Business metrics from Volume 1 §8 instrumented and dashboarded internally
+3. Chart components correctly separating AI/projected/verified series
+
+**Key Tasks:**
+- Build the four analytics-related pages from Volume 5 §3's route table
+- Instrument the business metrics from Volume 1 §8 (Month-2 retention, Free→Pro conversion by persona, explainability panel open rate, Elite upgrade rate after a No Bet Today day) into an internal admin view — these are product decisions, not user-facing charts, and need their own home
+- Confirm every chart touching performance data respects the three-way separation from Volume 3 §6 / Volume 5 §5
+
+**Dependencies:** Phase 6 complete (needs core frontend) and enough recommendation history from Phases 4–5 running in `staging`/early `production` to have real data to chart.
+
+**Acceptance Criteria:**
+- Internal team can view all Volume 1 §8 business metrics without querying the database directly
+- User-facing analytics pages render correctly with both populated and empty (new user, no history yet) states
+- A manual audit confirms no chart or query anywhere blends `ai_performance`, `projected_user_performance`, and `verified_user_performance`
+
+**Testing Requirements:**
+- Data accuracy spot-check: manually verify a handful of chart values against raw database queries before trusting the aggregation logic
+- Empty-state testing for a brand-new user with zero history across every analytics page
+
+---
+
+## Phase 10 — Beta
+
+**Implements:** Volume 1 personas (real-user validation), Volume 4 §11 (live calibration check)
+
+**Milestones:**
+1. Closed beta cohort recruited, weighted toward Persona A (Grinder) per Volume 1 §9's go-to-market reasoning
+2. Feedback loop established (structured, not just informal)
+3. Real-world confidence calibration compared against the pre-launch backtest from Volume 4 §11
+4. Legal/compliance review (Volume 1 §10) completed before beta expands beyond a controlled jurisdiction set
+
+**Key Tasks:**
+- Recruit a small, deliberately Persona-A-weighted beta cohort — this validates the highest-LTV, most-scrutinizing segment first, consistent with the go-to-market sequencing from Volume 1 §9
+- Set up a structured feedback channel (not just "let us know if something breaks") — specifically ask beta users to stress-test the reproducibility claim (Volume 1's Journey 3) since that's the claim most likely to lose a skeptical user permanently if it fails even once
+- Compare live confidence calibration against the backtested numbers from Volume 4 §11; this is the first real-world check on the 0.55 threshold and weighting defaults flagged as launch assumptions
+- Complete the legal/compliance review flagged as open since Volume 1 §10 — jurisdiction gating enforcement (already built in Phase 2) should be exercised for real here, limited to cleared states only
+
+**Dependencies:** Phases 6–9 complete — beta needs the full product surface, not a partial build, to generate meaningful signal.
+
+**Acceptance Criteria:**
+- Beta cohort actively using the product for a defined minimum window (recommend at least one full sport week cycle, ideally several, before drawing conclusions)
+- At least one beta user has independently attempted to verify the Time Machine reproducibility claim and confirmed it holds
+- Calibration comparison completed with a documented decision: keep the 0.55 threshold as-is, or adjust it — either way, this should produce the MINOR version bump to Volume 4 anticipated back in that volume's changelog entry
+- Legal sign-off obtained for the specific jurisdiction set beta (and initial production launch) will operate in
+
+**Testing Requirements:**
+- Full regression pass across all phases before beta opens — this is the point where a bug anywhere in Phases 0–9 becomes visible to real users for the first time
+- Load testing against realistic beta-scale concurrent traffic during a live game window specifically, not just synthetic off-peak load
+
+---
+
+## Phase 11 — Production Launch
+
+**Implements:** Volume 1 §9 (Go-to-Market), Volume 2 §5/§9 (production environment, rollback discipline)
+
+**Milestones:**
+1. Production environment promoted from validated `staging` state
+2. Monitoring/alerting confirmed live and tested under real conditions
+3. Public launch executed per the NFL-only, narrow-launch strategy from Volume 1 §9
+4. Content strategy (public postgame reviews) live per Volume 1 §9
+
+**Key Tasks:**
+- Promote the exact validated build from beta to `production` — no last-minute changes introduced directly to production that skipped `staging` validation
+- Confirm all observability from Volume 2 §9 (structured logging, error tracking, uptime/health checks feeding the System Health Dashboard) is actively monitored, not just technically present
+- Execute the narrow NFL-only launch, resisting any pressure to multi-sport launch, per Volume 1 §9's explicit reasoning about data depth per sport
+- Begin the public postgame review content cadence from Volume 1 §9 as an ongoing operational commitment, not a one-time launch asset
+
+**Dependencies:** Phase 10 complete, with legal sign-off and calibration review both closed out.
+
+**Acceptance Criteria:**
+- Production environment serving real users with all monitoring green
+- First live Sunday slate handled without triggering the "immediate rollback" incident protocol from Volume 2 §9 — if it is triggered, the protocol itself should be considered tested, not just the launch considered failed
+- Business metrics from Volume 1 §8 flowing correctly into the internal dashboard from Phase 9, from day one of real traffic
+
+**Testing Requirements:**
+- Full production smoke test immediately post-launch, covering the complete onboarding-to-recommendation flow with a real (small-stakes) test account
+- First live game-day window treated as a monitored event with the team actively watching dashboards in real time, not assuming the automated alerting alone is sufficient for the first cycle
+
+---
+
+## Notes for Using This Roadmap Going Forward
+
+This document should be revisited whenever a volume gets a version bump. A MAJOR bump to any volume (per the `CHANGELOG.md` scheme) should trigger a check of whether the phase that implements it is already built — if so, that phase may need to be reopened, which is exactly the kind of cross-document contradiction the versioning system exists to catch early rather than discover mid-build.
+
+---
+
+## Changelog Entry for This Version
+
+See `CHANGELOG.md` — v1.0, 2026-08-05, Engineering Roadmap & Build Order added as a companion document.
