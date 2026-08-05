@@ -1,0 +1,103 @@
+name: CI/CD
+
+on:
+  push:
+    branches: [dev, main]
+    tags: ["v*"]
+  pull_request:
+    branches: [dev, main]
+
+env:
+  PYTHON_SERVICES: api-gateway ai-orchestrator sports-intel-layer workers
+
+jobs:
+  test-python-services:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [api-gateway, ai-orchestrator, sports-intel-layer, workers]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        working-directory: apps/${{ matrix.service }}
+        run: pip install -r requirements.txt -r requirements-dev.txt
+      - name: Run tests
+        working-directory: apps/${{ matrix.service }}
+        run: python -m pytest -q
+
+  test-frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: apps/frontend/package.json
+      - name: Install dependencies
+        working-directory: apps/frontend
+        run: npm install
+      - name: Build (acts as the frontend test gate at this phase)
+        working-directory: apps/frontend
+        run: npm run build
+
+  deploy-dev:
+    if: github.ref == 'refs/heads/dev' && github.event_name == 'push'
+    needs: [test-python-services, test-frontend]
+    runs-on: ubuntu-latest
+    environment: dev
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [api-gateway, ai-orchestrator, sports-intel-layer, workers, frontend]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Railway CLI
+        run: npm install -g @railway/cli
+      - name: Deploy ${{ matrix.service }} to dev
+        working-directory: apps/${{ matrix.service }}
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        run: railway up --service ${{ matrix.service }} --environment dev --detach
+
+  deploy-staging:
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    needs: [test-python-services, test-frontend]
+    runs-on: ubuntu-latest
+    environment: staging
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [api-gateway, ai-orchestrator, sports-intel-layer, workers, frontend]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Railway CLI
+        run: npm install -g @railway/cli
+      - name: Deploy ${{ matrix.service }} to staging
+        working-directory: apps/${{ matrix.service }}
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        run: railway up --service ${{ matrix.service }} --environment staging --detach
+
+  deploy-production:
+    if: startsWith(github.ref, 'refs/tags/v') && github.event_name == 'push'
+    needs: [test-python-services, test-frontend]
+    runs-on: ubuntu-latest
+    environment: production
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [api-gateway, ai-orchestrator, sports-intel-layer, workers, frontend]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Railway CLI
+        run: npm install -g @railway/cli
+      - name: Deploy ${{ matrix.service }} to production
+        working-directory: apps/${{ matrix.service }}
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        run: railway up --service ${{ matrix.service }} --environment production --detach
