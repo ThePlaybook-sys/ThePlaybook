@@ -255,7 +255,7 @@ This table is the concrete implementation spec Volume 5 needs to design the reco
 Decides the *shape* of the final output (single, prop, SGP, multi-game parlay, multiple singles, bankroll preservation, or no-bet) — this sits after Consensus and before Explainability in the flow (Section 3.1, step 9).
 
 **Decision logic, in priority order:**
-1. If `aggregate_confidence < 0.55` → `no_bet` (Section 4.2), regardless of anything else.
+1. If `final_aggregate_confidence < 0.55` → `no_bet` (Section 4.2), regardless of anything else.
 2. If exactly one game/market clears the confidence floor with strong EV → `single`.
 3. If multiple *independent* high-confidence legs exist within the user's `max_parlay_legs` (Volume 3 §3) → `same_game_parlay` or `multi_game_parlay`, but only if the Risk Manager confirms the combined variance is appropriate for the user's stated risk tolerance — never assembled purely because multiple legs are available.
 4. If several unrelated high-confidence single bets exist but combining them would only add variance without EV benefit → `multiple_singles`, explicitly presented as separate bets rather than bundled.

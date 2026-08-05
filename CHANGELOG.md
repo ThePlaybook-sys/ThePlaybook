@@ -165,3 +165,24 @@ This document does not change any Volume's version number — it's a build-seque
 **Expected impact:** None beyond Volume 4 itself — no other volume referenced the parts of Volume 4's body that were stale. This is a PATCH per the versioning scheme (wording/consistency fix, no architectural meaning change) since the actual decision was already logged in v2.0; this entry just closes the gap between that decision and the document that was supposed to reflect it. Corrected file needs to replace the one already committed to the repo — see note below.
 
 **Process note:** This is exactly the scenario CLAUDE.md's "blueprint vs. reality" section anticipated, just one step earlier than expected — during initial repo setup rather than mid-build. Flagging and logging it rather than quietly re-uploading a fixed file is the correct behavior and should continue for anything else caught during setup.
+
+---
+
+## v2.0.2 — 2026-08-05 — PATCH
+
+**Volumes affected:** Volumes 1, 2, 3, and 5 (same drift pattern as v2.0.1), plus one residual fix to Volume 4.
+
+**Reason:** Same header-body drift as v2.0.1, caught the same way — Claude Code flagging each volume during repo setup rather than assuming a v2.0 header meant the body was actually updated. Volumes 1, 2, 3, and 5 all had the identical shape of problem: a `**v2.0 note:**` line in the header pointing to `v2.0-amendments-architecture-review.md`, with no corresponding content actually written into the volume's own body, and closing lines still citing v1.0. Separately, Claude Code also caught a smaller residual in Volume 4: Section 9's decision logic still referenced `aggregate_confidence` instead of `final_aggregate_confidence`, missed by the v2.0.1 fix because that section wasn't touched by the Meta Agent integration work.
+
+**Decision:** No architectural changes — all four volumes' bodies corrected to match what was already decided and logged in the v2.0 entry above:
+- **Volume 1:** New §9.1 "Referral & Public Trust Levers" added, covering the `referral_code` field rationale and the Public Transparency Portal's post-MLP scoping — both already decided in v2.0, now actually written into the volume.
+- **Volume 2:** New §4.5 "Scoped Internal Event System" fully specifies the LISTEN/NOTIFY approach, the MLP-stage vs. deferred event lists, and why it's scoped down from the review's full proposal. §9 (DevOps) gained real DR targets (RTO/RPO/restore testing) and per-component latency tracking. §10 (Security) gained the three-part AI abuse protection spec.
+- **Volume 3 (largest fix):** `recommendations` gained five AI versioning columns plus `deleted_at`; `user_profiles` gained `referral_code` and `deleted_at`; four new tables (`prompt_registry`, `model_registry`, `feature_flags`, `recommendation_costs`) and the expanded `audit_log` fully specified in §8; §10 (RLS) documents soft-delete filtering; §11 (Triggers) gained a third trigger auto-populating `audit_log` on system-config writes.
+- **Volume 5:** New component specs for AI Transparency Meter and Recommendation Timeline added to §5, both previously only mentioned in the header note.
+- **Volume 4 residual:** §9's decision logic corrected to `final_aggregate_confidence`, matching §4.1/§4.2.
+
+**Alternatives considered:** N/A — consistency fixes, not design decisions, same as v2.0.1.
+
+**Expected impact:** None beyond the volumes themselves. All five volumes plus the roadmap are now internally consistent with their own version headers. This closes out the full v2.0 rollout — no further known header/body drift remains as of this entry. Corrected files need to replace what's already committed to the repo.
+
+**Process note:** Two rounds of this pattern (v2.0.1, v2.0.2) is a signal worth naming plainly: batch header-only updates across multiple volumes create exactly this risk. Going forward, a version bump to any volume should be treated as incomplete until the body is verified against the header's claims in the same pass — not assumed correct because the header was updated with good intentions.

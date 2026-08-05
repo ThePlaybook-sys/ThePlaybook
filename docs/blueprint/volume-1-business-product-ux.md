@@ -144,6 +144,14 @@ ROI, Expected Value, Closing Line Value, Units Won, risk-adjusted returns, confi
 
 **Content strategy:** Public postgame reviews (anonymized, aggregate) are a strong content/trust asset — "here's a recommendation from 3 weeks ago, here's exactly why it hit or missed, here's what the AI learned" is content no tout service can produce, because they don't have the Time Machine/reproducibility layer. This should be a recurring content format from week one.
 
+### 9.1 Referral & Public Trust Levers (v2.0)
+
+Two additions from the external architecture review, both aligned with the "trust over win-rate" positioning already established in this volume:
+
+**Referral system.** A `referral_code` field on the user's profile is cheap to add now and avoids a later migration, but the actual referral program mechanics — what a referrer earns, what a new user gets — should wait until real Persona A retention data exists (Section 7, Journey 2) to design the incentive around. Persona A is the natural word-of-mouth engine here; building the referral mechanic around guesses instead of that data risks optimizing for the wrong behavior.
+
+**Public Transparency Portal.** A public-facing page showing aggregate historical ROI, EV, No Bet %, and full recommendation history (including withdrawn ones) is a strong differentiator given this volume's entire thesis — nothing hidden is the whole pitch. Explicitly **post-MLP**: it needs enough real settled recommendations to be credible rather than sparse, and it depends on public-facing aggregate reporting infrastructure that doesn't exist at launch. Target this for the first major post-launch release, not the initial NFL-only MLP.
+
 ---
 
 ## 10. Compliance & Business Risk Considerations
@@ -168,4 +176,4 @@ Flagging these now so Volumes 2–5 don't silently diverge:
 
 ## Changelog Entry for This Version
 
-See `CHANGELOG.md` — v1.0, 2026-08-05.
+See `CHANGELOG.md` — v1.0, 2026-08-05. Updated to v2.0, 2026-08-05, per external architecture review — Section 9.1 (Referral & Public Trust Levers) added above, not just noted in the version header.

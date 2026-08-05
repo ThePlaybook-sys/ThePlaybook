@@ -112,6 +112,26 @@ type ExplainabilityPanelProps = {
 ```
 This is a new component beyond the Designer Guide's original list — a direct consequence of Volume 4 §8's explainability mapping requiring a place to live. Flagged explicitly since the Designer Guide didn't anticipate it; the designer should be looped in on this addition before final screen design.
 
+### AI Transparency Meter (v2.0 — extends Explainability Panel)
+```typescript
+type TransparencyMeterProps = {
+  confidence: number;                       // existing, from ExplainabilityPanelProps' source data
+  evidence_strength: number;                // 0-1, derived from % of contributing findings classified data_backed (Volume 4 §2.1)
+  agent_agreement: number;                  // 0-1, derived from agreement_variance (Volume 4 §4.1), inverted so higher = more agreement
+  data_quality: number;                     // 0-1, derived from Sports Intelligence Layer cache freshness at recommendation time
+};
+```
+Added per the external architecture review — shows four dimensions instead of confidence alone, rendered as part of the same Explainability Panel rather than a separate screen, since it's answering the same underlying question ("how much should I trust this") from a different angle. `evidence_strength` and `data_quality` are new derived values with no existing UI home before this addition — flag both to the designer alongside the Explainability Panel itself.
+
+### Recommendation Timeline (v2.0 — powered by Volume 2 §4.5's event system)
+```typescript
+type RecommendationTimelineProps = {
+  recommendation_id: string;
+  events: { event_type: string; timestamp: string; detail: string }[];
+};
+```
+Populated by querying the events tied to a `recommendation_id` from Volume 2 §4.5's scoped event system. At MLP stage this means `RecommendationCreated`, `RecommendationUpdated`, and `RecommendationWithdrawn` only — matching the MLP-stage event list in that section, not the full deferred list. This is a case where two review suggestions turned out to be one feature: the event system and this timeline were proposed separately but the timeline is essentially a direct rendering of the event stream, so building one without the other doesn't make sense.
+
 ### Charts
 Recharts-based (per available frontend libraries), fed directly from the query patterns implied by Volume 3 §6's three separate performance tables — **the chart layer must keep AI performance, projected performance, and verified performance as separate chart series or separate charts entirely, never blended into one line,** mirroring the database-level separation for the same reason (Volume 3 §6): blending them visually would misrepresent verified results as validated by more data than it actually is.
 
@@ -184,4 +204,4 @@ No contradictions found requiring a MAJOR version bump across the set. All five 
 
 ## Changelog Entry for This Version
 
-See `CHANGELOG.md` — v1.0, 2026-08-05, Volume 5 added. **All five volumes of the initial blueprint pass are now complete.**
+See `CHANGELOG.md` — v1.0, 2026-08-05, Volume 5 added. **All five volumes of the initial blueprint pass are now complete.** Updated to v2.0, 2026-08-05, per external architecture review — AI Transparency Meter and Recommendation Timeline (§5) integrated as full component specs, not just noted in the version header.
