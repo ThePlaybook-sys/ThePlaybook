@@ -149,3 +149,19 @@ This document does not change any Volume's version number — it's a build-seque
 - No volume's core product principles, pricing, or personas changed — this bump is architectural/operational depth, not a reversal of any prior decision.
 
 **Full technical detail:** `v2.0-amendments-architecture-review.md`
+
+---
+
+## v2.0.1 — 2026-08-05 — PATCH
+
+**Volume affected:** Volume 4 (AI Intelligence Architecture) only
+
+**Reason:** Caught by Claude Code during repo setup, correctly following CLAUDE.md's "blueprint vs. reality" protocol rather than silently patching. The v2.0 entry above declared Volume 4's Meta Agent and `evidence_classification` additions as done, and Volume 4's own header was bumped to v2.0 — but the file's body was never actually edited to match. Section 2 still said "Twenty-one independent agents," §2.1's contract had no `evidence_classification` field, there was no §2.6 Meta Agent entry, §4.1's consensus math didn't account for either addition, and the closing line still cited v1.0. The header made a promise the body didn't keep — an internal inconsistency, not a new decision.
+
+**Decision:** No architectural change. Volume 4's body corrected to match what v2.0 already declared: Section 2 now states 22 agents (21 fan-out + Meta Agent); §2.1's contract includes `evidence_classification`; new §2.6 fully specifies the Meta Agent; §3.1's execution flow inserts the Meta Agent as step 8, after Consensus and before Explainability; §4.1 documents both the evidence-classification discount (0.5× weight for `assumption`-classified findings, per-calculation only, not a permanent weight change) and the Meta Agent's `confidence_adjustment` producing a `final_aggregate_confidence` that feeds §4.2's threshold; the closing line now correctly reads v2.0.
+
+**Alternatives considered:** N/A — this is a consistency fix, not a design decision. The only "alternative" would have been leaving the inconsistency in place, which isn't a real option under the versioning discipline this project already committed to.
+
+**Expected impact:** None beyond Volume 4 itself — no other volume referenced the parts of Volume 4's body that were stale. This is a PATCH per the versioning scheme (wording/consistency fix, no architectural meaning change) since the actual decision was already logged in v2.0; this entry just closes the gap between that decision and the document that was supposed to reflect it. Corrected file needs to replace the one already committed to the repo — see note below.
+
+**Process note:** This is exactly the scenario CLAUDE.md's "blueprint vs. reality" section anticipated, just one step earlier than expected — during initial repo setup rather than mid-build. Flagging and logging it rather than quietly re-uploading a fixed file is the correct behavior and should continue for anything else caught during setup.
