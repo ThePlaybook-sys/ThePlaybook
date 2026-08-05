@@ -12,7 +12,7 @@
 
 ## 1. How This Volume Fits
 
-Volume 2 defined *how the Orchestrator is deployed* (stateless, async, horizontally scalable). Volume 3 defined *where its outputs are stored* (snapshot tables, append-only history). This volume defines *what it actually thinks* — the 21-agent committee, how their outputs get reconciled into one recommendation, how confidence is calibrated, and how the system gets smarter over thousands of recommendations without overfitting to noise.
+Volume 2 defined *how the Orchestrator is deployed* (stateless, async, horizontally scalable). Volume 3 defined *where its outputs are stored* (snapshot tables, append-only history). This volume defines *what it actually thinks* — the 22-agent committee (21 fan-out agents plus the Meta Agent reviewer, v2.0), how their outputs get reconciled into one recommendation, how confidence is calibrated, and how the system gets smarter over thousands of recommendations without overfitting to noise.
 
 This is the largest and most important volume in the blueprint. It's also the one place where a bad decision is hardest to detect early — a flawed pricing tier is obvious in week one; a flawed weighting algorithm can look fine for months and then quietly erode the whole product's credibility. Every section below is written with that risk in mind.
 
@@ -20,17 +20,18 @@ This is the largest and most important volume in the blueprint. It's also the on
 
 ## 2. The Agent Committee
 
-Twenty-one independent agents, organized into four functional groups. Every agent receives the same base game snapshot (from the Sports Intelligence Layer, Volume 2 §8) and independently returns a structured output — never prose alone.
+**Twenty-two agents total** (v2.0 — expanded from 21): twenty-one independent agents organized into four functional groups, all participating in the parallel fan-out, plus a 22nd — the Meta Agent (§2.6) — which runs after the other 21 and reviews the committee's output rather than the game itself. Every fan-out agent receives the same base game snapshot (from the Sports Intelligence Layer, Volume 2 §8) and independently returns a structured output — never prose alone.
 
 ### 2.1 Shared Agent Output Contract
 
-Every agent, regardless of category, returns the same base shape, stored in `recommendation_agent_outputs.raw_output` (Volume 3 §5):
+Every fan-out agent, regardless of category, returns the same base shape, stored in `recommendation_agent_outputs.raw_output` (Volume 3 §5):
 
 ```json
 {
   "agent_name": "injury_intelligence_agent",
   "finding": "short plain-language summary",
   "supporting_evidence": ["specific data points used"],
+  "evidence_classification": "data_backed | inference | assumption",
   "directional_lean": "home | away | over | under | none",
   "confidence": 0.0,
   "would_change_mind_if": "explicit invalidation condition"
@@ -38,6 +39,8 @@ Every agent, regardless of category, returns the same base shape, stored in `rec
 ```
 
 **Why every agent must include `would_change_mind_if`:** this single field is what makes the Explainability Engine's "what would invalidate this recommendation?" question (Section 8) answerable without inventing an explanation after the fact. It's collected at the moment of analysis, not reconstructed later — which matters for reproducibility (Volume 3's Time Machine principle applies to *reasoning*, not just data).
+
+**Why `evidence_classification` was added (v2.0):** an agent's finding can be strongly worded and still be resting on an assumption rather than hard data. Requiring every agent to self-classify its own finding — rather than having a separate process guess at it after the fact — means the Consensus Engine (§4.1) can discount assumption-heavy findings at the moment consensus is calculated, not as an afterthought.
 
 ### 2.2 Context & Data Agents
 Establish the factual ground truth other agents reason on top of.
@@ -86,6 +89,26 @@ Convert everything above into a probability, a value judgment, and a risk-aware 
 
 **Why Risk Manager and Bankroll Coach are separate from Expected Value:** a bet can have strong positive EV and still be inappropriate for a specific user's bankroll or risk tolerance (e.g., a +EV parlay with high variance is a bad fit for a conservative $20/unit casual bettor, per Volume 1's Persona B). Collapsing these into one agent would force a single number to represent two different questions — "is this a good bet in the abstract" vs. "is this a good bet for this person" — and Volume 1's personalization promise depends on keeping that distinction explicit and auditable.
 
+### 2.6 Meta Agent (v2.0 — Committee Reviewer, Not a Fan-Out Participant)
+
+The 22nd agent. Unlike the other 21, it doesn't analyze the game — it analyzes the committee's output after the Consensus Engine has run (Section 4). Think of it as AI quality assurance sitting one layer above everything else in this section.
+
+```json
+{
+  "agent_name": "meta_agent",
+  "polarization_score": 0.0,
+  "uncertainty_flag": false,
+  "confidence_adjustment": 0.0,
+  "reasoning": "plain-language summary of committee health for this recommendation"
+}
+```
+
+- `polarization_score` — how split the 21 fan-out agents were, independent of `agreement_variance` (§4.1), which measures disagreement mathematically; this field captures whether the disagreement clusters meaningfully (e.g., all Market agents vs. all Matchup agents) or is just noise.
+- `uncertainty_flag` — true when variance is unusually high across categories, not just within one.
+- `confidence_adjustment` — **can only ever be zero or negative.** This is a hard rule, not a convention: letting the Meta Agent boost confidence would create a backdoor around the anti-overfitting guardrails already built into the adaptive weighting system (Section 6). Its entire purpose is catching reasons to be *more* cautious.
+
+Applied in §4.1 as the last step before the 0.55 "No Bet Today" check (§4.2): `final_aggregate_confidence = aggregate_confidence + confidence_adjustment` (where `confidence_adjustment ≤ 0`).
+
 ---
 
 ## 3. Orchestration Logic
@@ -100,10 +123,11 @@ Convert everything above into a probability, a value judgment, and a risk-aware 
 4. Probability Modeling Agent executes, consuming all 17 outputs
 5. Expected Value Agent executes, consuming Probability Modeling output + current odds
 6. Risk Manager + Bankroll Coach execute in parallel, consuming EV output + user profile
-7. Consensus Engine resolves the full set into one recommendation package
-8. Explainability Engine formats the package into the question-answer structure (Section 8)
-9. Recommendation Strategy Engine decides final output shape (Section 9)
-10. Package + full snapshot written to recommendation_snapshots (Volume 3 §5)
+7. Consensus Engine resolves the full set into one recommendation package (§4.1)
+8. Meta Agent (§2.6) reviews the consensus output and applies its confidence_adjustment, if any
+9. Explainability Engine formats the package into the question-answer structure (Section 8)
+10. Recommendation Strategy Engine decides final output shape (Section 9)
+11. Package + full snapshot written to recommendation_snapshots (Volume 3 §5)
 ```
 
 Steps 4–6 are necessarily sequential (each depends on the prior step's output), while steps 1–17 in step 3 run concurrently — this hybrid pattern is why the deployment needs to support both fan-out and short sequential chains within a single request, a nuance worth flagging back to Volume 2's stateless-service assumption: the Orchestrator's internal execution graph has structure, even though the service itself is stateless between requests.
@@ -132,13 +156,17 @@ aggregate_confidence = Σ (agent_confidence[i] × current_weight[i] × direction
 
 Where `directional_agreement[i]` is 1.0 if the agent's `directional_lean` matches the majority lean, and a fractional penalty (recommend 0.3, tunable) if it disagrees — this way a confident but lone dissenting agent pulls aggregate confidence down rather than being silently outvoted, since disagreement itself is information (this is also what feeds `agreement_variance` in `consensus_snapshots`, Volume 3 §5).
 
+**v2.0 addition — evidence-classification discount:** before the formula above runs, any agent whose `evidence_classification` (§2.1) is `assumption` contributes at 0.5× its normal `current_weight[i]` for that specific calculation only — this is a per-recommendation discount, not a permanent change to the agent's stored weight. A single assumption-heavy finding shouldn't carry the same force as a data-backed one, but shouldn't be discarded either, since informed inference is often legitimately useful.
+
+**v2.0 addition — Meta Agent adjustment:** after `aggregate_confidence` is computed, the Meta Agent (§2.6) runs and produces `final_aggregate_confidence = aggregate_confidence + confidence_adjustment`, where `confidence_adjustment` is always ≤ 0. This final, possibly-lowered number is what feeds §4.2's threshold check, never the pre-adjustment value.
+
 ### 4.2 "No Bet Today" Threshold
 
-Recommend a hard floor: **aggregate_confidence < 0.55 → automatic "No Bet Today,"** regardless of EV. This number should not be treated as sacred on day one — it needs backtesting against historical data before launch and should be one of the first things the Continuous Learning Engine (Section 10) is allowed to adjust, but only via the same sustained-evidence process as agent weights, never on a single bad week.
+Recommend a hard floor: **final_aggregate_confidence < 0.55 → automatic "No Bet Today,"** regardless of EV. This number should not be treated as sacred on day one — it needs backtesting against historical data before launch and should be one of the first things the Continuous Learning Engine (Section 10) is allowed to adjust, but only via the same sustained-evidence process as agent weights, never on a single bad week.
 
 ### 4.3 Elite-Tier Second-Pass Reconciliation
 
-**This resolves the open item flagged in Volume 2 §7.** Recommend: if `agreement_variance > 0.25` (meaning agents meaningfully disagree, not just noisy confidence scores) **and** the user's tier is Elite, trigger a second reasoning pass using the strongest routed model, explicitly given all 21 raw outputs and asked to reconcile the disagreement rather than just re-run the math. Free/Pro tier requests accept the first-pass consensus even under high variance, which is the concrete difference Volume 1's "priority agent compute" pricing language needs. Log `second_pass_triggered = true` (Volume 3 §5) every time this fires — this becomes a measurable feature-usage metric, not just a marketing claim.
+**This resolves the open item flagged in Volume 2 §7.** Recommend: if `agreement_variance > 0.25` (meaning agents meaningfully disagree, not just noisy confidence scores) **and** the user's tier is Elite, trigger a second reasoning pass using the strongest routed model, explicitly given all 21 fan-out agents' raw outputs plus the Meta Agent's `reasoning` field, and asked to reconcile the disagreement rather than just re-run the math. Free/Pro tier requests accept the first-pass consensus even under high variance, which is the concrete difference Volume 1's "priority agent compute" pricing language needs. Log `second_pass_triggered = true` (Volume 3 §5) every time this fires — this becomes a measurable feature-usage metric, not just a marketing claim.
 
 ---
 
@@ -285,4 +313,4 @@ This backtesting phase is a concrete, sizable engineering task in its own right 
 
 ## Changelog Entry for This Version
 
-See `CHANGELOG.md` — v1.0, 2026-08-05, Volume 4 added.
+See `CHANGELOG.md` — v1.0, 2026-08-05, Volume 4 added. Updated to v2.0, 2026-08-05, per external architecture review — Meta Agent (§2.6) and `evidence_classification` (§2.1, §4.1) integrated into the committee and consensus logic described above, not just noted in the version header.
