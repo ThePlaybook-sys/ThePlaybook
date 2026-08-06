@@ -1,10 +1,10 @@
 # The Playbook — Volume 2
 ## System Architecture, Backend Design, Railway Deployment, API Strategy, AI Orchestration, DevOps
 
-**Version:** v2.0
+**Version:** v3.0
 **Last updated:** 2026-08-05
-**Depends on:** Volume 1 (v2.0) — subscription tiers, personas, and core product principles are treated as fixed constraints here
-**v2.0 note:** Amended per external architecture review — scoped internal event system (Postgres LISTEN/NOTIFY at MLP stage), AI abuse protection, disaster recovery targets, and expanded per-component observability added. See `v2.0-amendments-architecture-review.md` §2–3 for full detail.
+**Depends on:** Volume 1 (v3.0) — subscription tiers, personas, and core product principles are treated as fixed constraints here
+**v3.0 note:** Redis added as the concrete cache implementation, named vendor candidates and concrete worker cadences integrated into §8. See `v3.0-amendments-conversational-intelligence.md` §6–§8 for full reasoning.
 **Read next:** Volume 3 (Database Architecture) — this volume defines the services that read/write the schema Volume 3 will specify
 
 ---
@@ -180,7 +180,30 @@ This is a deployment-shape overview; full agent-level detail belongs in Volume 4
 
 **Multi-provider strategy (per master spec):** Separate providers per data category rather than one all-in-one provider, specifically so a problem with one (e.g., an odds provider outage) doesn't take down injury or weather data. Recommend maintaining at least one documented fallback provider per category before launch, even if not actively integrated — this shortens the response time if a primary provider has an outage during a live NFL Sunday.
 
-**Caching:** The Sports Intelligence Layer should cache normalized responses with category-appropriate TTLs — odds data needs near-real-time freshness (seconds), injury/roster data can tolerate minutes, weather can tolerate longer. This is both a cost control (fewer provider calls) and a load control (protects against provider rate limits during traffic spikes).
+**Named vendor candidates for Phase 3 (v3.0):** the adapter pattern above means these are swappable by design, but a real default has to be picked to start building against:
+
+| Adapter Category | Default Vendor | Fallback |
+|---|---|---|
+| Odds | The Odds API | (document a second before launch, per the paragraph above) |
+| Player/team stats, injuries, rosters, schedules | SportsDataIO | — |
+| Weather | WeatherAPI | OpenWeatherMap |
+| News/sentiment | NewsAPI | GNews |
+
+**Caching — Redis (v3.0):** the Sports Intelligence Layer caches normalized responses in Redis, sitting in front of every adapter, with category-appropriate TTLs — odds data needs near-real-time freshness (seconds), injury/roster data can tolerate minutes, weather can tolerate longer. Cached responses are shared across all users, not per-user — this is both a cost control (fewer provider calls) and a load control (protects against provider rate limits during traffic spikes), and matters most during concentrated windows like Sunday NFL slates where hundreds of users are effectively asking for the same data at once.
+
+**Concrete refresh cadences (v3.0) — replaces the previously vague "category-appropriate" language with real numbers:**
+
+| Worker | Cadence | Purpose |
+|---|---|---|
+| Master Refresh | Daily, 6:00 AM | Full pull: games, odds, props, injuries, weather, news, rosters, schedule updates — this feeds `daily_game_intelligence` (Volume 3 §5.1) |
+| Odds Worker | Every 5 minutes | Refresh `odds_snapshots` |
+| Player Props Worker | Every 5 minutes | Refresh prop markets specifically — highest volatility, highest user interest |
+| Injury Worker | Every 10 minutes | Refresh injury reports |
+| Weather Worker | Every 15 minutes | Refresh weather snapshots |
+| News Worker | Every 15 minutes | Refresh news/sentiment feed |
+| Pregame Worker | Triggered, T-minus kickoff | Final refresh of all critical data immediately before a game starts — catches last-minute inactive lists and line moves the scheduled cadences might miss by a few minutes |
+
+**Why exact cadences matter enough to specify (not just "make it fast"):** the AI Transparency Meter's `data_quality` dimension (Volume 5 §5, v2.0) needs a real, calculable number — "how stale is this data right now" only means something if there's a known cadence to measure staleness against. Vague TTLs made that dimension a placeholder; concrete cadences make it real.
 
 ---
 
@@ -226,4 +249,4 @@ Full security architecture (RLS policies, encryption, threat modeling) belongs i
 
 ## Changelog Entry for This Version
 
-See `CHANGELOG.md` — v1.0, 2026-08-05, Volume 2 added. Updated to v2.0, 2026-08-05, per external architecture review — scoped internal event system (§4.5), AI abuse protection and disaster recovery targets (§9–§10), and per-component observability (§9) integrated into the sections above, not just noted in the version header.
+See `CHANGELOG.md` — v1.0, 2026-08-05, Volume 2 added. Updated to v2.0, 2026-08-05, per external architecture review — scoped internal event system (§4.5), AI abuse protection and disaster recovery targets (§9–§10), and per-component observability (§9) integrated into the sections above, not just noted in the version header. Updated to v3.0, 2026-08-05 — Redis, named vendor candidates, and concrete worker cadences integrated into §8.

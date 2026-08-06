@@ -1,10 +1,10 @@
 # The Playbook — Volume 3
 ## Database Architecture: Tables, Relationships, Indexes, Triggers, Migrations, RLS
 
-**Version:** v2.0
+**Version:** v3.0
 **Last updated:** 2026-08-05
-**Depends on:** Volume 1 (v2.0 — tiers, personas, principles) and Volume 2 (v2.0 — service shape, routing table reference, RLS placeholder, scoped event system)
-**v2.0 note:** Amended per external architecture review — this volume absorbed the most schema changes of the five. New tables: `feature_flags`, `prompt_registry`, `model_registry`, `recommendation_costs`, expanded `audit_log`. New columns: AI versioning fields on `recommendations`, soft-delete columns on key tables. UUIDv7 recommended for high-insert append-only tables. See `v2.0-amendments-architecture-review.md` §1 for full schema detail — treat that section as authoritative alongside the original table definitions below.
+**Depends on:** Volume 1 (v3.0 — tiers, personas, principles) and Volume 2 (v3.0 — service shape, routing table reference, RLS placeholder, scoped event system, Redis cache layer)
+**v3.0 note:** `daily_game_intelligence` and the derived score tables added (§4.1–§4.2) as a performance layer sitting upstream of the existing Time Machine snapshot architecture, not a replacement for it. `display_id` added to `recommendations` (§5). See `v3.0-amendments-conversational-intelligence.md` §9–§11 for full reasoning, including what was deliberately deferred from the larger supplementary table list.
 **Read next:** Volume 4 (AI Intelligence) — the agent, consensus, and orchestration tables defined here are the tables Volume 4's logic reads and writes
 
 ---
@@ -153,6 +153,54 @@ create index idx_odds_game_time on odds_snapshots(game_id, captured_at desc);
 
 Additional supporting tables follow the same append-only-snapshot pattern and are listed rather than fully specified here (each mirrors the shape of `odds_snapshots`, keyed to `game_id`, with a `captured_at` timestamp): `injury_reports`, `weather_snapshots`, `depth_chart_snapshots`, `referee_assignments`.
 
+### 4.1 `daily_game_intelligence` — Master Working Table (v3.0)
+
+A pre-assembled, denormalized table built by the Master Refresh worker (Volume 2 §8) each morning, combining that day's games with all currently-known intelligence into one row per game — the single place every agent (Volume 4 §2) looks first before separately querying the supporting tables above.
+
+```sql
+create table daily_game_intelligence (
+  game_id uuid primary key references games(id) on delete cascade,
+  teams jsonb,
+  players jsonb,
+  odds jsonb,
+  props jsonb,
+  weather jsonb,
+  injuries jsonb,
+  news jsonb,
+  travel jsonb,
+  rest jsonb,
+  stadium jsonb,
+  public_betting jsonb,
+  sharp_money jsonb,
+  ai_scores jsonb,                -- references the derived score tables below
+  momentum jsonb,
+  matchup_ratings jsonb,
+  ev_calculations jsonb,
+  confidence_scores jsonb,
+  recommendation_candidates jsonb,
+  last_updated timestamptz default now()
+);
+```
+
+**Why this doesn't undermine the Time Machine principle from §1, even though it looks like it might at first glance:** this is explicitly a *working* table, continuously overwritten as the day's data refreshes — it is **not** a source of truth for historical reconstruction. When a recommendation is created, `recommendation_snapshots` (§5 below) still freezes a copy of everything relevant at that exact moment, exactly as before this addition. `daily_game_intelligence` exists purely so agents don't have to separately query eight tables on every single request — a performance optimization sitting *upstream* of the reproducibility architecture, not a replacement for it. Months later, reconstructing a recommendation still reads `recommendation_snapshots`, never this table, which by then has long since been overwritten with unrelated days' data.
+
+### 4.2 Derived Intelligence Score Tables (v3.0)
+
+Feed the `ai_scores` field above. Each follows the same simple shape, keyed to `game_id`, refreshed alongside the Master Refresh worker:
+```sql
+create table weather_scores (
+  game_id uuid references games(id) on delete cascade,
+  score numeric(5,4),
+  calculated_at timestamptz default now(),
+  primary key (game_id, calculated_at)
+);
+-- identical shape repeated for: injury_scores, travel_scores, rest_scores,
+-- momentum_scores, matchup_scores, line_value_scores, sharp_money_scores,
+-- schedule_difficulty_scores, offensive_matchup_scores, defensive_matchup_scores,
+-- coaching_edge_scores, public_sentiment_scores
+```
+Deliberately kept as separate tables rather than folded directly into `daily_game_intelligence` alone, so each score's calculation can be independently tested, versioned, and eventually fed into the Continuous Learning Engine's evaluation of which score types actually correlate with agent accuracy (Volume 4 §10) — a question that's only answerable if each score has its own queryable history.
+
 ---
 
 ## 5. AI Intelligence Tables
@@ -207,6 +255,7 @@ create table recommendations (
   consensus_version text,                    -- v2.0
   weight_version text,                       -- v2.0
   deleted_at timestamptz,                    -- v2.0: soft delete, see §10
+  display_id text unique,                    -- v3.0: human-readable, e.g. PB-2026-NFL-000234
   created_at timestamptz default now(),
   withdrawn_at timestamptz,
   withdrawal_reason text
@@ -218,6 +267,8 @@ create index idx_recs_created on recommendations(created_at desc);
 **`recommendation_type` includes `'no_bet'` as a first-class value, not an absence of a row.** This matters more than it looks like it should: Volume 1's core principle is that "No Bet Today" is a celebrated, trackable output. If a no-bet day simply meant no row existed, we'd have no way to show a user "here's why we didn't recommend anything today" or to measure how often the AI correctly holds back — a metric Volume 1 explicitly wants tracked (Section 8, Elite upgrade rate after a no-bet day).
 
 **Why five separate versioning columns instead of one `version` field (v2.0):** the AI architecture doesn't move as one unit — a prompt can change without the consensus math changing, agent weights recalculate on their own schedule independent of either. Collapsing these into a single version number would hide exactly the kind of information the Time Machine principle exists to preserve: months later, "what changed" needs to be answerable at the level of *which specific thing* changed, not just "something changed." `prompt_version` and `agent_version` are populated by the Orchestrator at the moment of creation from whatever `prompt_registry` and `agents.current_weight` state was actually in effect — frozen at write time, same pattern as `weight_applied` on `recommendation_agent_outputs` below.
+
+**`display_id` (v3.0):** generated at creation time by a simple sequence-per-sport-per-year function, format `PB-{year}-{sport}-{sequence}`. Purely a UX/support convenience — `id` (the UUID) remains the actual primary key and foreign key target everywhere; `display_id` is what a user sees and what support references, so nobody's pasting UUIDs into a support ticket.
 
 ### `recommendation_agent_outputs`
 ```sql
@@ -598,9 +649,10 @@ Supabase CLI-managed migrations, one SQL file per change, sequentially numbered,
 - **Conversation/chat message schema** for the Natural Language Engine is referenced (Section 10's RLS pattern) but not fully specified — Volume 4/5 should finalize `conversations` and `conversation_messages` table shapes jointly, since both the NL Engine (Volume 4) and the chat UI (Volume 5) depend on the exact shape.
 - **Agent weighting algorithm** that writes to `agents.current_weight` and reads `agent_performance_scores` is fully owned by Volume 4 — this volume only guarantees the storage shape and the minimum-sample-size guardrail exists.
 - **Notification table schema** (referenced in Volume 2's worker list) needs a dedicated pass, likely small enough to fold into Volume 5 alongside the Notification dashboard component.
+- **Deferred schema (v3.0):** a supplementary ~150-table proposal was reviewed alongside this version's additions. Most was declined as either duplicative of existing tables under different names or premature for MLP scope (ML training tables, sentiment tables, extensive historical-data duplication beyond what the existing append-only snapshot tables already provide). Full reasoning in `v3.0-amendments-conversational-intelligence.md` §11 — worth a fresh look post-MLP once there's real usage data to justify the additional surface area.
 
 ---
 
 ## Changelog Entry for This Version
 
-See `CHANGELOG.md` — v1.0, 2026-08-05, Volume 3 added. Updated to v2.0, 2026-08-05, per external architecture review — `feature_flags`, `prompt_registry`, `model_registry`, `recommendation_costs`, expanded `audit_log`, AI versioning columns, soft-delete columns, UUIDv7 guidance, and the `referral_code` field integrated into §3, §5, §8, §10, and §11 above, not just noted in the version header.
+See `CHANGELOG.md` — v1.0, 2026-08-05, Volume 3 added. Updated to v2.0, 2026-08-05, per external architecture review — `feature_flags`, `prompt_registry`, `model_registry`, `recommendation_costs`, expanded `audit_log`, AI versioning columns, soft-delete columns, UUIDv7 guidance, and the `referral_code` field integrated into §3, §5, §8, §10, and §11 above, not just noted in the version header. Updated to v3.0, 2026-08-05 — `daily_game_intelligence`, derived score tables (§4.1–§4.2), and `display_id` (§5) integrated directly.

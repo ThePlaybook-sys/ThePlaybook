@@ -8,12 +8,13 @@ This file is read automatically at the start of every Claude Code session in thi
 
 The Playbook is an AI-powered sports betting operating system — not a picks app. Full specification lives in `/docs/blueprint/`:
 
-- `volume-1-business-product-ux.md` — business model, pricing, personas, journeys (v2.0)
-- `volume-2-system-architecture.md` — backend stack, Railway deployment, API strategy (v2.0)
-- `volume-3-database-architecture.md` — full schema, RLS, migrations (v2.0)
-- `volume-4-ai-intelligence.md` — the 22-agent committee, consensus, weighting (v2.0)
-- `volume-5-frontend-ux.md` — dashboards, components, notifications (v2.0)
+- `volume-1-business-product-ux.md` — business model, pricing, personas, journeys, chat-first positioning (v3.0)
+- `volume-2-system-architecture.md` — backend stack, Railway deployment, API strategy, Redis, vendor picks (v3.0)
+- `volume-3-database-architecture.md` — full schema, RLS, migrations, daily_game_intelligence (v3.0)
+- `volume-4-ai-intelligence.md` — the 22-agent committee, consensus, weighting, Kelly Criterion, session memory (v3.0)
+- `volume-5-frontend-ux.md` — dashboards, components, notifications, chat-first navigation (v3.0)
 - `v2.0-amendments-architecture-review.md` — schema/architecture additions from the external review, referenced throughout the volumes above
+- `v3.0-amendments-conversational-intelligence.md` — chat-first UX, intelligence pipeline, and schema additions, referenced throughout the volumes above
 - `engineering-roadmap-build-order.md` — **this is the file that governs how you work.** 12 phases (0–11), each with milestones, tasks, dependencies, acceptance criteria, and testing requirements.
 - `CHANGELOG.md` — version history. Every architectural decision has a reason, what changed, alternatives considered, and expected impact.
 
