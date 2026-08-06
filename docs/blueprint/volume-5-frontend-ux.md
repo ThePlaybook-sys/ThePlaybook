@@ -1,10 +1,10 @@
 # The Playbook — Volume 5
 ## Frontend & UX Architecture: Dashboards, Navigation, Components, Notifications, Onboarding, Accessibility
 
-**Version:** v2.0
-**Last updated:** 2026-08-05
-**Depends on:** Volume 1 (v2.0 — personas, tiers, journeys), Volume 2 (v2.0 — API contracts, scoped event system), Volume 3 (v2.0 — data shapes), Volume 4 (v2.0 — explainability mapping, recommendation states, evidence classification)
-**v2.0 note:** Amended per external architecture review — AI Transparency Meter (extends Explainability Panel) and Recommendation Timeline (powered by the new event system) added as components. See `v2.0-amendments-architecture-review.md` §4 for full detail.
+**Version:** v4.0
+**Last updated:** 2026-08-06
+**Depends on:** Volume 1 (v3.0 — personas, tiers, journeys, chat-first positioning), Volume 2 (v4.0 — API contracts, scoped event system, Redis, Recommendation Worker), Volume 3 (v4.0 — data shapes, `daily_game_intelligence`, multi-sport core, data quality metadata), Volume 4 (v4.0 — explainability mapping, progressive disclosure, session memory, dual entry points)
+**v4.0 note:** `data_quality` in the AI Transparency Meter (§5) now computed from `daily_game_intelligence`'s concrete per-category metadata (Volume 3 §4.1) instead of vague cache-freshness language. See `CHANGELOG.md` v4.0 entry for full reasoning.
 **Companion document:** The separate Designer Onboarding Guide (PDF, non-technical) covers the same component list from a visual-design perspective — this volume covers the same ground from an engineering/data-contract perspective. The two should never contradict each other; if the designer's Figma work suggests a change to a component's data needs, that change comes back here first.
 
 ---
@@ -29,11 +29,12 @@ Every prior volume built toward something the user sees. This volume is where th
 
 ## 3. Navigation & Information Architecture
 
-Matches the page list from Volume 1 §10, now with routes and primary data source:
+Matches the page list from Volume 1 §10, now with routes and primary data source. **Reordered for v3.0 to reflect chat-first positioning (Volume 1 §1) — `/chat` is the default landing route post-login, not `/dashboard`:**
 
 | Route | Purpose | Primary Data Source |
 |---|---|---|
-| `/dashboard` | Landing view after login — today's recommendation(s) or No Bet Today state | `/v1/recommendations` (Volume 2 §6) |
+| `/chat` | **Default landing route (v3.0).** Natural language interface — this is the front door | `conversations` / `conversation_messages` (Volume 4 §7) |
+| `/dashboard` | Reference library, not the front door — today's recommendation(s) or No Bet Today state for anyone who wants the card view | `/v1/recommendations` (Volume 2 §6) |
 | `/recommendations` | Full current recommendation feed, filterable | `/v1/recommendations` |
 | `/recommendations/[id]` | Full detail + explainability for one recommendation | `/v1/recommendations/{id}/explain` |
 | `/games` | Upcoming/live game browser | Sports Intelligence Layer via Gateway |
@@ -46,9 +47,10 @@ Matches the page list from Volume 1 §10, now with routes and primary data sourc
 | `/settings` | Profile, notification prefs | `user_profiles` |
 | `/profile` | Betting DNA, persona | `betting_dna` |
 | `/subscription` | Tier, billing | `subscriptions` |
-| `/chat` | Natural language interface | `conversations` / `conversation_messages` (Volume 4 §7) |
 
-**Onboarding is not a route in this table on purpose** — per Volume 1 §6, it's a modal/overlay flow layered on top of `/dashboard` on first login, not a separate page a user navigates away from and might abandon mid-flow.
+**Why this doesn't require rebuilding anything (v3.0):** every route above already existed in v1.0/v2.0 — this is a reprioritization, not new architecture. `/chat` was already fully specified; it just wasn't the landing route. The dashboard keeps every one of its existing responsibilities (history, analytics, settings) — it's simply no longer the first screen. A user who prefers the card-based view can still navigate to `/dashboard` directly, and nothing there changes.
+
+**Onboarding is not a route in this table on purpose** — per Volume 1 §6, it's a modal/overlay flow layered on top of `/chat` (v3.0 — previously `/dashboard`) on first login, not a separate page a user navigates away from and might abandon mid-flow.
 
 ---
 
@@ -82,6 +84,8 @@ type RecommendationCardProps = {
 };
 ```
 Directly implements Volume 4 §8's explainability mapping — `short_explanation` on the card is the entry point, and `onViewDetails` routes to `/recommendations/[id]`, which renders the full nine-question explainability breakdown from that same section.
+
+**Chat-context rendering (v3.0).** When this component renders inside `/chat` (the default landing surface, §3) rather than the dashboard feed, it uses the Level 1 format from Volume 4 §7's progressive disclosure spec — a single concise card (bet, confidence, EV, 1-2 sentence summary), never a wall of text. `onViewDetails` in this context doesn't navigate away to `/recommendations/[id]`; it expands in place through Levels 2–4 as the user asks "why?", "show me your reasoning," or "show me everything" — matching how someone actually texts a person, not how someone clicks through a website. The full-page `/recommendations/[id]` route remains available for anyone who lands there directly from the dashboard or a notification link.
 
 ### Game Card
 ```typescript
@@ -118,10 +122,10 @@ type TransparencyMeterProps = {
   confidence: number;                       // existing, from ExplainabilityPanelProps' source data
   evidence_strength: number;                // 0-1, derived from % of contributing findings classified data_backed (Volume 4 §2.1)
   agent_agreement: number;                  // 0-1, derived from agreement_variance (Volume 4 §4.1), inverted so higher = more agreement
-  data_quality: number;                     // 0-1, derived from Sports Intelligence Layer cache freshness at recommendation time
+  data_quality: number;                     // 0-1, aggregated from daily_game_intelligence's per-category status field (Volume 3 §4.1, v4.0) — 1.0 if all contributing categories are "fresh", degrading per category flagged "needs_refresh" or "stale"
 };
 ```
-Added per the external architecture review — shows four dimensions instead of confidence alone, rendered as part of the same Explainability Panel rather than a separate screen, since it's answering the same underlying question ("how much should I trust this") from a different angle. `evidence_strength` and `data_quality` are new derived values with no existing UI home before this addition — flag both to the designer alongside the Explainability Panel itself.
+Added per the external architecture review — shows four dimensions instead of confidence alone, rendered as part of the same Explainability Panel rather than a separate screen, since it's answering the same underlying question ("how much should I trust this") from a different angle. `evidence_strength` and `data_quality` are new derived values with no existing UI home before this addition — flag both to the designer alongside the Explainability Panel itself. **`data_quality` gained a concrete computation source in v4.0** — previously vague "cache freshness," now a real aggregation over `daily_game_intelligence`'s per-category metadata (Volume 3 §4.1).
 
 ### Recommendation Timeline (v2.0 — powered by Volume 2 §4.5's event system)
 ```typescript
@@ -204,4 +208,4 @@ No contradictions found requiring a MAJOR version bump across the set. All five 
 
 ## Changelog Entry for This Version
 
-See `CHANGELOG.md` — v1.0, 2026-08-05, Volume 5 added. **All five volumes of the initial blueprint pass are now complete.** Updated to v2.0, 2026-08-05, per external architecture review — AI Transparency Meter and Recommendation Timeline (§5) integrated as full component specs, not just noted in the version header.
+See `CHANGELOG.md` — v1.0, 2026-08-05, Volume 5 added. **All five volumes of the initial blueprint pass are now complete.** Updated to v2.0, 2026-08-05, per external architecture review — AI Transparency Meter and Recommendation Timeline (§5) integrated as full component specs, not just noted in the version header. Updated to v3.0, 2026-08-05 — `/chat` as default landing route (§3) and chat-context Recommendation Card rendering (§5) integrated directly. Updated to v4.0, 2026-08-06 — `data_quality` (§5) tied to the concrete metadata convention, per the internal markdown-consistency review.
