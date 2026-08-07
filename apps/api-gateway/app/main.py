@@ -5,9 +5,9 @@ from fastapi import FastAPI
 
 sentry_sdk.init(
     dsn=os.environ.get("SENTRY_DSN"),
-    # Add data like request headers and IP for users,
-    # see https://docs.sentry.io/platforms/python/data-management/data-collected/ for more info
-    send_default_pii=True,
+    # No privacy policy live yet (Volume 1 §10) to disclose PII collection —
+    # revisit once one is in place.
+    send_default_pii=False,
 )
 
 app = FastAPI(title="The Playbook — API Gateway")
@@ -18,6 +18,8 @@ def health() -> dict:
     return {"status": "ok", "service": "api-gateway"}
 
 
-@app.get("/sentry-debug")
-async def trigger_error():
-    division_by_zero = 1 / 0
+if os.environ.get("RAILWAY_ENVIRONMENT_NAME", "dev") == "dev":
+
+    @app.get("/sentry-debug")
+    async def trigger_error():
+        division_by_zero = 1 / 0
