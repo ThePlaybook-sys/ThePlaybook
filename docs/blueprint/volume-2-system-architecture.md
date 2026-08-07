@@ -1,10 +1,10 @@
 # The Playbook — Volume 2
 ## System Architecture, Backend Design, Railway Deployment, API Strategy, AI Orchestration, DevOps
 
-**Version:** v2.0
-**Last updated:** 2026-08-05
-**Depends on:** Volume 1 (v2.0) — subscription tiers, personas, and core product principles are treated as fixed constraints here
-**v2.0 note:** Amended per external architecture review — scoped internal event system (Postgres LISTEN/NOTIFY at MLP stage), AI abuse protection, disaster recovery targets, and expanded per-component observability added. See `v2.0-amendments-architecture-review.md` §2–3 for full detail.
+**Version:** v4.0
+**Last updated:** 2026-08-06
+**Depends on:** Volume 1 (v3.0) — subscription tiers, personas, and core product principles are treated as fixed constraints here
+**v4.0 note:** Core Architecture Principles added (§1.1) as the explicit lens for future decisions. Recommendation Worker added (§4.4) — proactive recommendation generation coexisting with on-demand. Environment data-source policy formalized (§5). See `CHANGELOG.md` v4.0 entry for full reasoning.
 **Read next:** Volume 3 (Database Architecture) — this volume defines the services that read/write the schema Volume 3 will specify
 
 ---
@@ -18,6 +18,21 @@ Before any framework or hosting decision, three constraints from the master spec
 3. **The AI Orchestrator must be able to swap models without a redesign.** OpenAI and Claude are both in play today; whatever routes between them can't hardcode either one as "the" model.
 
 Everything below is built to satisfy these three constraints first, convenience second.
+
+### 1.1 Core Architecture Principles (v4.0)
+
+Ten principles, added as the explicit lens for future architectural decisions rather than leaving that judgment implicit across five volumes. Several are restatements of decisions already made elsewhere — collected here so a future decision can be checked against a short list instead of re-deriving the reasoning from scratch each time:
+
+1. **Download once, reuse everywhere.** Never repeatedly call an external API for the same information — store it in Supabase, read from there. (Already the entire reason the Sports Intelligence Layer and Redis cache exist, §8.)
+2. **Background workers gather data; the AI does not collect raw data during a user request.** Every agent reasons over already-assembled intelligence (`daily_game_intelligence`, Volume 3 §4.1), never over a live external API call mid-request.
+3. **AI reasons, workers gather.** A clean separation of responsibility — an agent's job is judgment, not fetching.
+4. **Store intelligence, not just raw data.** The derived score tables and `daily_game_intelligence` (Volume 3 §4.1–§4.2) exist because precomputed judgment is more valuable than a pile of numbers an agent has to re-derive every time.
+5. **Every recommendation must be explainable.** (Volume 4 §8 — already load-bearing.)
+6. **Everything must be observable.** (§9's per-component latency tracking, error tracking, health checks.)
+7. **Every recommendation must be reproducible.** (Volume 3's Time Machine principle — the project's oldest and most-repeated constraint.)
+8. **Optimize for scalability** — but not prematurely. This principle and #10 below are in tension on purpose; #10 wins at MLP stage.
+9. **Optimize for user trust** over engagement, win rate, or any other metric that could conflict with honesty (Volume 1 §1's core tension).
+10. **Keep Phase 0 intentionally focused.** Scalability work for sports that aren't NFL, features without a proven MLP-stage consumer, and infrastructure without a proven need all get deferred — not because they're bad ideas, but because building them now is the more expensive time to build them wrong. This is the same reasoning that's driven every deferral logged in this changelog so far (Knowledge Graph, Public Transparency Portal, the bulk of the ~150-table proposal, sportsbook promotions, social sentiment).
 
 ---
 
@@ -97,6 +112,8 @@ Owns: provider adapters (odds, stats, weather, injuries, rosters, schedules), no
 ### 4.4 Background Workers
 Owns: anything that runs on a schedule or reacts to an external event rather than a user request — market monitoring (continuous), postgame review generation (triggered by game completion), agent weight recalculation (scheduled, e.g. weekly), notification dispatch (event-triggered).
 
+**Recommendation Worker (v4.0).** Previously, a recommendation only existed once a user asked for one — the flow was strictly on-demand: user request → Orchestrator → response. This adds a proactive path: `Master Refresh (Volume 3 §4.1) → Recommendation Worker → AI Committee (Volume 4 §2) → store recommendations`, running shortly after each Master Refresh so that a recommendation already exists by the time a user opens the app, rather than being computed live in front of them. **This coexists with, not replaces, on-demand generation** — the NL Engine (Volume 4 §7) can still trigger a fresh Orchestrator run for a specific request (e.g., "build me something around Mahomes") that the proactive worker wouldn't have anticipated. Documented here and in Volume 4 §3.1, since both the trigger (this volume) and the reasoning it triggers (Volume 4) need to agree on the flow.
+
 **Why separate workers from the API Gateway:** Market monitoring in particular needs to run continuously regardless of whether any user has an active request in flight. Bundling that into the request/response API service would mean either blocking user requests or building ad-hoc background threading inside a service that's supposed to be stateless and horizontally scalable. Keeping workers separate lets each piece scale independently — you might need ten API Gateway instances during Sunday NFL traffic but only one market-monitoring worker running continuously.
 
 ### 4.5 Scoped Internal Event System (v2.0)
@@ -122,11 +139,22 @@ Added per the external architecture review, deliberately scoped down from the re
 
 **Environments:** `dev`, `staging`, `production` — three separate Railway environments, not just branches within one. This matters specifically because of the Time Machine requirement (Volume 1, principle 2): staging needs to be able to test against real provider data without any risk of a staging recommendation snapshot polluting the production reproducibility record.
 
+**Official environment data-source policy (v4.0)** — this was previously only an informal note in the Engineering Roadmap's Phase 1 testing section; formalized here as the volume that actually owns environment strategy:
+
+| Environment | Data Source | Users |
+|---|---|---|
+| **Development** | Sandbox APIs where the provider offers them, fake/seeded data otherwise | None — internal only |
+| **Staging** | Real APIs, real odds, real schedules — mirrors production behavior | Internal testers only |
+| **Production** | Real APIs, live traffic | Real customers |
+
+Staging exists specifically to catch problems with real data before customers see them — using fake data in staging would defeat that purpose, and using real data in dev would burn API quota and provider rate limits on rapid, throwaway iteration. Each environment's data policy should be enforced at the adapter configuration level (§8), not left as a convention a developer has to remember when switching environments.
+
 **Services per environment (Railway project structure):**
 - `api-gateway`
 - `ai-orchestrator`
 - `sports-intel-layer`
 - `worker-market-monitor` (always-on)
+- `worker-recommendation` (v4.0 — proactive generation, §4.4)
 - `worker-scheduled` (cron-triggered: postgame review, weight recalc)
 - Supabase is *not* hosted on Railway — it's a separate managed service (Section 6, Volume 3 owns schema)
 
@@ -180,7 +208,30 @@ This is a deployment-shape overview; full agent-level detail belongs in Volume 4
 
 **Multi-provider strategy (per master spec):** Separate providers per data category rather than one all-in-one provider, specifically so a problem with one (e.g., an odds provider outage) doesn't take down injury or weather data. Recommend maintaining at least one documented fallback provider per category before launch, even if not actively integrated — this shortens the response time if a primary provider has an outage during a live NFL Sunday.
 
-**Caching:** The Sports Intelligence Layer should cache normalized responses with category-appropriate TTLs — odds data needs near-real-time freshness (seconds), injury/roster data can tolerate minutes, weather can tolerate longer. This is both a cost control (fewer provider calls) and a load control (protects against provider rate limits during traffic spikes).
+**Named vendor candidates for Phase 3 (v3.0):** the adapter pattern above means these are swappable by design, but a real default has to be picked to start building against:
+
+| Adapter Category | Default Vendor | Fallback |
+|---|---|---|
+| Odds | The Odds API | (document a second before launch, per the paragraph above) |
+| Player/team stats, injuries, rosters, schedules | SportsDataIO | — |
+| Weather | WeatherAPI | OpenWeatherMap |
+| News/sentiment | NewsAPI | GNews |
+
+**Caching — Redis (v3.0):** the Sports Intelligence Layer caches normalized responses in Redis, sitting in front of every adapter, with category-appropriate TTLs — odds data needs near-real-time freshness (seconds), injury/roster data can tolerate minutes, weather can tolerate longer. Cached responses are shared across all users, not per-user — this is both a cost control (fewer provider calls) and a load control (protects against provider rate limits during traffic spikes), and matters most during concentrated windows like Sunday NFL slates where hundreds of users are effectively asking for the same data at once.
+
+**Concrete refresh cadences (v3.0) — replaces the previously vague "category-appropriate" language with real numbers:**
+
+| Worker | Cadence | Purpose |
+|---|---|---|
+| Master Refresh | Daily, 6:00 AM | Full pull: games, odds, props, injuries, weather, news, rosters, schedule updates — this feeds `daily_game_intelligence` (Volume 3 §5.1) |
+| Odds Worker | Every 5 minutes | Refresh `odds_snapshots` |
+| Player Props Worker | Every 5 minutes | Refresh prop markets specifically — highest volatility, highest user interest |
+| Injury Worker | Every 10 minutes | Refresh injury reports |
+| Weather Worker | Every 15 minutes | Refresh weather snapshots |
+| News Worker | Every 15 minutes | Refresh news/sentiment feed |
+| Pregame Worker | Triggered, T-minus kickoff | Final refresh of all critical data immediately before a game starts — catches last-minute inactive lists and line moves the scheduled cadences might miss by a few minutes |
+
+**Why exact cadences matter enough to specify (not just "make it fast"):** the AI Transparency Meter's `data_quality` dimension (Volume 5 §5, v2.0) needs a real, calculable number — "how stale is this data right now" only means something if there's a known cadence to measure staleness against. Vague TTLs made that dimension a placeholder; concrete cadences make it real.
 
 ---
 
@@ -226,4 +277,4 @@ Full security architecture (RLS policies, encryption, threat modeling) belongs i
 
 ## Changelog Entry for This Version
 
-See `CHANGELOG.md` — v1.0, 2026-08-05, Volume 2 added. Updated to v2.0, 2026-08-05, per external architecture review — scoped internal event system (§4.5), AI abuse protection and disaster recovery targets (§9–§10), and per-component observability (§9) integrated into the sections above, not just noted in the version header.
+See `CHANGELOG.md` — v1.0, 2026-08-05, Volume 2 added. Updated to v2.0, 2026-08-05, per external architecture review — scoped internal event system (§4.5), AI abuse protection and disaster recovery targets (§9–§10), and per-component observability (§9) integrated into the sections above, not just noted in the version header. Updated to v3.0, 2026-08-05 — Redis, named vendor candidates, and concrete worker cadences integrated into §8. Updated to v4.0, 2026-08-06 — Core Architecture Principles (§1.1), Recommendation Worker (§4.4), and environment data-source policy (§5) integrated directly, per the internal markdown-consistency review.
