@@ -19,10 +19,10 @@
       - [x] PR #4 (dev → main) merged as a real merge commit; `deploy-staging` fired for real for the first time and verified `SUCCESS` on all 6 services via the Railway API — see Notes
 - [ ] Phase 1 — Database Foundation — IN PROGRESS
       - [x] Supabase connector authorized (Mac, 2026-08-07)
-      - [x] Three-project Supabase environment architecture provisioned and verified (dev/staging/production, fully separate projects, org upgraded to Pro) — see Notes
+      - [x] Three-project Supabase environment architecture provisioned and verified (dev/staging/production, fully separate projects, org confirmed already on Pro plan) — see Notes
       - [x] SUPABASE_URL and SUPABASE_ANON_KEY set in the corresponding Railway environments — see Notes
-      - [ ] SUPABASE_SERVICE_ROLE_KEY set for backend services (blocked on Mac providing each project's key, not obtainable via MCP)
-      - [ ] Migrations for Volume 3's tables — NOT STARTED
+      - [x] SUPABASE_SERVICE_ROLE_KEY set on api-gateway, ai-orchestrator, sports-intel-layer, worker-scheduled, worker-market-monitor in all three environments — Mac provided each project's key, verified via JWT claim decode (role/ref match) before setting, then independently confirmed present via list-variables and no accidental redeploy via get-status — see Notes
+      - [ ] Milestone 1: core user/account tables — IN PROGRESS
 - [ ] Phase 2 — Authentication — NOT STARTED
 - [ ] Phase 3 — Sports Intelligence Layer — NOT STARTED
 - [ ] Phase 4 — AI Orchestrator — NOT STARTED
@@ -89,3 +89,4 @@
   - **Correction found and fixed in `docs/ops/secrets-management.md`:** the existing secret inventory table listed the service role key as needed by "API Gateway, Orchestrator, Workers" only, omitting `sports-intel-layer` — but Volume 2 §4.3 has it normalizing and writing provider data into the internal data model, so it needs DB write access too. Fixed in the same pass; this is an ops-doc completeness fix, not a blueprint deviation, so no CHANGELOG entry.
   - Full project-to-environment mapping table now lives in `docs/ops/secrets-management.md`.
   - **Schema migrations have not started** — holding per Mac's explicit instruction to report the final configuration first.
+- **2026-08-07 — SUPABASE_SERVICE_ROLE_KEY set on all backend services, all three environments.** Mac confirmed the reported configuration and provided all three service role keys directly. Each key's JWT payload was decoded and checked before use — `role: service_role` and `ref` matching the intended project (production key → `dronhltumzkngwwktesf`, staging → `jhpjdjtvzzmhxvprsfaq`, dev → `nhwjtsdebgiwskshzqiq`) — confirming no keys were mismatched or swapped between environments. Set on `api-gateway`, `ai-orchestrator`, `sports-intel-layer`, `worker-scheduled`, `worker-market-monitor` in each environment (15 calls, `skipDeploys: true`). Independently verified via `list-variables` (spot-checked dev/api-gateway, staging/sports-intel-layer, production/worker-scheduled, production/worker-market-monitor) and via `get-status` on production confirming deployment timestamps unchanged (no accidental redeploy). Supabase environment configuration is now fully complete — proceeding to Milestone 1 (core user/account tables).
