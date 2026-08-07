@@ -1,10 +1,11 @@
 # The Playbook — Volume 2
 ## System Architecture, Backend Design, Railway Deployment, API Strategy, AI Orchestration, DevOps
 
-**Version:** v4.0
-**Last updated:** 2026-08-06
+**Version:** v4.1
+**Last updated:** 2026-08-07
 **Depends on:** Volume 1 (v3.0) — subscription tiers, personas, and core product principles are treated as fixed constraints here
 **v4.0 note:** Core Architecture Principles added (§1.1) as the explicit lens for future decisions. Recommendation Worker added (§4.4) — proactive recommendation generation coexisting with on-demand. Environment data-source policy formalized (§5). See `CHANGELOG.md` v4.0 entry for full reasoning.
+**v4.1 note:** §9 updated to reflect that Railway's native git-autodeploy is disabled on all three environments — the Actions-gated `railway up` step is now the only deploy path anywhere, which is what actually makes this section's test-gating claim true end-to-end. Also documents the `skipDeploys: true` config-mutation rule and the required explicit `environment=` parameter on Sentry initialization. See `CHANGELOG.md` v4.1 entry for full reasoning.
 **Read next:** Volume 3 (Database Architecture) — this volume defines the services that read/write the schema Volume 3 will specify
 
 ---
@@ -239,11 +240,15 @@ This is a deployment-shape overview; full agent-level detail belongs in Volume 4
 
 **Pipeline:** GitHub Actions → Railway, triggered on merge to environment-mapped branches (`dev` branch → dev environment, `main` → staging, tagged release → production). Every deploy runs the test suite before it's allowed to promote — no manual "just push it" deploys to production, even under time pressure, since a bad Orchestrator deploy during a live NFL Sunday is the worst-case failure mode for this specific product.
 
+**Deploy path is single and exclusive (v4.1):** Railway's own native git-autodeploy is disabled on all three environments — `dev`, `staging`, and `production` all deploy exclusively through the Actions-gated `railway up` step above. This isn't cosmetic: running both triggers side by side produced a confirmed dual-trigger race (two live deployments for the same commit at once) and silently let untested deploys reach `dev` while the Actions pipeline's test gate ran alongside, doing nothing. `railway up` runs from the repo checkout root, not a per-service subdirectory — each service's Railway `rootDirectory` config already scopes the build, so the CI job must upload the full repo rather than a pre-scoped subfolder.
+
+**Config-mutation safety (v4.1):** Any Railway config or variable mutation (`set-variables`, `update-service`, and equivalents) redeploys the target service by default unless told not to. On an environment with autodeploy disabled — which, per the above, is now all three — that default redeploy has no live git source to build from and falls back to replaying the last cached build snapshot, which can be stale. Standing rule (also in `CLAUDE.md`): every such mutation call passes `skipDeploys: true` unless triggering a deploy is the explicit point of that specific call.
+
 **Secrets management:** Railway's environment variable management per-environment, never committed to the repo. Provider API keys, model API keys, and the internal service token (Section 6) are the highest-sensitivity secrets — recommend rotating model API keys on a defined schedule (quarterly) rather than only on suspected compromise.
 
 **Observability stack:**
 - **Structured logging** across all services, correlated by a request ID that follows a single recommendation from user request through agent fan-out to final response — this correlation ID is what makes the Time Machine reconstruction practical from a systems standpoint, not just a database standpoint.
-- **Error tracking** (e.g., Sentry) on all services, with the Orchestrator and Sports Intelligence Layer getting the tightest alerting — these are the two services where a silent failure is most costly (a silent Sports Intel failure could feed stale odds into a live recommendation without anyone noticing).
+- **Error tracking** (e.g., Sentry) on all services, with the Orchestrator and Sports Intelligence Layer getting the tightest alerting — these are the two services where a silent failure is most costly (a silent Sports Intel failure could feed stale odds into a live recommendation without anyone noticing). **Environment tagging (v4.1):** Sentry's SDK does not infer which Railway environment an event came from — `sentry_sdk.init()` must explicitly pass `environment=os.environ.get("RAILWAY_ENVIRONMENT_NAME", "dev")`, or every event from every environment silently defaults to being tagged `"production"`, making dev/staging noise indistinguishable from real incidents.
 - **Uptime/health checks** on all services, feeding the System Health Dashboard defined in Volume 1's dashboard list.
 - **Per-component latency tracking (v2.0):** attached to the same correlation ID above — recommendation end-to-end, individual agent, provider call, consensus computation, database query, and API response latency each tracked separately. This is a natural extension of tracing infrastructure that already needed to exist for Time Machine purposes, not a new system; it answers "which layer is slow" instead of just "the request was slow."
 

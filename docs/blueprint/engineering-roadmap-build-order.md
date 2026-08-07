@@ -442,6 +442,7 @@ Organized by priority category rather than one flat list, specifically to keep t
 - GitHub Actions / CI pipeline issues as they surface
 - Redis provisioning and configuration
 - Any infrastructure issue actively blocking a phase's acceptance criteria
+- **Active cross-environment isolation test (added 2026-08-07).** Phase 0's AC2 ("all three environments... are network-isolated from each other per Volume 2 §5") was accepted at Phase 0 sign-off on structural grounds only — three separate Railway environments, separate services, separate env vars, nothing in the repo configures cross-environment networking — not on an actual test that attempted a cross-environment connection and confirmed it was refused. No such active probe has ever been run. Design and run one (e.g., attempt to reach a dev service's internal Railway networking address from a staging/production container, confirm it fails) before this assumption is load-bearing for anything security-sensitive.
 
 **Next Release** (planned, post-MLP, already named in Volume 1's future sports list):
 - NBA
