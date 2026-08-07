@@ -624,6 +624,8 @@ General rule applied throughout: index every foreign key used in a hot-path quer
 
 RLS is enabled on every table containing user data. Two representative examples — the pattern repeats across the schema:
 
+**Clarification (added 2026-08-07, Phase 1 Milestone 2):** this section's opening line should be read as "every table requiring access control," not narrowly as "every table containing per-user rows." Some tables outside this section's scope — the normalized multi-sport core and derived intelligence tables in §4 — hold no user-specific data but are read directly by the frontend via Supabase Realtime (Volume 2) rather than exclusively through the API Gateway, so RLS is the only enforcement layer standing in front of those reads. RLS applies to them too, via permissive public-read policies rather than the `auth.uid() = user_id` pattern used elsewhere in this section — this data was always meant to be public-facing (Volume 1/5: no subscription tier gates raw sports data, only recommendations).
+
 ```sql
 -- Users can only read their own profile
 alter table user_profiles enable row level security;
