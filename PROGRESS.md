@@ -1,6 +1,6 @@
 # Build Progress
 
-## Current Phase: 0 → 1 transition — Phase 0 fully closed and released; Phase 1 not yet started (awaiting Mac's explicit go-ahead)
+## Current Phase: 1 — Database Foundation
 
 ## Phase Status
 - [x] Phase 0 — Repository, Environments, CI/CD — CLOSED AND RELEASED 2026-08-07 — tag `v0.0.1-phase0` pushed by Mac, `deploy-production` verified `SUCCESS` on all 6 services via the Railway API — see Notes
@@ -17,7 +17,12 @@
       - [x] TR2 (manual rollback works) — verified and forward-restored
       - [x] CHANGELOG v4.1 + Volume 2 body written for all previously-undocumented deviations (autodeploy hardening, ci-cd.yml fix, Sentry fix)
       - [x] PR #4 (dev → main) merged as a real merge commit; `deploy-staging` fired for real for the first time and verified `SUCCESS` on all 6 services via the Railway API — see Notes
-- [ ] Phase 1 — Database Foundation — NOT STARTED — Phase 0 release fully verified; awaiting Mac's explicit go-ahead to begin, per CLAUDE.md's phase-gating rule
+- [ ] Phase 1 — Database Foundation — IN PROGRESS
+      - [x] Supabase connector authorized (Mac, 2026-08-07)
+      - [x] Three-project Supabase environment architecture provisioned and verified (dev/staging/production, fully separate projects, org upgraded to Pro) — see Notes
+      - [x] SUPABASE_URL and SUPABASE_ANON_KEY set in the corresponding Railway environments — see Notes
+      - [ ] SUPABASE_SERVICE_ROLE_KEY set for backend services (blocked on Mac providing each project's key, not obtainable via MCP)
+      - [ ] Migrations for Volume 3's tables — NOT STARTED
 - [ ] Phase 2 — Authentication — NOT STARTED
 - [ ] Phase 3 — Sports Intelligence Layer — NOT STARTED
 - [ ] Phase 4 — AI Orchestrator — NOT STARTED
@@ -75,4 +80,12 @@
   2. **All 6 production services `SUCCESS`** via `mcp__Railway__get-status` on the production environment directly: `api-gateway`, `ai-orchestrator`, `sports-intel-layer`, `worker-scheduled`, `worker-market-monitor`, `frontend` — deployment timestamps (19:32:26–19:32:32) match the Actions job execution window (19:32:20–19:32:34) precisely.
   3. **Commit correlation confirmed:** the `deploy-production` jobs' own `head_sha` is `cc66f8d2`, identical to the tag's commit. Railway's CLI-triggered deployments don't carry a `commitHash` in their metadata (expected, same as dev/staging all session, since native autodeploy is disabled everywhere) — verified instead via `api-gateway`'s build log directly: genuine Dockerfile build (`[1/5] FROM python:3.11-slim` through `[5/5] COPY app ./app`, not Nixpacks/Railpack) that started seconds after the job's checkout of that exact SHA, plus a passing healthcheck (`Healthcheck succeeded!`, `/health` → `200 OK`).
   4. **No failed deployment remains as latest:** `get-status`'s `latestDeployment` is `SUCCESS` for all 6 services; cross-checked via `list-deployments` on `api-gateway` — the prior `FAILED` deployment (from the original outage) and the prior `SUCCESS` (from the manual outage-response fix) are both `REMOVED`, properly superseded by the new one.
-  - **Phase 0 is now officially CLOSED AND RELEASED.** All acceptance criteria and testing requirements independently verified with real evidence, not assumptions or checkmarks, across dev, staging, and now production. Remaining non-blocking informational items: AC2 isolation remains an accepted structural assumption (tracked in the Technical Debt Backlog, Immediate); frontend Sentry remains deferred to Phase 6 per Mac's 2026-08-06 decision. **Phase 1 has still not been started — awaiting Mac's explicit go-ahead per CLAUDE.md's phase-gating rule.**
+  - **Phase 0 is now officially CLOSED AND RELEASED.** All acceptance criteria and testing requirements independently verified with real evidence, not assumptions or checkmarks, across dev, staging, and now production. Remaining non-blocking informational items: AC2 isolation remains an accepted structural assumption (tracked in the Technical Debt Backlog, Immediate); frontend Sentry remains deferred to Phase 6 per Mac's 2026-08-06 decision.
+- **2026-08-07 — Phase 1 started; Supabase three-project environment architecture provisioned.** Mac authorized the Supabase connector, then approved the intended architecture explicitly (Volume 3 §12 requires `dev`/`staging`/`production` as fully separate Supabase projects, not schemas within one — same principle as Railway's environment split). Findings and actions:
+  - Org (`ThePlaybook-sys's Org`) confirmed already on the **Pro plan** — no upgrade needed, despite an earlier `get_cost` check (before this authorization) showing $0/month, which turned out to reflect a different quote than the $10/month/project Pro-tier cost actually charged at creation time. Cost was explicitly stated to Mac ($20/month for the two new projects) before creating anything, consistent with the tool's own required confirmation step.
+  - **`staging`** (`theplaybook-staging`, ref `jhpjdjtvzzmhxvprsfaq`, `db.jhpjdjtvzzmhxvprsfaq.supabase.co`, us-east-1) and **`production`** (`theplaybook-production`, ref `dronhltumzkngwwktesf`, `db.dronhltumzkngwwktesf.supabase.co`, us-east-1) created; the pre-existing project (`nhwjtsdebgiwskshzqiq`, `db.nhwjtsdebgiwskshzqiq.supabase.co`) mapped to **`dev`**. All three independently confirmed `ACTIVE_HEALTHY` via `mcp__Supabase__get_project`, with three distinct project IDs and three distinct database hosts — full separation verified, not assumed.
+  - `SUPABASE_URL` set on all 6 services in each of the 3 Railway environments (18 calls total), and `SUPABASE_ANON_KEY` set on `frontend` in each environment — all with `skipDeploys: true`. Independently verified via `mcp__Railway__list-variables` (spot-checked `api-gateway`/dev, `frontend`/staging, `sports-intel-layer`/production) and confirmed no environment's deployment timestamps changed (`skipDeploys` held, no accidental redeploy — the same failure mode as the original production outage).
+  - **`SUPABASE_SERVICE_ROLE_KEY` deliberately not set yet** — Supabase's MCP tooling exposes only publishable/anon keys, not the service role key, same principle as any other high-sensitivity credential in this project (CLAUDE.md's Credentials & Connections section). Mac needs to retrieve each project's service role key from its own dashboard and provide it once per environment; documented as an open item in `docs/ops/secrets-management.md`.
+  - **Correction found and fixed in `docs/ops/secrets-management.md`:** the existing secret inventory table listed the service role key as needed by "API Gateway, Orchestrator, Workers" only, omitting `sports-intel-layer` — but Volume 2 §4.3 has it normalizing and writing provider data into the internal data model, so it needs DB write access too. Fixed in the same pass; this is an ops-doc completeness fix, not a blueprint deviation, so no CHANGELOG entry.
+  - Full project-to-environment mapping table now lives in `docs/ops/secrets-management.md`.
+  - **Schema migrations have not started** — holding per Mac's explicit instruction to report the final configuration first.
