@@ -8,14 +8,17 @@ This file is read automatically at the start of every Claude Code session in thi
 
 The Playbook is an AI-powered sports betting operating system — not a picks app. Full specification lives in `/docs/blueprint/`:
 
-- `volume-1-business-product-ux.md` — business model, pricing, personas, journeys (v2.0)
-- `volume-2-system-architecture.md` — backend stack, Railway deployment, API strategy (v2.0)
-- `volume-3-database-architecture.md` — full schema, RLS, migrations (v2.0)
-- `volume-4-ai-intelligence.md` — the 22-agent committee, consensus, weighting (v2.0)
-- `volume-5-frontend-ux.md` — dashboards, components, notifications (v2.0)
+- `volume-1-business-product-ux.md` — business model, pricing, personas, journeys, chat-first positioning
+- `volume-2-system-architecture.md` — backend stack, Railway deployment, API strategy, Redis, vendor picks, architecture principles, Recommendation Worker
+- `volume-3-database-architecture.md` — full schema, RLS, migrations, daily_game_intelligence, normalized multi-sport core
+- `volume-4-ai-intelligence.md` — the 22-agent committee, consensus, weighting, Kelly Criterion, session memory, dual entry points
+- `volume-5-frontend-ux.md` — dashboards, components, notifications, chat-first navigation
 - `v2.0-amendments-architecture-review.md` — schema/architecture additions from the external review, referenced throughout the volumes above
+- `v3.0-amendments-conversational-intelligence.md` — chat-first UX, intelligence pipeline, and schema additions, referenced throughout the volumes above
 - `engineering-roadmap-build-order.md` — **this is the file that governs how you work.** 12 phases (0–11), each with milestones, tasks, dependencies, acceptance criteria, and testing requirements.
 - `CHANGELOG.md` — version history. Every architectural decision has a reason, what changed, alternatives considered, and expected impact.
+
+Each file's own header states its current version — this manifest doesn't track versions separately. Check `docs/blueprint/README.md` for the live version table, or the file's own header, rather than relying on this list.
 
 Read the relevant volume section(s) before writing any code for a task — don't rely on memory of a prior session's summary of these documents. They're the source of truth, not this file.
 
@@ -95,6 +98,14 @@ Two different things happen here, and they're not interchangeable — never trea
 3. If a key is missing when a phase needs it, that phase is blocked — say so plainly and name exactly which key is missing, rather than building around it with a placeholder that could accidentally ship.
 
 **Never assume a credential exists.** If a task needs Railway access, a specific API key, or any other external connection and you're not certain it's already set up, ask before proceeding — this is the same "stop and flag rather than silently improvise" principle as the blueprint-vs-reality section above, just applied to credentials instead of architecture.
+
+---
+
+## Railway Config Mutations: Default to skipDeploys: true
+
+Any Railway MCP call that mutates a service's config or variables (`set-variables`, `update-service`, and equivalents) redeploys that service by default unless told not to. On an environment where autodeploy is intentionally disabled — production, per Volume 2 §9 — that default redeploy pulls from whatever stale cached build snapshot Railway last had, not current code, which is exactly what caused the 2026-08-07 production outage: a routine `set-variables` call (setting `SENTRY_DSN`) silently redeployed 5 production services from a snapshot that predated every Phase 0 fix.
+
+**Rule: pass `skipDeploys: true` on every Railway config/variable mutation unless a deploy is the explicit, specific point of that call.** This applies everywhere, not just production — dev and staging just happen to tolerate a stale-snapshot redeploy better because their autodeploy is live and self-corrects on the next push. Treat this as a default habit, not a case-by-case judgment call: if a call sets a variable or updates config and you haven't deliberately decided you want a redeploy to happen as a result, add `skipDeploys: true`.
 
 ---
 

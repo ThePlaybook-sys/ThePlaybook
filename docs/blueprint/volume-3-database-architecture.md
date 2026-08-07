@@ -1,10 +1,10 @@
 # The Playbook — Volume 3
 ## Database Architecture: Tables, Relationships, Indexes, Triggers, Migrations, RLS
 
-**Version:** v2.0
-**Last updated:** 2026-08-05
-**Depends on:** Volume 1 (v2.0 — tiers, personas, principles) and Volume 2 (v2.0 — service shape, routing table reference, RLS placeholder, scoped event system)
-**v2.0 note:** Amended per external architecture review — this volume absorbed the most schema changes of the five. New tables: `feature_flags`, `prompt_registry`, `model_registry`, `recommendation_costs`, expanded `audit_log`. New columns: AI versioning fields on `recommendations`, soft-delete columns on key tables. UUIDv7 recommended for high-insert append-only tables. See `v2.0-amendments-architecture-review.md` §1 for full schema detail — treat that section as authoritative alongside the original table definitions below.
+**Version:** v4.0
+**Last updated:** 2026-08-06
+**Depends on:** Volume 1 (v3.0 — tiers, personas, principles) and Volume 2 (v4.0 — service shape, routing table reference, RLS placeholder, scoped event system, Redis cache layer)
+**v4.0 note:** Normalized multi-sport core added (§4.0) — `sports`/`leagues`/`seasons`/`teams`/`players`/`player_stats`/`team_stats` plus the `player_stats_nfl` extension pattern. `games` gains `sport_id`/`league_id`/`season_id` while the legacy `sport` text field is kept, deprecated, for Phase 0/1 backward compatibility. Data quality metadata convention added to `daily_game_intelligence` (§4.1). See `CHANGELOG.md` v4.0 entry for full reasoning.
 **Read next:** Volume 4 (AI Intelligence) — the agent, consensus, and orchestration tables defined here are the tables Volume 4's logic reads and writes
 
 ---
@@ -118,12 +118,86 @@ This table is written to by a background worker (Volume 2, Section 4.4), never d
 
 ## 4. Sports Data Tables (Sports Intelligence Layer's Storage)
 
-### `games`
+### 4.0 Normalized Multi-Sport Core (v4.0)
+
+Added ahead of Phase 1 starting, specifically because this is the last point where introducing it is cheap — per the master spec's own multi-sport scalability requirement (NBA, MLB, NHL, etc. are named future launches in Volume 1), building on a single hardcoded `sport` field now would mean a much more expensive migration later, once real data and RLS policies depend on it.
+
+```sql
+create table sports (
+  id uuid primary key default gen_random_uuid(),
+  code text not null unique,          -- 'nfl', 'nba', 'mlb', etc.
+  name text not null
+);
+
+create table leagues (
+  id uuid primary key default gen_random_uuid(),
+  sport_id uuid not null references sports(id),
+  code text not null,
+  name text not null
+);
+
+create table seasons (
+  id uuid primary key default gen_random_uuid(),
+  league_id uuid not null references leagues(id),
+  year integer not null,
+  start_date date,
+  end_date date
+);
+
+create table teams (
+  id uuid primary key default gen_random_uuid(),
+  league_id uuid not null references leagues(id),
+  name text not null,
+  external_provider_id text
+);
+
+create table players (
+  id uuid primary key default gen_random_uuid(),
+  team_id uuid references teams(id),
+  name text not null,
+  position text,
+  external_provider_id text
+);
+
+create table player_stats (
+  id uuid primary key default gen_random_uuid(),
+  player_id uuid not null references players(id),
+  game_id uuid not null references games(id),
+  stats jsonb not null,               -- common cross-sport fields only
+  created_at timestamptz default now()
+);
+
+create table team_stats (
+  id uuid primary key default gen_random_uuid(),
+  team_id uuid not null references teams(id),
+  game_id uuid not null references games(id),
+  stats jsonb not null,
+  created_at timestamptz default now()
+);
+
+-- Sport-specific extension pattern (NFL only at launch, per Volume 1's NFL-only scope —
+-- NBA/MLB extension tables get added when those sports actually enter planning, not before)
+create table player_stats_nfl (
+  player_stat_id uuid primary key references player_stats(id) on delete cascade,
+  passing_yards integer,
+  receiving_yards integer,
+  rushing_yards integer,
+  interceptions integer,
+  sacks integer
+);
+```
+
+**Why extension tables instead of one wide table with every sport's columns:** a `player_stats` row with 40 mostly-null columns (passing yards for a basketball player, rebounds for a quarterback) is exactly the maintenance problem Section 1's principles warn against — every new sport would mean altering one increasingly unwieldy shared table. The extension pattern means adding NBA later is a new table (`player_stats_nba`) and zero changes to the existing NFL data or code path.
+
+### `games` (updated, v4.0 — backward-compatible transition)
 ```sql
 create table games (
   id uuid primary key default gen_random_uuid(),
   external_provider_id text not null,       -- ID from the provider adapter, for traceability
-  sport text not null default 'nfl',
+  sport_id uuid references sports(id),      -- v4.0: normalized reference
+  league_id uuid references leagues(id),    -- v4.0
+  season_id uuid references seasons(id),    -- v4.0
+  sport text not null default 'nfl',        -- LEGACY — deprecated, kept for Phase 0 backward compatibility
   home_team text not null,
   away_team text not null,
   scheduled_start timestamptz not null,
@@ -135,7 +209,9 @@ create table games (
 );
 create index idx_games_scheduled on games(scheduled_start);
 create index idx_games_status on games(status) where status in ('scheduled','live');
+create index idx_games_sport on games(sport_id);
 ```
+**Migration policy (approved with this modification):** the legacy `sport` text field is *not* removed now. Both fields coexist through Phase 0 and Phase 1 — new code paths should populate and read `sport_id`, but nothing currently depending on the `sport` text column breaks. `sport` is formally marked deprecated here, scheduled for removal once the NFL migration to the normalized model is verified complete (a Phase 1 acceptance criterion, not a later cleanup task left to drift). This trades a small amount of temporary duplication for zero Phase-0 disruption — the same reasoning that's governed every other schema decision in this document.
 
 ### `odds_snapshots`
 ```sql
@@ -152,6 +228,66 @@ create index idx_odds_game_time on odds_snapshots(game_id, captured_at desc);
 **Append-only by design.** We never update an odds row — every line movement is a new row. This is what makes Closing Line Value calculation and the Market Monitoring Engine's "did anything change since we recommended this" check possible without any extra tracking logic.
 
 Additional supporting tables follow the same append-only-snapshot pattern and are listed rather than fully specified here (each mirrors the shape of `odds_snapshots`, keyed to `game_id`, with a `captured_at` timestamp): `injury_reports`, `weather_snapshots`, `depth_chart_snapshots`, `referee_assignments`.
+
+### 4.1 `daily_game_intelligence` — Master Working Table (v3.0)
+
+A pre-assembled, denormalized table built by the Master Refresh worker (Volume 2 §8) each morning, combining that day's games with all currently-known intelligence into one row per game — the single place every agent (Volume 4 §2) looks first before separately querying the supporting tables above.
+
+```sql
+create table daily_game_intelligence (
+  game_id uuid primary key references games(id) on delete cascade,
+  teams jsonb,
+  players jsonb,
+  odds jsonb,
+  props jsonb,
+  weather jsonb,
+  injuries jsonb,
+  news jsonb,
+  travel jsonb,
+  rest jsonb,
+  stadium jsonb,
+  public_betting jsonb,
+  sharp_money jsonb,
+  ai_scores jsonb,                -- references the derived score tables below
+  momentum jsonb,
+  matchup_ratings jsonb,
+  ev_calculations jsonb,
+  confidence_scores jsonb,
+  recommendation_candidates jsonb,
+  last_updated timestamptz default now()
+);
+```
+
+**Why this doesn't undermine the Time Machine principle from §1, even though it looks like it might at first glance:** this is explicitly a *working* table, continuously overwritten as the day's data refreshes — it is **not** a source of truth for historical reconstruction. When a recommendation is created, `recommendation_snapshots` (§5 below) still freezes a copy of everything relevant at that exact moment, exactly as before this addition. `daily_game_intelligence` exists purely so agents don't have to separately query eight tables on every single request — a performance optimization sitting *upstream* of the reproducibility architecture, not a replacement for it. Months later, reconstructing a recommendation still reads `recommendation_snapshots`, never this table, which by then has long since been overwritten with unrelated days' data.
+
+**Data quality metadata convention (v4.0).** Every jsonb category above (`weather`, `injuries`, `odds`, etc.) follows the same embedded metadata shape rather than storing a bare value:
+```json
+{
+  "value": { "...category-specific fields..." },
+  "source": "WeatherAPI",
+  "confidence": 0.99,
+  "last_updated": "2026-08-06T10:03:00Z",
+  "status": "fresh"          // fresh | needs_refresh | stale
+}
+```
+`status` is computed against the cadence table in Volume 2 §8 — e.g. weather is `needs_refresh` once it exceeds its 15-minute cadence without a successful update. This is what makes the AI Transparency Meter's `data_quality` dimension (Volume 5 §5) a real, per-category number instead of one vague freshness score for the whole recommendation, and it's what lets an agent (or the Meta Agent, Volume 4 §2.6) reason explicitly about *which specific inputs* were stale rather than treating the whole packet as uniformly trustworthy or not.
+
+### 4.2 Derived Intelligence Score Tables (v3.0)
+
+Feed the `ai_scores` field above. Each follows the same simple shape, keyed to `game_id`, refreshed alongside the Master Refresh worker:
+```sql
+create table weather_scores (
+  game_id uuid references games(id) on delete cascade,
+  score numeric(5,4),
+  calculated_at timestamptz default now(),
+  primary key (game_id, calculated_at)
+);
+-- identical shape repeated for: injury_scores, travel_scores, rest_scores,
+-- momentum_scores, matchup_scores, line_value_scores, sharp_money_scores,
+-- schedule_difficulty_scores, offensive_matchup_scores, defensive_matchup_scores,
+-- coaching_edge_scores, public_sentiment_scores
+```
+Deliberately kept as separate tables rather than folded directly into `daily_game_intelligence` alone, so each score's calculation can be independently tested, versioned, and eventually fed into the Continuous Learning Engine's evaluation of which score types actually correlate with agent accuracy (Volume 4 §10) — a question that's only answerable if each score has its own queryable history.
 
 ---
 
@@ -207,6 +343,7 @@ create table recommendations (
   consensus_version text,                    -- v2.0
   weight_version text,                       -- v2.0
   deleted_at timestamptz,                    -- v2.0: soft delete, see §10
+  display_id text unique,                    -- v3.0: human-readable, e.g. PB-2026-NFL-000234
   created_at timestamptz default now(),
   withdrawn_at timestamptz,
   withdrawal_reason text
@@ -218,6 +355,8 @@ create index idx_recs_created on recommendations(created_at desc);
 **`recommendation_type` includes `'no_bet'` as a first-class value, not an absence of a row.** This matters more than it looks like it should: Volume 1's core principle is that "No Bet Today" is a celebrated, trackable output. If a no-bet day simply meant no row existed, we'd have no way to show a user "here's why we didn't recommend anything today" or to measure how often the AI correctly holds back — a metric Volume 1 explicitly wants tracked (Section 8, Elite upgrade rate after a no-bet day).
 
 **Why five separate versioning columns instead of one `version` field (v2.0):** the AI architecture doesn't move as one unit — a prompt can change without the consensus math changing, agent weights recalculate on their own schedule independent of either. Collapsing these into a single version number would hide exactly the kind of information the Time Machine principle exists to preserve: months later, "what changed" needs to be answerable at the level of *which specific thing* changed, not just "something changed." `prompt_version` and `agent_version` are populated by the Orchestrator at the moment of creation from whatever `prompt_registry` and `agents.current_weight` state was actually in effect — frozen at write time, same pattern as `weight_applied` on `recommendation_agent_outputs` below.
+
+**`display_id` (v3.0):** generated at creation time by a simple sequence-per-sport-per-year function, format `PB-{year}-{sport}-{sequence}`. Purely a UX/support convenience — `id` (the UUID) remains the actual primary key and foreign key target everywhere; `display_id` is what a user sees and what support references, so nobody's pasting UUIDs into a support ticket.
 
 ### `recommendation_agent_outputs`
 ```sql
@@ -598,9 +737,10 @@ Supabase CLI-managed migrations, one SQL file per change, sequentially numbered,
 - **Conversation/chat message schema** for the Natural Language Engine is referenced (Section 10's RLS pattern) but not fully specified — Volume 4/5 should finalize `conversations` and `conversation_messages` table shapes jointly, since both the NL Engine (Volume 4) and the chat UI (Volume 5) depend on the exact shape.
 - **Agent weighting algorithm** that writes to `agents.current_weight` and reads `agent_performance_scores` is fully owned by Volume 4 — this volume only guarantees the storage shape and the minimum-sample-size guardrail exists.
 - **Notification table schema** (referenced in Volume 2's worker list) needs a dedicated pass, likely small enough to fold into Volume 5 alongside the Notification dashboard component.
+- **Deferred schema (v3.0):** a supplementary ~150-table proposal was reviewed alongside this version's additions. Most was declined as either duplicative of existing tables under different names or premature for MLP scope (ML training tables, sentiment tables, extensive historical-data duplication beyond what the existing append-only snapshot tables already provide). Full reasoning in `v3.0-amendments-conversational-intelligence.md` §11 — worth a fresh look post-MLP once there's real usage data to justify the additional surface area.
 
 ---
 
 ## Changelog Entry for This Version
 
-See `CHANGELOG.md` — v1.0, 2026-08-05, Volume 3 added. Updated to v2.0, 2026-08-05, per external architecture review — `feature_flags`, `prompt_registry`, `model_registry`, `recommendation_costs`, expanded `audit_log`, AI versioning columns, soft-delete columns, UUIDv7 guidance, and the `referral_code` field integrated into §3, §5, §8, §10, and §11 above, not just noted in the version header.
+See `CHANGELOG.md` — v1.0, 2026-08-05, Volume 3 added. Updated to v2.0, 2026-08-05, per external architecture review — `feature_flags`, `prompt_registry`, `model_registry`, `recommendation_costs`, expanded `audit_log`, AI versioning columns, soft-delete columns, UUIDv7 guidance, and the `referral_code` field integrated into §3, §5, §8, §10, and §11 above, not just noted in the version header. Updated to v3.0, 2026-08-05 — `daily_game_intelligence`, derived score tables (§4.1–§4.2), and `display_id` (§5) integrated directly. Updated to v4.0, 2026-08-06 — normalized multi-sport core (§4.0) and data quality metadata convention (§4.1) integrated directly, per the internal markdown-consistency review.

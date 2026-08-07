@@ -200,3 +200,87 @@ This document does not change any Volume's version number — it's a build-seque
 **Alternatives considered:** Leaving this undocumented and handling it ad hoc when each phase hit the need — rejected, since this is exactly the kind of gap that's cheap to close now and expensive to discover mid-Phase-4 when the AI Orchestrator needs both model API keys at once.
 
 **Expected impact:** No architectural change to any volume. Applies going forward starting with Phase 0 (Railway authorization) and becomes directly relevant again in Phase 4 (OpenAI/Anthropic keys) and Phase 7 (Twilio credentials).
+
+---
+
+## v3.0 — 2026-08-05 — MAJOR
+
+**Volumes affected:** All five volumes, the Engineering Roadmap, and (indirectly) CLAUDE.md's file manifest.
+
+**Reason:** Three supplementary specification documents arrived covering conversational AI experience, an expanded ~150-table proposal, and infrastructure/intelligence architecture details. Triaged the same way as the v2.0 external review — accepted what closed real gaps, scoped down what was oversized for MLP, deferred what lacked a proven near-term consumer. Full point-by-point reasoning in `v3.0-amendments-conversational-intelligence.md`.
+
+**Decision (accepted, summarized):**
+- **Volume 1:** Chat-first positioning confirmed in §1 — the product's primary surface is conversational, the dashboard is the reference library, not the front door.
+- **Volume 2:** Redis added as the concrete cache implementation; named vendor candidates (The Odds API, SportsDataIO, WeatherAPI/OpenWeatherMap, NewsAPI/GNews) picked for each adapter category; concrete worker refresh cadences (5/10/15-minute workers plus a 6 AM Master Refresh and a triggered Pregame worker) replacing previously vague TTL language.
+- **Volume 3:** `daily_game_intelligence` added as a pre-assembled master working table agents query first, explicitly positioned *upstream* of the existing Time Machine snapshot architecture rather than replacing it; 13 derived intelligence score tables feeding it; `display_id` added to `recommendations` for human-readable IDs.
+- **Volume 4:** Bankroll Coach's stake formula is now explicit fractional (quarter-Kelly) Kelly Criterion; NL Engine gained session-scoped preference memory (distinct from persistent `betting_dna`) and a four-level progressive disclosure spec (concise by default, expanding only on request); Recommendation Strategy Engine's parlay logic explicitly confirmed to freely mix market types.
+- **Volume 5:** `/chat` reordered to the default landing route, `/dashboard` reframed as the reference library — no new architecture, every route already existed; Recommendation Card gained chat-context rendering using the four-level disclosure spec.
+- **Roadmap:** Phases 1, 3, 4, 5, and 6 gained new scope, cited per-phase in each volume's changes above.
+
+**Alternatives considered:**
+- Adopting the full ~150-table supplementary proposal wholesale — rejected. Most duplicated existing Volume 3 tables under different names or was premature for MLP scope (ML training tables, sentiment tables, extensive historical-data duplication the append-only snapshot tables already cover). Full list of what was deferred and why is in the amendments doc §11.
+- Treating chat-first as requiring a tie-breaking decision from Mac before proceeding — considered, but resolved directly: nothing architectural reverses, `/chat` already existed as a fully-specified route, this is a reprioritization of which surface loads first, consistent with what Volume 1 already said about the product feeling like texting an analyst rather than using a dashboard.
+- Sportsbook promotions tracking and social sentiment monitoring (X/Reddit) as full features — deferred, no proven MLP-stage consumer, same reasoning pattern already used for several v2.0 deferrals.
+
+**Expected impact:**
+- Second MAJOR bump for the project (v2.0 was the first). Same ripple pattern: schema changes in Volume 3 affect Volume 4's agent querying order and Volume 5's data contracts.
+- This time, unlike the v2.0 rollout, every volume's body was integrated in the same pass its header was bumped — no header-only shortcut repeated, directly applying the lesson logged in the v2.0.2 entry above.
+- CLAUDE.md's file manifest needs `v3.0-amendments-conversational-intelligence.md` added to its list of blueprint documents.
+- No volume's pricing, core product principles, or agent committee membership changed — this bump is UX positioning and infrastructure depth, not a reversal of any prior decision.
+
+**Full technical detail:** `v3.0-amendments-conversational-intelligence.md`
+
+---
+
+## v4.0 — 2026-08-06 — MAJOR
+
+**Volumes affected:** Volume 2, Volume 3, Volume 4, Volume 5, and the Engineering Roadmap. Volume 1 reviewed and confirmed to need no changes.
+
+**Reason:** An internal markdown-consistency review (requested directly, not an external document this time) checked all volumes against the latest architectural decisions and proposed four changes plus two additional recommendations. Full change plan was presented and approved before any file was touched — with one approved modification to Change 1.
+
+**Decision (approved, summarized):**
+- **Change 1 (modified):** Normalized multi-sport core added to Volume 3 §4.0 — `sports`, `leagues`, `seasons`, `teams`, `players`, `player_stats`, `team_stats`, and a `player_stats_nfl` extension table. `games` gains `sport_id`/`league_id`/`season_id`. **Modification from the original proposal:** the legacy `sport` text column is *not* removed now — both fields coexist through Phase 0/1, with `sport` formally marked deprecated and scheduled for removal only after the NFL migration is verified complete (now a Phase 1 acceptance criterion). This trades brief duplication for zero Phase-0 disruption.
+- **Change 2:** Recommendation Worker added — proactive generation (`Master Refresh → Recommendation Worker → AI Committee → store recommendations`) coexisting with on-demand NL Engine generation, not replacing it. Documented in both Volume 2 §4.4 (the trigger) and Volume 4 §3.1 (the flow it triggers), since both needed to agree.
+- **Change 3:** Data quality metadata convention added to `daily_game_intelligence` (Volume 3 §4.1) — every jsonb category now carries `source`/`confidence`/`last_updated`/`status`, giving the AI Transparency Meter's `data_quality` dimension (Volume 5 §5) a real computation source instead of vague "cache freshness" language.
+- **Change 4:** Environment data-source policy formalized as an official table in Volume 2 §5 (previously only an informal roadmap note).
+- **Additional recommendation #1 (approved):** Core Architecture Principles added to Volume 2 §1.1 — ten principles serving as the explicit lens for future decisions, most restating decisions already made elsewhere, collected in one place rather than left implicit across five volumes.
+- **Additional recommendation #2 (approved):** Technical Debt & Feature Backlog added to the Engineering Roadmap, organized into Immediate/Next Release/Future/Research categories rather than one flat list, explicitly cross-referencing items already tracked as deferred decisions elsewhere in this changelog to avoid duplicate tracking.
+
+**Alternatives considered:**
+- Immediately removing the legacy `sport` field as part of Change 1 (the original proposal) — rejected in favor of the deprecated-but-present transition, per the explicit modification.
+- Treating the Recommendation Worker as a replacement for on-demand generation rather than a coexisting path — rejected; the NL Engine's ability to handle a specific unanticipated request ("build me something around Mahomes") is core to the chat-first positioning from v3.0 and can't be lost to a purely proactive model.
+
+**Expected impact:**
+- Third MAJOR bump for the project. Same ripple pattern as v2.0/v3.0: schema changes in Volume 3 affect Volume 4's flow and Volume 5's data contracts.
+- Phase 1's acceptance criteria gained a real check (dual-write verification for `sport`/`sport_id`) rather than just a note.
+- Phase 4's "all agents built" milestone now implicitly includes the Recommendation Worker as a build item, cross-referenced from Phase 3's Master Refresh dependency.
+- Volume 1 was reviewed and confirmed to require no changes — worth stating explicitly so a future review doesn't re-check the same ground.
+- Every volume's body was integrated in the same pass as its header bump, continuing the discipline established after the v2.0.1/v2.0.2 lesson — no header-only shortcut this time either.
+
+**Full technical detail:** This entry, plus the reasoning inline in each volume's v4.0 note.
+
+---
+
+## v4.1 — 2026-08-07 — MINOR
+
+**Volume affected:** Volume 2 (System Architecture, Backend Design, Railway Deployment, API Strategy, AI Orchestration, DevOps) only.
+
+**Reason:** Phase 0 closure work exercised the CI/CD pipeline for real for the first time — until this session, Railway's native git-autodeploy had been doing all the actual deploying on every environment, silently running in parallel with the Actions pipeline that Volume 2 §9 already claimed was gating every deploy on the test suite. That parallel path masked three real defects that only surfaced once the Actions pipeline was made to actually deploy: a dual-trigger race on `dev` (two deployments live simultaneously for the same commit, confirmed directly against the Railway API — not a theoretical risk), a `working-directory` bug in `ci-cd.yml` that broke every Actions-triggered deploy while native autodeploy quietly covered for it, and a same-day production outage where a routine `SENTRY_DSN` variable-set silently redeployed 5 production services from a stale pre-fix snapshot. Separately, real end-to-end Sentry verification (triggering an actual event from the `dev` environment) found every event was tagged `environment: production` regardless of which environment actually produced it.
+
+**Decision:**
+- Railway's native git-autodeploy disabled on all three environments (`dev`, `staging`, `production`). The Actions-gated `railway up` step is now the only path that deploys anywhere — this is what actually makes Volume 2 §9's existing "every deploy runs the test suite before it's allowed to promote" claim true, rather than true only for the Actions path while an untested parallel path ran alongside it.
+- `ci-cd.yml`'s deploy jobs fixed: `railway up` now runs from the repo checkout root instead of `working-directory: apps/<service>` (each service's own `rootDirectory` config already scopes the build; running from a pre-scoped subfolder broke the snapshot upload), and the `workers` matrix entry split into the two real Railway service names, `worker-scheduled` and `worker-market-monitor`.
+- Standing rule added (CLAUDE.md, 2026-08-07): every Railway config/variable mutation call defaults to `skipDeploys: true` unless a deploy is the explicit point of that call, so a routine variable-set can no longer silently redeploy an autodeploy-disabled environment from a stale cached snapshot.
+- Sentry environment tagging fixed: `sentry_sdk.init()` in all four backend services (`api-gateway`, `ai-orchestrator`, `sports-intel-layer`, `workers`) now explicitly passes `environment=os.environ.get("RAILWAY_ENVIRONMENT_NAME", "dev")`. Without it, the SDK silently defaults every event to `"production"` regardless of which environment actually generated it — verified fixed by re-triggering and confirming `environment: dev` in the Sentry dashboard.
+
+**Alternatives considered:**
+- Leaving native autodeploy enabled alongside the Actions pipeline — rejected once the dev dual-trigger race was confirmed as a real, observed defect (not theoretical): two live deployments for the same commit at once is a correctness problem.
+- Disabling native autodeploy on `dev` only, since that's where the race was actually observed, and leaving `staging`/`production` as-is — rejected in favor of hardening all three identically, since both were equally exposed to the same class of bug (the production outage this same session was caused by exactly this class of issue) even though it hadn't yet surfaced there by name.
+- Patching the `skipDeploys` gap as a one-time fix on the affected call rather than a standing rule — rejected; a one-off fix doesn't prevent recurrence, which is the actual lesson of the production outage.
+
+**Expected impact:**
+- Volume 2 §9's CI/CD claim is now accurate end-to-end rather than aspirational — there is exactly one deploy path per environment, which is also what makes Phase 0's testing requirements (failing test blocks deploy; rollback works) verifiable claims instead of claims about a path nothing was actually forced through.
+- No other volume is affected — this is deployment and observability mechanics, not a schema, agent, or product decision. MINOR bump, confined to Volume 2.
+- §9's body updated in the same pass as this entry (not header-only), continuing the discipline established after the v2.0.1/v2.0.2 lesson.
+
+**Full technical detail:** This entry; also logged operationally in `PROGRESS.md`'s 2026-08-07 notes.

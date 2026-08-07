@@ -1,11 +1,12 @@
 # The Playbook — Volume 1
 ## Business, Product Vision, User Experience, Pricing, Customer Journeys
 
-**Version:** v2.0
+**Version:** v3.0
 **Last updated:** 2026-08-05
 **Status:** Foundational — downstream volumes inherit these decisions
 **Depends on:** Master Prompt (source spec)
-**v2.0 note:** Amended per external architecture review — referral system field and Public Transparency Portal (post-MLP) added. See `v2.0-amendments-architecture-review.md` §5 for full detail.
+**v3.0 note:** Chat-first positioning confirmed in §1 — `/chat` is now the default landing surface, dashboard is the reference library. See `v3.0-amendments-conversational-intelligence.md` §1 for full reasoning.
+**v4.0 review note:** Reviewed as part of the internal markdown-consistency review (2026-08-06) alongside Volumes 2–5. Confirmed to require no changes — none of that round's four approved changes (multi-sport schema, Recommendation Worker, data quality metadata, environment policy) touch business model, pricing, personas, or product principles. Version number intentionally stays at v3.0; this note exists so a future review doesn't re-check the same ground assuming it was skipped.
 **Read next:** Volume 2 (System Architecture) once this is locked
 
 ---
@@ -19,6 +20,8 @@ The business only works if two things are true simultaneously:
 2. The product makes that honesty feel like value, not withholding.
 
 Everything below — pricing, onboarding, personas, journeys — is built around solving that tension.
+
+**Conversational-first, dashboard-second (v3.0).** The primary experience is texting an elite analyst, not opening a dashboard. The dashboard still exists — recommendation history, analytics, settings, all of it — but it's the reference library, not the front door. This isn't a new principle so much as a sharpening of one that was already implicit: an "operating system" people actually use daily looks and feels like a conversation, not a spreadsheet with a chat feature bolted on. Volume 5 reflects this directly — `/chat` is the default landing route post-login, not `/dashboard`.
 
 ---
 
@@ -176,4 +179,4 @@ Flagging these now so Volumes 2–5 don't silently diverge:
 
 ## Changelog Entry for This Version
 
-See `CHANGELOG.md` — v1.0, 2026-08-05. Updated to v2.0, 2026-08-05, per external architecture review — Section 9.1 (Referral & Public Trust Levers) added above, not just noted in the version header.
+See `CHANGELOG.md` — v1.0, 2026-08-05. Updated to v2.0, 2026-08-05, per external architecture review — Section 9.1 (Referral & Public Trust Levers) added above, not just noted in the version header. Updated to v3.0, 2026-08-05 — §1 amended with chat-first positioning, integrated directly rather than only noted in the header.

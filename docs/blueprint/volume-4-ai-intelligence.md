@@ -1,11 +1,11 @@
 # The Playbook — Volume 4
 ## AI Intelligence Architecture: Agents, Orchestration, Consensus, Explainability, Learning
 
-**Version:** v2.0
-**Last updated:** 2026-08-05
-**Depends on:** Volume 2 (v2.0 — Orchestrator deployment shape, async fan-out pattern, scoped event system) and Volume 3 (v2.0 — `agents`, `agent_performance_scores`, `recommendation_agent_outputs`, `consensus_snapshots`, `model_routing_rules`, `prompt_registry`, `model_registry` tables)
+**Version:** v4.0
+**Last updated:** 2026-08-06
+**Depends on:** Volume 2 (v4.0 — Orchestrator deployment shape, async fan-out pattern, scoped event system, Redis, Recommendation Worker) and Volume 3 (v4.0 — `agents`, `agent_performance_scores`, `recommendation_agent_outputs`, `consensus_snapshots`, `model_routing_rules`, `prompt_registry`, `model_registry`, `daily_game_intelligence`, normalized multi-sport core)
 **Resolves open items from:** Volume 2 §7 (confidence variance threshold), Volume 3 §13 (agent weighting algorithm, conversation schema)
-**v2.0 note:** Amended per external architecture review — committee is now 22 agents (Meta Agent added as a post-consensus reviewer, not a fan-out participant); shared agent output contract (§2.1) extended with `evidence_classification` for hallucination/assumption discounting. See `v2.0-amendments-architecture-review.md` §1.9–1.10 for full detail.
+**v4.0 note:** §3.1 now documents two entry points into the same pipeline — the proactive Recommendation Worker (Volume 2 §4.4) and on-demand NL Engine requests — converging on identical steps, not separate fast/slow paths. See `CHANGELOG.md` v4.0 entry for full reasoning.
 **Read next:** Volume 5 (Frontend & UX Architecture) — every output defined here needs a home on a screen
 
 ---
@@ -89,6 +89,8 @@ Convert everything above into a probability, a value judgment, and a risk-aware 
 
 **Why Risk Manager and Bankroll Coach are separate from Expected Value:** a bet can have strong positive EV and still be inappropriate for a specific user's bankroll or risk tolerance (e.g., a +EV parlay with high variance is a bad fit for a conservative $20/unit casual bettor, per Volume 1's Persona B). Collapsing these into one agent would force a single number to represent two different questions — "is this a good bet in the abstract" vs. "is this a good bet for this person" — and Volume 1's personalization promise depends on keeping that distinction explicit and auditable.
 
+**Bankroll Coach's stake formula (v3.0):** fractional Kelly Criterion, not an unspecified translation. Quarter-Kelly is the default multiplier — full Kelly is too aggressive for a product whose core positioning is disciplined risk management, not maximum growth. Computed as `stake = bankroll × (kelly_fraction × edge / odds) × risk_tolerance_multiplier`, where `edge` and the base Kelly fraction come from the Probability Modeling Agent's calibrated probability against the current odds, and `risk_tolerance_multiplier` (derived from `user_profiles.risk_tolerance`) scales the quarter-Kelly base up or down per user rather than applying one fixed fraction to everyone.
+
 ### 2.6 Meta Agent (v2.0 — Committee Reviewer, Not a Fan-Out Participant)
 
 The 22nd agent. Unlike the other 21, it doesn't analyze the game — it analyzes the committee's output after the Consensus Engine has run (Section 4). Think of it as AI quality assurance sitting one layer above everything else in this section.
@@ -115,8 +117,10 @@ Applied in §4.1 as the last step before the 0.55 "No Bet Today" check (§4.2): 
 
 ### 3.1 Execution Flow
 
+**Two entry points trigger this flow (v4.0)**, both converging on the same steps below: (1) the **Recommendation Worker** (Volume 2 §4.4), running proactively shortly after each Master Refresh, generating recommendations before any user has asked; (2) the **NL Engine** (§7), triggered on-demand by a specific user request the proactive path wouldn't have anticipated ("build me something around Mahomes"). Both produce a `recommendations` row through the identical pipeline — there is no separate "fast path" or "slow path" logic, only a different trigger.
+
 ```
-1. Sports Intelligence Layer produces a game snapshot (Volume 2 §8)
+1. Sports Intelligence Layer produces a game snapshot (Volume 2 §8) — as of v3.0, this means agents query `daily_game_intelligence` (Volume 3 §4.1) first, falling back to the individual supporting tables only for anything not yet reflected in that day's pre-assembled record
 2. Orchestrator reads model_routing_rules (Volume 3 §8) for each agent's task_type
 3. Context & Data Agents + Matchup & Form Agents + Market Agents execute
    in parallel (async fan-out, Volume 2 §7) — 17 agents, one wave
@@ -129,6 +133,8 @@ Applied in §4.1 as the last step before the 0.55 "No Bet Today" check (§4.2): 
 10. Recommendation Strategy Engine decides final output shape (Section 9)
 11. Package + full snapshot written to recommendation_snapshots (Volume 3 §5)
 ```
+
+**Why proactive generation doesn't complicate personalization (step 6):** the Recommendation Worker's proactive run uses each active user's `user_profiles`/`betting_dna` at the time it runs, same as an on-demand request would — it's not a single generic recommendation broadcast to everyone. In practice this means the worker iterates active users (or user-persona clusters, as an optimization once volume justifies it) rather than producing one universal recommendation per game.
 
 Steps 4–6 are necessarily sequential (each depends on the prior step's output), while steps 1–17 in step 3 run concurrently — this hybrid pattern is why the deployment needs to support both fan-out and short sequential chains within a single request, a nuance worth flagging back to Volume 2's stateless-service assumption: the Orchestrator's internal execution graph has structure, even though the service itself is stateless between requests.
 
@@ -212,6 +218,7 @@ Resolves the schema gap flagged at the end of Volume 3 (§13, `conversations` / 
 create table conversations (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
+  session_preferences jsonb default '{}',   -- v3.0: session-scoped exclusions, see below
   created_at timestamptz default now()
 );
 
@@ -227,6 +234,19 @@ create table conversation_messages (
 ```
 
 **Intent classification, not rigid command parsing.** Per Volume 1's onboarding design and the master spec's explicit examples ("I only got $20," "I hate betting the Cowboys"), the NL Engine's job is to classify free-text into an intent + extracted parameters (stake constraint, team exclusion, risk framing), then route to the appropriate engine — it never requires the user to phrase things in a specific way. This same classification step is also the mechanism that refines `persona_classification` in `user_profiles` (Volume 3 §3) over time, alongside the Betting DNA worker.
+
+**Session-scoped preference memory (v3.0).** Distinct from the persistent `betting_dna` table (Volume 3 §3): statements like "I don't like unders," "I only bet player props," or "my bankroll today is $75" apply for the rest of that conversation without needing to be restated, written to `conversations.session_preferences` and checked by the NL Engine on every subsequent recommendation request in that session. These don't persist to `betting_dna` on their own — that graduation to a permanent preference only happens if the pattern repeats across multiple sessions, via the existing Betting DNA background worker. Session memory is cheap and immediate; persistent memory requires actual evidence of a lasting pattern, same anti-overfitting instinct that governs agent weighting (§6).
+
+**Progressive disclosure — four response levels (v3.0).** The default response is concise by design, not a compromise:
+
+| Level | Trigger | Content |
+|---|---|---|
+| 1 | Default | One card: bet, confidence, EV, 1-2 sentence summary |
+| 2 | "Why?" / "Explain" | Bullet summary of the 5-8 strongest contributing factors |
+| 3 | "Show me your reasoning" | Full prose rendering of the explainability question set (§8) |
+| 4 | "Show me everything" | Complete consensus report — every contributing agent's output |
+
+Nothing new needed to be built to support this: Level 4 *is* the Explainability Panel (Volume 5 §5), Level 3 *is* a prose rendering of `explainability_payloads`, Level 1 *is* the Recommendation Card's existing summary fields. This is a presentation-layer sequencing decision, not a new data requirement.
 
 ---
 
@@ -262,6 +282,8 @@ Decides the *shape* of the final output (single, prop, SGP, multi-game parlay, m
 5. If market conditions are broadly unfavorable across the board (not just one game) → `bankroll_preservation`, a distinct status from a per-game `no_bet`, meant to message "sit out today entirely" at the portfolio level.
 
 **Never force a shape onto the data.** This is the master spec's most repeated instruction across the whole document, and it's worth stating plainly here as an actual rule the engine enforces: the default output, absent a clear signal, is always the more conservative option in this ordering — no_bet over single, single over parlay.
+
+**Parlays freely mix market types (v3.0, explicit confirmation of previously-implicit behavior).** When a parlay shape (rule 3 above) is selected, individual legs are never restricted to one market type. A single parlay can combine moneyline, spread, totals, and player props (passing yards, anytime TD, strikeouts, points, assists, etc.) in whatever combination the Consensus Engine's highest-confidence findings support — this was already implied by the Player Prop Agent existing as a full committee member (§2.3), but is now an explicit rule: mixing markets whenever it improves expected value is default behavior, not a special case requiring separate logic.
 
 ---
 
@@ -313,4 +335,4 @@ This backtesting phase is a concrete, sizable engineering task in its own right 
 
 ## Changelog Entry for This Version
 
-See `CHANGELOG.md` — v1.0, 2026-08-05, Volume 4 added. Updated to v2.0, 2026-08-05, per external architecture review — Meta Agent (§2.6) and `evidence_classification` (§2.1, §4.1) integrated into the committee and consensus logic described above, not just noted in the version header.
+See `CHANGELOG.md` — v1.0, 2026-08-05, Volume 4 added. Updated to v2.0, 2026-08-05, per external architecture review — Meta Agent (§2.6) and `evidence_classification` (§2.1, §4.1) integrated into the committee and consensus logic described above, not just noted in the version header. Updated to v3.0, 2026-08-05 — Kelly Criterion (§2.5), session memory and progressive disclosure (§7), and explicit parlay market-mixing (§9) integrated directly. Updated to v4.0, 2026-08-06 — dual entry points (proactive Recommendation Worker + on-demand NL Engine) integrated into §3.1, per the internal markdown-consistency review.

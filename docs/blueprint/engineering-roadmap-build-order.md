@@ -1,9 +1,11 @@
 # The Playbook — Engineering Roadmap & Build Order
 
-**Version:** v2.0
-**Last updated:** 2026-08-05
+**Version:** v4.0
+**Last updated:** 2026-08-06
 **Type:** Companion document — not a Volume. Volumes 1–5 describe *what* the system is. This document describes *the order in which to build it* and *how to know each piece is actually done* before moving to the next.
 **v2.0 note:** Amended per external architecture review, which arrived before any phase began building — no phase needed to be reopened, but Phases 1, 4, 5, and 6 gained new scope. See `v2.0-amendments-architecture-review.md` §7 for the full impact summary.
+**v3.0 note:** Amended per conversational-first UX and intelligence pipeline additions — Phases 1, 3, 4, 5, and 6 gained new scope (`daily_game_intelligence`, Redis, named vendors, worker cadences, Kelly Criterion, session memory, chat-first landing route). See `v3.0-amendments-conversational-intelligence.md` §12 for the full impact summary.
+**v4.0 note:** Amended per the internal markdown-consistency review — Phases 1, 3, and 4 gained new scope (normalized multi-sport core, Recommendation Worker), and a Technical Debt & Feature Backlog section added. See `CHANGELOG.md` v4.0 entry for full detail.
 **Depends on:** All five volumes. Every phase below cites the specific volume/section it implements.
 **Rule for using this document:** No phase starts before the prior phase's acceptance criteria are met. This isn't bureaucracy for its own sake — Phase 5 (Recommendation Pipeline) will silently produce wrong or unreproducible output if Phase 1 (Database Foundation) has a schema gap, and that kind of bug is far more expensive to find in Phase 9 than in Phase 1.
 
@@ -100,11 +102,16 @@ Phases 7, 8, and 9 are the first genuine parallelization point — everything be
 
 **v2.0 addition:** also build `feature_flags`, `prompt_registry`, `model_registry`, `recommendation_costs`, and the expanded `audit_log` (all specified in `v2.0-amendments-architecture-review.md` §1). Add AI versioning columns and soft-delete columns to their respective tables. Use UUIDv7 for `odds_snapshots`, `recommendation_agent_outputs`, and `market_monitoring_events` specifically.
 
+**v3.0 addition:** also build `daily_game_intelligence` and the 13 derived score tables (Volume 3 §4.1–§4.2). Add `display_id` to `recommendations` and `session_preferences` to `conversations` (the latter is created in this phase even though it's populated starting in Phase 5, so the schema is ready). Note that `daily_game_intelligence` is a working table with no historical-integrity requirement — it doesn't need the append-only or soft-delete treatment the snapshot tables get.
+
+**v4.0 addition:** build the normalized multi-sport core (Volume 3 §4.0) — `sports`, `leagues`, `seasons`, `teams`, `players`, `player_stats`, `team_stats`, and the `player_stats_nfl` extension table. Update `games` to add `sport_id`/`league_id`/`season_id` while keeping the legacy `sport` text column — both coexist through this phase. Add the data quality metadata convention (source/confidence/last_updated/status) to `daily_game_intelligence`'s jsonb categories.
+
 **Acceptance Criteria:**
-- Every table from Volume 3 (including the v2.0 additions above) exists in `dev` with correct types, constraints, and foreign keys
+- Every table from Volume 3 (including the v2.0, v3.0, and v4.0 additions above) exists in `dev` with correct types, constraints, and foreign keys
 - RLS policies verified by attempting a cross-user read (e.g., User A querying User B's `user_profiles` row) and confirming it returns zero rows, not an error and not the data
 - The append-only trigger on `recommendation_agent_outputs` verified by attempting an `UPDATE` and confirming it raises the expected exception
 - A full migration replay from empty database to current state completes without manual intervention
+- Every seeded NFL game correctly populates both the legacy `sport` field and the new `sport_id` reference — proof the backward-compatible dual-write actually works, not just that both columns exist
 
 **Testing Requirements:**
 - Automated RLS test suite: for every table with a policy, a test that confirms both the "owner can access" and "non-owner cannot access" cases
@@ -160,17 +167,23 @@ Phases 7, 8, and 9 are the first genuine parallelization point — everything be
 - Build remaining adapters (injuries, weather, rosters, schedules), each against a documented fallback provider per Volume 2 §8
 - Implement caching per category with the TTLs specified in Volume 2 §8
 
+**v3.0 addition:** implement Redis as the concrete cache layer (Volume 2 §8) rather than an unspecified cache. Build against the named vendor candidates — The Odds API (odds), SportsDataIO (stats/injuries/rosters/schedules), WeatherAPI with OpenWeatherMap fallback (weather), NewsAPI or GNews (news). Build the Master Refresh worker (daily 6:00 AM) that populates `daily_game_intelligence`, plus the Odds/Player Props (5 min), Injury (10 min), Weather/News (15 min), and Pregame (triggered) workers per Volume 2 §8's cadence table.
+
+**v4.0 note (no new build in this phase, sequencing only):** the Recommendation Worker (Volume 2 §4.4) that consumes Master Refresh's output belongs to Phase 4/5 (it needs the agent committee to exist first) — this phase only needs to guarantee Master Refresh completes reliably and on schedule, since Phase 4/5's proactive worker depends on it.
+
 **Dependencies:** Phase 1 complete (target tables must exist).
 
 **Acceptance Criteria:**
 - Real (or sandboxed) provider data flows end-to-end into `games` and `odds_snapshots` with correct normalization
 - Switching a provider adapter's underlying implementation (tested with a mock swap) requires no changes outside the Sports Intelligence Layer itself — this is the actual test of whether the adapter pattern was implemented correctly, not just described correctly
 - Cache hit rate is measurable and matches expected TTL behavior per category
+- `daily_game_intelligence` is populated correctly by the Master Refresh worker and stays current per the cadence table — verified by checking `last_updated` against each source worker's actual run time
 
 **Testing Requirements:**
 - Adapter interface conformance tests — every adapter implements the full shared interface, verified automatically, not by code review alone
 - Simulated provider outage test: confirm the system degrades gracefully (uses cached data, doesn't crash downstream services) when a provider call fails
 - Load test against expected Sunday-slate polling volume before this phase is considered done, not deferred to Phase 10
+- Verify `daily_game_intelligence` is correctly treated as a working table, not a Time Machine source — confirm a `recommendation_snapshots` reconstruction (tested fully in Phase 5) never reads from it
 
 ---
 
@@ -193,6 +206,10 @@ Phases 7, 8, and 9 are the first genuine parallelization point — everything be
 - Implement the Consensus Engine formula from Volume 4 §4.1, and the Elite second-pass trigger from §4.3
 - Populate `model_routing_rules` with the launch defaults from Volume 4 §3.2
 
+**v3.0 addition:** implement fractional (quarter-Kelly) Kelly Criterion in the Bankroll Coach agent's stake formula (Volume 4 §2.5) rather than an unspecified stake translation. Wire agents to query `daily_game_intelligence` (Volume 3 §4.1) first per the updated step 1 of Volume 4 §3.1, falling back to individual supporting tables only when a field isn't yet reflected there. Confirm the Recommendation Strategy Engine's parlay logic (built fully in Phase 5, but the underlying agent outputs feeding it are built here) supports mixed-market legs per Volume 4 §9's v3.0 addition — no market-type restriction baked into any single agent's output shape.
+
+**v4.0 addition:** build the Recommendation Worker (Volume 2 §4.4, Volume 4 §3.1) — triggers the full agent committee proactively shortly after Master Refresh completes, for each active user (or user-persona cluster as a later optimization), storing results the same way an on-demand request would. Confirm this doesn't bypass personalization: the worker must read each user's `user_profiles`/`betting_dna` at run time, not produce one generic recommendation shared across users.
+
 **Dependencies:** Phase 3 complete (agents need real normalized sports data to reason over) and Phase 1 (agent output tables must exist).
 
 **Acceptance Criteria:**
@@ -201,6 +218,7 @@ Phases 7, 8, and 9 are the first genuine parallelization point — everything be
 - A full orchestration run completes and produces a correct `consensus_snapshots` row with plausible aggregate confidence
 - Disabling/zero-weighting a single agent measurably changes the aggregate confidence calculation in the expected direction — proof the weighting math is actually wired in, not decorative
 - The 0.55 "No Bet Today" floor from Volume 4 §4.2 correctly suppresses a recommendation in a deliberately low-confidence test scenario
+- Bankroll Coach's Kelly-based stake output changes correctly when `risk_tolerance` changes on an otherwise identical test profile — proof the formula is actually parameterized per user, not a fixed fraction
 
 **Testing Requirements:**
 - Unit tests per agent against known input/output pairs (this is where the pre-launch backtesting data from Volume 4 §11 starts getting collected, even informally)
@@ -227,6 +245,7 @@ Phases 7, 8, and 9 are the first genuine parallelization point — everything be
 - Build the scheduled worker that triggers on `games.status = 'final'` and generates `postgame_reviews`
 - Implement the adaptive weighting algorithm from Volume 4 §6, with all three guardrails (sample size, max change, evaluation window) enforced in code, not just documented as intent
 - **v2.0 addition:** wire `RecommendationCreated`, `RecommendationUpdated`, and `RecommendationWithdrawn` events (Postgres LISTEN/NOTIFY, per `v2.0-amendments-architecture-review.md` §2) as part of the same transaction that writes `recommendation_snapshots` — not a best-effort afterthought
+- **v3.0 addition:** generate `display_id` (Volume 3 §5) as part of the same creation transaction. Wire the NL Engine's session-preference checking (Volume 4 §7) — a stated exclusion in `conversations.session_preferences` must actually filter what the Recommendation Strategy Engine considers, not just get stored and ignored.
 
 **Dependencies:** Phase 4 complete (needs the full agent committee and consensus output to build a recommendation from) and Phase 2 (needs user profiles for Bankroll Coach personalization).
 
@@ -259,6 +278,7 @@ Phases 7, 8, and 9 are the first genuine parallelization point — everything be
 - Build the four-step onboarding flow from Volume 1 §6 / Volume 5 §6, with the same-session first-recommendation requirement as a hard completion gate for this milestone
 - Build both distinct empty/alternate states (No Bet Today, Bankroll Preservation) rather than one generic fallback
 - **v2.0 addition:** build the AI Transparency Meter and Recommendation Timeline components as part of the Explainability Panel work (`v2.0-amendments-architecture-review.md` §4)
+- **v3.0 addition (biggest re-scope in this phase):** `/chat` is now the default landing route, not `/dashboard` (Volume 5 §3) — build the four-level progressive response format (Volume 4 §7) as core chat behavior, not an optional feature. The onboarding modal from Milestone 4 now layers on top of `/chat`, not `/dashboard`.
 
 **Dependencies:** Phase 5 complete (needs a working recommendation pipeline to render real data against) and Phase 2 (needs auth for onboarding).
 
@@ -414,6 +434,37 @@ Phases 7, 8, and 9 are the first genuine parallelization point — everything be
 
 ---
 
+## Technical Debt & Feature Backlog (v4.0)
+
+Organized by priority category rather than one flat list, specifically to keep the backlog actionable and prevent feature creep — a flat list makes everything look equally urgent, which is how scope creep happens by accident rather than by decision.
+
+**Immediate** (blocking or near-blocking current work):
+- GitHub Actions / CI pipeline issues as they surface
+- Redis provisioning and configuration
+- Any infrastructure issue actively blocking a phase's acceptance criteria
+- **Active cross-environment isolation test (added 2026-08-07).** Phase 0's AC2 ("all three environments... are network-isolated from each other per Volume 2 §5") was accepted at Phase 0 sign-off on structural grounds only — three separate Railway environments, separate services, separate env vars, nothing in the repo configures cross-environment networking — not on an actual test that attempted a cross-environment connection and confirmed it was refused. No such active probe has ever been run. Design and run one (e.g., attempt to reach a dev service's internal Railway networking address from a staging/production container, confirm it fails) before this assumption is load-bearing for anything security-sensitive.
+
+**Next Release** (planned, post-MLP, already named in Volume 1's future sports list):
+- NBA
+- MLB
+- NHL
+
+**Future** (real ideas, not yet scoped):
+- Community picks
+- Live betting
+- Advanced explainability beyond the current nine-question spec
+- Deeper personalized betting profiles beyond current Betting DNA
+
+**Research** (exploratory, no committed timeline):
+- Personalized AI beyond the current persona-classification model
+- Machine learning model training pipeline (ties to the deferred "Future ML Tables" category from `v3.0-amendments-conversational-intelligence.md` §11)
+- Autonomous betting agents
+- Market simulation
+
+**How to use this list:** before adding anything new to it, check whether it already has a home elsewhere — several items above are already tracked as deferred decisions in `CHANGELOG.md` (Knowledge Graph, Public Transparency Portal, sentiment monitoring, sportsbook promotions) and don't need a second entry here. This list is for items that haven't yet been evaluated against the blueprint at all, not a duplicate of decisions already made.
+
+---
+
 ## Notes for Using This Roadmap Going Forward
 
 This document should be revisited whenever a volume gets a version bump. A MAJOR bump to any volume (per the `CHANGELOG.md` scheme) should trigger a check of whether the phase that implements it is already built — if so, that phase may need to be reopened, which is exactly the kind of cross-document contradiction the versioning system exists to catch early rather than discover mid-build.
@@ -422,4 +473,4 @@ This document should be revisited whenever a volume gets a version bump. A MAJOR
 
 ## Changelog Entry for This Version
 
-See `CHANGELOG.md` — v1.0, 2026-08-05, Engineering Roadmap & Build Order added as a companion document.
+See `CHANGELOG.md` — v1.0, 2026-08-05, Engineering Roadmap & Build Order added as a companion document. Updated to v2.0, 2026-08-05, per external architecture review — Phases 1, 4, 5, and 6 amended directly above, not just noted in the header. Updated to v3.0, 2026-08-05 — Phases 1, 3, 4, 5, and 6 amended directly above with the conversational-first and intelligence pipeline additions. Updated to v4.0, 2026-08-06 — Phases 1, 3, and 4 amended with multi-sport core and Recommendation Worker scope, plus the new Technical Debt & Feature Backlog section.
