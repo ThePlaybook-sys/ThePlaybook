@@ -284,3 +284,19 @@ This document does not change any Volume's version number — it's a build-seque
 - §9's body updated in the same pass as this entry (not header-only), continuing the discipline established after the v2.0.1/v2.0.2 lesson.
 
 **Full technical detail:** This entry; also logged operationally in `PROGRESS.md`'s 2026-08-07 notes.
+
+---
+
+## v4.1.1 — 2026-08-07 — PATCH
+
+**Volume affected:** Volume 3 (Database Architecture) only.
+
+**Reason:** Phase 1 Milestone 2 (sports data tables) built `odds_snapshots` with `id uuid primary key default gen_random_uuid()` — standard UUIDv4. This missed the v2.0 amendment's explicit requirement (Volume 3, "UUIDv7 for high-insert append-only tables") that `odds_snapshots`, `recommendation_agent_outputs`, and `market_monitoring_events` specifically generate primary keys via UUIDv7 rather than UUIDv4, for index locality on the schema's highest-insert-volume tables. Caught while researching UUID generation ahead of building `recommendation_agent_outputs` for Milestone 3, before any dependent code existed — not a case of drift discovered after the fact.
+
+**Decision:** Added a custom `uuid_generate_v7()` PL/pgSQL function (dev runs PostgreSQL 17.6, which has no native `uuidv7()` — that lands in PostgreSQL 18) and altered `odds_snapshots.id`'s default to use it instead of `gen_random_uuid()`. The same function is used for `recommendation_agent_outputs.id` when Milestone 3 is built, and will be reused for `market_monitoring_events.id` when Milestone 4 reaches it, satisfying the v2.0 amendment's requirement for all three named tables with one shared implementation.
+
+**Alternatives considered:** Waiting for a future Postgres upgrade to PG18 to use a native `uuidv7()` function — rejected; there's no reason to block an already-approved v2.0 decision on a future Postgres version with no committed upgrade timeline. Leaving `odds_snapshots` on UUIDv4 and only fixing it forward for the two not-yet-built tables — rejected; the v2.0 amendment names `odds_snapshots` specifically, and the table was empty (schema-only, no real data), so there was no cost to fixing it retroactively instead of carrying the gap forward.
+
+**Expected impact:** None. `odds_snapshots` had zero rows in `dev` at the time of the fix (only rolled-back test data from Milestone 2's own verification pass), so no backfill was needed — this is a closed gap in an already-approved decision, not a new architectural decision, hence PATCH rather than MINOR. No other volume references `odds_snapshots`' key generation mechanism directly.
+
+**Full technical detail:** Also logged operationally in `PROGRESS.md`'s Phase 1 notes, alongside the Milestone 3 migration that first makes use of the same function for `recommendation_agent_outputs`.

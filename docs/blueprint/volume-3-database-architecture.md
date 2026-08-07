@@ -1,10 +1,11 @@
 # The Playbook — Volume 3
 ## Database Architecture: Tables, Relationships, Indexes, Triggers, Migrations, RLS
 
-**Version:** v4.0
-**Last updated:** 2026-08-06
+**Version:** v4.1.1
+**Last updated:** 2026-08-07
 **Depends on:** Volume 1 (v3.0 — tiers, personas, principles) and Volume 2 (v4.0 — service shape, routing table reference, RLS placeholder, scoped event system, Redis cache layer)
 **v4.0 note:** Normalized multi-sport core added (§4.0) — `sports`/`leagues`/`seasons`/`teams`/`players`/`player_stats`/`team_stats` plus the `player_stats_nfl` extension pattern. `games` gains `sport_id`/`league_id`/`season_id` while the legacy `sport` text field is kept, deprecated, for Phase 0/1 backward compatibility. Data quality metadata convention added to `daily_game_intelligence` (§4.1). See `CHANGELOG.md` v4.0 entry for full reasoning.
+**v4.1.1 note (PATCH):** §10 gained a clarification that its RLS scope covers "every table requiring access control," not only tables containing per-user data (Phase 1 Milestone 2). The three tables named in the v2.0 UUIDv7 amendment (`odds_snapshots`, `recommendation_agent_outputs`, `market_monitoring_events`) use a custom `uuid_generate_v7()` function, since the deployed Postgres version predates native `uuidv7()` support. See `CHANGELOG.md` v4.1.1 entry for full reasoning.
 **Read next:** Volume 4 (AI Intelligence) — the agent, consensus, and orchestration tables defined here are the tables Volume 4's logic reads and writes
 
 ---
