@@ -101,6 +101,14 @@ Two different things happen here, and they're not interchangeable — never trea
 
 ---
 
+## Railway Config Mutations: Default to skipDeploys: true
+
+Any Railway MCP call that mutates a service's config or variables (`set-variables`, `update-service`, and equivalents) redeploys that service by default unless told not to. On an environment where autodeploy is intentionally disabled — production, per Volume 2 §9 — that default redeploy pulls from whatever stale cached build snapshot Railway last had, not current code, which is exactly what caused the 2026-08-07 production outage: a routine `set-variables` call (setting `SENTRY_DSN`) silently redeployed 5 production services from a snapshot that predated every Phase 0 fix.
+
+**Rule: pass `skipDeploys: true` on every Railway config/variable mutation unless a deploy is the explicit, specific point of that call.** This applies everywhere, not just production — dev and staging just happen to tolerate a stale-snapshot redeploy better because their autodeploy is live and self-corrects on the next push. Treat this as a default habit, not a case-by-case judgment call: if a call sets a variable or updates config and you haven't deliberately decided you want a redeploy to happen as a result, add `skipDeploys: true`.
+
+---
+
 - Build complete, working code — not scaffolding with TODOs unless a task is explicitly phased for later.
 - Match the stack decisions already locked in Volume 2 (FastAPI/Python backend, Next.js/React frontend, Supabase/PostgreSQL, Railway deployment) — don't introduce a different framework or pattern without flagging it as a blueprint deviation per the section above.
 - Follow the database patterns established in Volume 3 exactly — snapshot/frozen-copy tables for anything Time Machine-relevant, append-only enforcement via triggers (not convention), RLS on every user-data table.
