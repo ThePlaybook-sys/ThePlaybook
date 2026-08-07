@@ -53,13 +53,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        service: [api-gateway, ai-orchestrator, sports-intel-layer, workers, frontend]
+        service: [api-gateway, ai-orchestrator, sports-intel-layer, worker-scheduled, worker-market-monitor, frontend]
     steps:
       - uses: actions/checkout@v4
       - name: Install Railway CLI
         run: npm install -g @railway/cli
       - name: Deploy ${{ matrix.service }} to dev
-        working-directory: apps/${{ matrix.service }}
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
         run: railway up --service ${{ matrix.service }} --environment dev --detach
@@ -72,13 +71,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        service: [api-gateway, ai-orchestrator, sports-intel-layer, workers, frontend]
+        service: [api-gateway, ai-orchestrator, sports-intel-layer, worker-scheduled, worker-market-monitor, frontend]
     steps:
       - uses: actions/checkout@v4
       - name: Install Railway CLI
         run: npm install -g @railway/cli
       - name: Deploy ${{ matrix.service }} to staging
-        working-directory: apps/${{ matrix.service }}
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
         run: railway up --service ${{ matrix.service }} --environment staging --detach
@@ -91,13 +89,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        service: [api-gateway, ai-orchestrator, sports-intel-layer, workers, frontend]
+        service: [api-gateway, ai-orchestrator, sports-intel-layer, worker-scheduled, worker-market-monitor, frontend]
     steps:
       - uses: actions/checkout@v4
       - name: Install Railway CLI
         run: npm install -g @railway/cli
       - name: Deploy ${{ matrix.service }} to production
-        working-directory: apps/${{ matrix.service }}
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
         run: railway up --service ${{ matrix.service }} --environment production --detach
