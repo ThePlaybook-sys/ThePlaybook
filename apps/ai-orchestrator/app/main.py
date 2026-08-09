@@ -1,7 +1,9 @@
 import os
 
 import sentry_sdk
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
+
+from app.internal_auth import require_internal_token
 
 sentry_sdk.init(
     dsn=os.environ.get("SENTRY_DSN"),
@@ -19,6 +21,11 @@ app = FastAPI(title="The Playbook — AI Orchestrator")
 @app.get("/health")
 def health() -> dict:
     return {"status": "ok", "service": "ai-orchestrator"}
+
+
+@app.get("/v1/internal/ping", dependencies=[Depends(require_internal_token)])
+def internal_ping() -> dict:
+    return {"status": "ok", "service": "ai-orchestrator", "scope": "internal"}
 
 
 if os.environ.get("RAILWAY_ENVIRONMENT_NAME", "dev") == "dev":
