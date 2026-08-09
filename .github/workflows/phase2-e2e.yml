@@ -1,0 +1,51 @@
+name: Phase 2 Live E2E
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "full or deleted_user_check"
+        required: true
+        default: "full"
+      token_dev:
+        description: "dev's internal service token (only needed for full mode's cross-environment checks)"
+        required: false
+      token_staging:
+        description: "staging's internal service token"
+        required: false
+      token_production:
+        description: "production's internal service token"
+        required: false
+      existing_access_token:
+        description: "access token to re-test in deleted_user_check mode"
+        required: false
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: pip install httpx==0.27.2
+      - name: Mask sensitive inputs
+        run: |
+          echo "::add-mask::${{ inputs.token_dev }}"
+          echo "::add-mask::${{ inputs.token_staging }}"
+          echo "::add-mask::${{ inputs.token_production }}"
+          echo "::add-mask::${{ inputs.existing_access_token }}"
+      - name: Run E2E scenarios
+        env:
+          # Supabase anon keys are public-safe by design (meant for client-side
+          # embedding) — not treated as secrets, same as the frontend build already
+          # would. Not sensitive enough to need a stored-secret mechanism.
+          DEV_ANON_KEY: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5od2p0c2RlYmdpd3Nrc2h6cWlxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODU5NTUzNjcsImV4cCI6MjEwMTUzMTM2N30.pgS7J8dUqMHN52gPMt_yg-BiXiNU92zJk7Ct3gzwM2E"
+          STAGING_ANON_KEY: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpocGpkanR2enptaHh2cHJzZmFxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODYxMzQzMTEsImV4cCI6MjEwMTcxMDMxMX0.J5zlPTSbm1_Zz_xU7aJlOojPYs-AnyJD3o1k4jCo3zc"
+          PRODUCTION_ANON_KEY: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRyb25obHR1bXprbmd3d2t0ZXNmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODYxMzQzMjUsImV4cCI6MjEwMTcxMDMyNX0.i4vysDmGGsohkAmzAik6qL7XvL7GaHum8VSVk5LkFNw"
+          TOKEN_DEV: ${{ inputs.token_dev }}
+          TOKEN_STAGING: ${{ inputs.token_staging }}
+          TOKEN_PRODUCTION: ${{ inputs.token_production }}
+          EXISTING_ACCESS_TOKEN: ${{ inputs.existing_access_token }}
+        run: python scripts/phase2_e2e_test.py "${{ inputs.mode }}"
