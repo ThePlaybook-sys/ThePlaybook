@@ -300,3 +300,21 @@ This document does not change any Volume's version number — it's a build-seque
 **Expected impact:** None. `odds_snapshots` had zero rows in `dev` at the time of the fix (only rolled-back test data from Milestone 2's own verification pass), so no backfill was needed — this is a closed gap in an already-approved decision, not a new architectural decision, hence PATCH rather than MINOR. No other volume references `odds_snapshots`' key generation mechanism directly.
 
 **Full technical detail:** Also logged operationally in `PROGRESS.md`'s Phase 1 notes, alongside the Milestone 3 migration that first makes use of the same function for `recommendation_agent_outputs`.
+
+---
+
+## v4.2 — 2026-08-09 — MINOR
+
+**Volume affected:** Volume 3 (Database Architecture) only.
+
+**Reason:** Phase 2 Milestone 1 (Authentication) implements AC #1 — "a user can sign up, and a corresponding `user_profiles` row is created automatically" — via a database trigger on `auth.users` INSERT, per Mac's explicit decision to match Phase 1's DB-level-enforcement pattern rather than application code. Building that trigger surfaced a real conflict: `user_profiles.jurisdiction_state` was `not null` (Volume 3 §3), but jurisdiction is collected during onboarding (Phase 2 Milestone 4), a separate step that happens *after* signup. A trigger firing at signup has no jurisdiction value yet and cannot satisfy a `not null` constraint at that moment — flagged per CLAUDE.md's blueprint-vs-reality process rather than resolved by inventing a placeholder value.
+
+**Decision:** `user_profiles.jurisdiction_state` relaxed from `not null` to nullable. Volume 1 §10's actual requirement — no bet-relevant action permitted before jurisdiction is known — is now enforced at the application layer instead of the schema layer: every bet-relevant endpoint checks `jurisdiction_state is not null`, and the onboarding-completion endpoint (Phase 2 Milestone 4) is the only code path that ever sets it. Applied via `supabase/migrations/20260809144824_phase2_signup_trigger.sql` on `dev`; verified with a real signup — the trigger-created row has `jurisdiction_state = null` immediately after signup, and a simulated duplicate-trigger-fire (`on conflict (id) do nothing`) confirmed exactly one row persists, satisfying the idempotency requirement.
+
+**Alternatives considered:**
+- Insert a placeholder sentinel value (e.g., empty string) instead of relaxing to nullable — rejected. A magic string is a worse idiom than `null` for "not yet known," requires every read path to special-case it instead of using the standard `is null` check, and risks silently passing validation if a code path forgets to check for the sentinel specifically.
+- Delay `user_profiles` row creation until onboarding completion (application code, not a trigger), so `jurisdiction_state` could stay `not null` from the row's first instant — rejected; this contradicts Mac's already-made decision to create the row at signup via a DB trigger, and would leave a window between signup and onboarding where no profile row exists at all, which several other Phase 1 tables (e.g., anything that might reference a signed-up-but-not-onboarded user) aren't designed to tolerate.
+
+**Expected impact:** Application code across Phase 2 onward must not assume `jurisdiction_state` is always populated — every bet-relevant code path needs its own `is not null` check, exactly as Phase 2's roadmap Key Tasks already anticipated ("enforce the not null constraint's intent at the application layer too"). No other volume references this column directly, so this stays a MINOR, Volume-3-only bump. Volume 3 §3's body updated in the same pass (not header-only), continuing the discipline established after the v2.0.1/v2.0.2 lesson.
+
+**Full technical detail:** Also logged operationally in `PROGRESS.md`'s Phase 2 notes.

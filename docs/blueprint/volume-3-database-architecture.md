@@ -1,11 +1,12 @@
 # The Playbook — Volume 3
 ## Database Architecture: Tables, Relationships, Indexes, Triggers, Migrations, RLS
 
-**Version:** v4.1.1
-**Last updated:** 2026-08-07
+**Version:** v4.2
+**Last updated:** 2026-08-09
 **Depends on:** Volume 1 (v3.0 — tiers, personas, principles) and Volume 2 (v4.0 — service shape, routing table reference, RLS placeholder, scoped event system, Redis cache layer)
 **v4.0 note:** Normalized multi-sport core added (§4.0) — `sports`/`leagues`/`seasons`/`teams`/`players`/`player_stats`/`team_stats` plus the `player_stats_nfl` extension pattern. `games` gains `sport_id`/`league_id`/`season_id` while the legacy `sport` text field is kept, deprecated, for Phase 0/1 backward compatibility. Data quality metadata convention added to `daily_game_intelligence` (§4.1). See `CHANGELOG.md` v4.0 entry for full reasoning.
 **v4.1.1 note (PATCH):** §10 gained a clarification that its RLS scope covers "every table requiring access control," not only tables containing per-user data (Phase 1 Milestone 2). The three tables named in the v2.0 UUIDv7 amendment (`odds_snapshots`, `recommendation_agent_outputs`, `market_monitoring_events`) use a custom `uuid_generate_v7()` function, since the deployed Postgres version predates native `uuidv7()` support. See `CHANGELOG.md` v4.1.1 entry for full reasoning.
+**v4.2 note (MINOR):** §3's `user_profiles.jurisdiction_state` relaxed from `not null` to nullable — Phase 2's signup trigger creates the row before onboarding (where jurisdiction is actually collected) ever runs. The `not null` *intent* is now enforced at the application layer. See `CHANGELOG.md` v4.2 entry for full reasoning.
 **Read next:** Volume 4 (AI Intelligence) — the agent, consensus, and orchestration tables defined here are the tables Volume 4's logic reads and writes
 
 ---
@@ -61,7 +62,11 @@ Supabase provides `auth.users` (id, email, encrypted password, etc.) automatical
 create table user_profiles (
   id uuid primary key references auth.users(id) on delete cascade,
   display_name text,
-  jurisdiction_state text not null,        -- collected at onboarding, Volume 1 Section 10
+  jurisdiction_state text,                 -- v4.2: nullable — collected at onboarding (Phase 2
+                                            -- Milestone 4), not at signup; null until then. The
+                                            -- "not null" *intent* (Volume 1 §10's early jurisdiction
+                                            -- gating) is enforced at the application layer instead —
+                                            -- no bet-relevant action is permitted while this is null.
   persona_classification text check (persona_classification in ('grinder','casual','numbers_person', null)),
   betting_experience text check (betting_experience in ('new','casual','experienced')),
   primary_goal text check (primary_goal in ('fun','disciplined_longterm','edge_seeking')),
@@ -77,7 +82,7 @@ create table user_profiles (
 );
 create index idx_user_profiles_persona on user_profiles(persona_classification);
 ```
-**Why `jurisdiction_state` is `not null`:** Volume 1, Section 10 requires jurisdiction gating early. Making it required at the schema level (not just onboarding UI) guarantees no user profile exists without it — enforced once, correctly, instead of relying on every code path to remember to check.
+**Why `jurisdiction_state` is nullable, not `not null` (revised v4.2):** originally specified `not null` so Volume 1 §10's early jurisdiction gating would be enforced at the schema level. Phase 2 found this couldn't survive contact with the DB-trigger-based signup flow (Mac's chosen implementation for auto-creating `user_profiles` on `auth.users` INSERT, matching Phase 1's DB-enforcement pattern): the trigger fires at signup, before onboarding — where jurisdiction is actually collected — ever runs, so no jurisdiction value exists yet to satisfy a `not null` constraint at that moment. Relaxed to nullable; the gating *intent* is enforced at the application layer instead — every bet-relevant endpoint requires `jurisdiction_state is not null` before proceeding, and the onboarding-completion endpoint (Phase 2 Milestone 4) is the only path that ever sets it. See `CHANGELOG.md` v4.1.1 (cont.) / next entry for full reasoning.
 
 **Why `referral_code` exists with no referral program logic behind it yet (v2.0):** per Volume 1 §9.1, the field is added now specifically to avoid a schema migration later, while the actual incentive mechanics wait for real Persona A retention data. Adding the column costs nothing; adding it retroactively after users exist would require a backfill.
 
