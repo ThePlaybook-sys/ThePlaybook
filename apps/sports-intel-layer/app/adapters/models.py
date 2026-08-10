@@ -1,10 +1,14 @@
 """Normalized data models every provider adapter returns, regardless of vendor.
 
 These shapes are deliberately provider-agnostic: nothing here encodes any
-vendor's field names or response format. `AdapterResponse` wraps each
-category's payload in the same envelope Volume 3 §4.1's `daily_game_intelligence`
-table expects per-category (value/source/confidence/last_updated/status), so
-Master Refresh can write adapter output into it with minimal translation.
+vendor's field names or response format. `AdapterResponse` carries the
+normalized source/provenance metadata every downstream consumer needs to
+later reconstruct why a piece of information was used -- who supplied it,
+when we fetched it, when the provider itself says it was current, and
+whether it came live or from cache. It deliberately does NOT compute
+derived values like The Playbook's own confidence or freshness/status;
+those belong to whichever downstream milestone actually has the context
+to compute them correctly (see `AdapterResponse`'s own docstring below).
 """
 from __future__ import annotations
 
@@ -37,14 +41,44 @@ T = TypeVar("T")
 class AdapterResponse(BaseModel, Generic[T]):
     """The envelope every adapter call returns, regardless of category.
 
-    Mirrors daily_game_intelligence's per-category jsonb metadata shape
-    (value/source/confidence/last_updated/status) so Master Refresh can
-    write this straight into that table without a separate translation step.
+    Provides the normalized source/provenance information downstream
+    intelligence processing needs -- not a direct mirror of every field
+    daily_game_intelligence's per-category metadata shape carries.
+    Specifically:
+
+    - `source` / `fetched_at` / `provider_reported_at` / `from_cache` are
+      facts this envelope directly observes about the fetch itself, and
+      belong here.
+    - `confidence` is deliberately NOT a field on this envelope. The
+      Playbook's own confidence (feeding the AI Transparency Meter's
+      data_quality dimension) is a downstream-derived value, computed at
+      whichever milestone owns that computation -- conflating it with a
+      raw adapter response would risk mistaking a provider's own reported
+      confidence (if one ever exists) for The Playbook's confidence, which
+      would be a real correctness bug, not just an API nicety. If a
+      specific provider later exposes a meaningful confidence value worth
+      preserving, that gets handled deliberately as provider-supplied
+      metadata, not silently folded into this field.
+    - `status` (freshness) exists here as a field for later milestones to
+      set, but computing it requires comparing against the Volume 2 §8
+      cadence table and call history for a specific entity -- a stateful,
+      cross-call computation a single adapter fetch can't perform on its
+      own. That logic belongs to Milestone E (Master Refresh + scheduled
+      workers), not this envelope; it's intentionally never set to
+      anything but the default here.
     """
 
     value: T
     source: str
+    #: When The Playbook actually retrieved this data.
     fetched_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    #: When the provider itself says the underlying data was current/
+    #: updated, if and only if the provider exposes such a timestamp.
+    #: Never fabricated -- null is a valid, expected value when a provider
+    #: doesn't supply one. Deliberately distinct from `fetched_at`: a line
+    #: can move minutes before we poll it, and reconstructing "what was
+    #: true when" needs both timestamps, not just ours.
+    provider_reported_at: datetime | None = None
     from_cache: bool = False
     status: FreshnessStatus = FreshnessStatus.FRESH
 

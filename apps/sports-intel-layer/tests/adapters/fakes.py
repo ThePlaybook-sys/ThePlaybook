@@ -6,6 +6,8 @@ implementing the interface" until a real one does.
 """
 from __future__ import annotations
 
+from datetime import datetime
+
 from app.adapters.base import OddsAdapter
 from app.adapters.errors import ProviderUnavailableError
 from app.adapters.models import AdapterResponse, OddsLine
@@ -14,8 +16,13 @@ from app.adapters.models import AdapterResponse, OddsLine
 class FakeOddsAdapterV1(OddsAdapter):
     provider_name = "fake_provider_v1"
 
-    def __init__(self, *, fail: bool = False):
+    def __init__(self, *, fail: bool = False, provider_reported_at: datetime | None = None):
         self._fail = fail
+        # Optional, mirroring the real-world case: some vendors expose a
+        # "line last moved at" timestamp, some don't. Defaults to None so
+        # tests exercise both the supplied and not-supplied cases explicitly
+        # rather than only ever the happy path.
+        self._provider_reported_at = provider_reported_at
 
     async def fetch_odds(self, game_external_ids: list[str]) -> AdapterResponse[list[OddsLine]]:
         if self._fail:
@@ -29,7 +36,11 @@ class FakeOddsAdapterV1(OddsAdapter):
             )
             for game_id in game_external_ids
         ]
-        return AdapterResponse(value=lines, source=self.provider_name)
+        return AdapterResponse(
+            value=lines,
+            source=self.provider_name,
+            provider_reported_at=self._provider_reported_at,
+        )
 
 
 class FakeOddsAdapterV2(OddsAdapter):
