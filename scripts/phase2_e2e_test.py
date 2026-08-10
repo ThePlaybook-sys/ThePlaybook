@@ -69,7 +69,7 @@ def signup_and_login(env_name: str, email: str, password: str):
 
 def run_full():
     all_pass = True
-    email = f"phase2-e2e-{uuid.uuid4().hex[:12]}@example.com"
+    email = f"phase2-e2e-{uuid.uuid4().hex[:12]}@playbook-e2e-test.com"
     password = "E2eTestPassword123!"
 
     # Scenario 1: signup -> profile creation -> login -> authenticated request
@@ -218,7 +218,7 @@ def run_full():
         )
 
     # Deleted-user test subject: create a second user, print its id/token, delete NOTHING yet.
-    deleted_user_email = f"phase2-e2e-deleteme-{uuid.uuid4().hex[:12]}@example.com"
+    deleted_user_email = f"phase2-e2e-deleteme-{uuid.uuid4().hex[:12]}@playbook-e2e-test.com"
     deleted_user_signup = signup_and_login("dev", deleted_user_email, password)
     if deleted_user_signup.status_code in (200, 201):
         du_body = deleted_user_signup.json()
