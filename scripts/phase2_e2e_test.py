@@ -184,6 +184,21 @@ def run_full():
         "6_correct_internal_token", "200", own_token_ok.status_code, own_token_ok.text[:300]
     )
 
+    # Scenario 6b: production's own token against its own endpoint (positive-proof
+    # sanity check, requested once production actually has a Phase 2 deployment).
+    if ENVS["production"]["internal_token"]:
+        with httpx.Client(timeout=15.0) as client:
+            production_own_token_ok = client.get(
+                f"{ENVS['production']['ai_orchestrator']}/v1/internal/ping",
+                headers={"X-Internal-Token": ENVS["production"]["internal_token"]},
+            )
+        all_pass &= result(
+            "6b_production_own_token",
+            "200",
+            production_own_token_ok.status_code,
+            production_own_token_ok.text[:300],
+        )
+
     # Scenarios 7-9: cross-environment internal token isolation
     for source in ("dev", "staging", "production"):
         for target in ("dev", "staging", "production"):
