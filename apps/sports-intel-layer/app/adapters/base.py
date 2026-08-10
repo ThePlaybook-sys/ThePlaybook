@@ -23,8 +23,10 @@ from app.adapters.models import (
     NewsArticle,
     OddsLine,
     PlayerProp,
+    PlayerStatLine,
     RosterEntry,
     ScheduleEntry,
+    TeamStatLine,
     WeatherConditions,
 )
 
@@ -97,3 +99,23 @@ class NewsAdapter(ProviderAdapter):
     @abstractmethod
     async def fetch_news(self, team: str | None = None) -> AdapterResponse[list[NewsArticle]]:
         """Return recent news/sentiment articles, optionally filtered to one team."""
+
+
+class TeamStatsAdapter(ProviderAdapter):
+    category = DataCategory.TEAM_STATS
+
+    @abstractmethod
+    async def fetch_team_stats(self, game_external_id: str) -> AdapterResponse[list[TeamStatLine]]:
+        """Return team-level stat lines for a single game. Scoped to one
+        game, not a bulk/season fetch -- this is meant to be called once,
+        triggered by that game's status transitioning to final (Volume 2
+        §1.1's "download once, reuse everywhere"), not polled repeatedly."""
+
+
+class PlayerStatsAdapter(ProviderAdapter):
+    category = DataCategory.PLAYER_STATS
+
+    @abstractmethod
+    async def fetch_player_stats(self, game_external_id: str) -> AdapterResponse[list[PlayerStatLine]]:
+        """Return player-level stat lines for a single game. Same
+        fetch-once-on-final intent as TeamStatsAdapter.fetch_team_stats."""
