@@ -331,18 +331,42 @@ def run_finish_scenarios():
     delete_login = login("dev", delete_email, TEST_PASSWORD)
     if delete_login.status_code == 200 and "access_token" in delete_login.text:
         delete_token = delete_login.json()["access_token"]
-        with httpx.Client(timeout=15.0) as client:
-            profile = client.get(
-                f"{ENVS['dev']['api_gateway']}/v1/user/profile",
-                headers={"Authorization": f"Bearer {delete_token}"},
-            )
+
+        def check_profile():
+            with httpx.Client(timeout=15.0) as client:
+                return client.get(
+                    f"{ENVS['dev']['api_gateway']}/v1/user/profile",
+                    headers={"Authorization": f"Bearer {delete_token}"},
+                )
+
+        before = check_profile()
         all_pass &= result(
             "4_before_delete_token_valid",
             "200",
-            f"{profile.status_code} {profile.text[:300]}",
+            f"{before.status_code} {before.text[:300]}",
             "The deleted-user test subject's token works BEFORE the underlying row is deleted.",
         )
-        print(f"DELETE_TEST_ACCESS_TOKEN|token={delete_token}")
+
+        # The token never leaves this process: rather than printing it for a
+        # human/agent to relay into a second run (where it would just get
+        # redacted from logs anyway), poll the same endpoint with the same
+        # token while the underlying row is deleted out-of-band in parallel,
+        # and record the real transition directly.
+        print("AWAITING_OUT_OF_BAND_DELETE|polling /v1/user/profile every 5s for up to 120s")
+        after = before
+        deadline = time.time() + 120
+        while time.time() < deadline:
+            time.sleep(5)
+            after = check_profile()
+            if after.status_code != 200:
+                break
+        all_pass &= result(
+            "4_deleted_user_token",
+            "401",
+            f"{after.status_code} {after.text[:300]}",
+            "Same access token as the before-delete check, polled until the underlying "
+            "user row was deleted via the DB (or the 120s poll window elapsed).",
+        )
     else:
         all_pass &= result(
             "delete_subject_login_after_confirm",
