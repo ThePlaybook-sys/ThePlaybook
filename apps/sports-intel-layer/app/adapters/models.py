@@ -27,6 +27,8 @@ class DataCategory(str, Enum):
     ROSTERS = "rosters"
     SCHEDULES = "schedules"
     NEWS = "news"
+    TEAM_STATS = "team_stats"
+    PLAYER_STATS = "player_stats"
 
 
 class FreshnessStatus(str, Enum):
@@ -143,3 +145,22 @@ class NewsArticle(BaseModel):
     published_at: datetime
     summary: str | None = None
     related_teams: list[str] = Field(default_factory=list)
+
+
+class TeamStatLine(BaseModel):
+    game_external_id: str
+    team: str
+    #: Common cross-sport fields only, matching team_stats.stats jsonb --
+    #: deliberately not a typed per-field model here. Volume 3's own
+    #: extension-table pattern (player_stats_nfl alongside player_stats)
+    #: is how sport-specific typed fields get added later, at the DB layer,
+    #: not by hardcoding one sport's stat names into this adapter contract.
+    stats: dict
+
+
+class PlayerStatLine(BaseModel):
+    game_external_id: str
+    player_external_id: str
+    player_name: str
+    team: str
+    stats: dict
