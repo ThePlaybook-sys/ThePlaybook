@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "full or deleted_user_check"
+        description: "full, finish_scenarios, or deleted_user_check"
         required: true
         default: "full"
       token_dev:
@@ -18,6 +18,12 @@ on:
         required: false
       existing_access_token:
         description: "access token to re-test in deleted_user_check mode"
+        required: false
+      primary_email:
+        description: "primary test subject's email (already confirmed out-of-band) for finish_scenarios mode"
+        required: false
+      delete_email:
+        description: "deleted-user test subject's email (already confirmed out-of-band) for finish_scenarios mode"
         required: false
 
 jobs:
@@ -48,4 +54,6 @@ jobs:
           TOKEN_STAGING: ${{ inputs.token_staging }}
           TOKEN_PRODUCTION: ${{ inputs.token_production }}
           EXISTING_ACCESS_TOKEN: ${{ inputs.existing_access_token }}
+          PRIMARY_EMAIL: ${{ inputs.primary_email }}
+          DELETE_EMAIL: ${{ inputs.delete_email }}
         run: python scripts/phase2_e2e_test.py "${{ inputs.mode }}"

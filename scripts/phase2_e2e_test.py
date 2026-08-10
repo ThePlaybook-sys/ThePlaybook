@@ -8,6 +8,18 @@ Modes:
                        cross-environment token isolation, onboarding validation.
                        Also creates a second throwaway user for the deleted-user
                        check and prints its id/token WITHOUT testing it yet.
+                       Prints PRIMARY_TEST_SUBJECT and DELETED_USER_TEST_SUBJECT
+                       lines for accounts whose email confirmation is pending --
+                       intended to be confirmed out-of-band (directly against the
+                       DB, scoped to the throwaway test-email pattern) and then
+                       finished with the finish_scenarios mode below.
+  finish_scenarios  - takes PRIMARY_EMAIL and DELETE_EMAIL (both already
+                       confirmed out-of-band), logs into each for real, and
+                       completes the scenarios that need a genuine session
+                       token: 1 (authenticated request), 5, 10, and the "token
+                       still works" half of the deleted-user check (4). Prints
+                       DELETE_TEST_ACCESS_TOKEN so a later deleted_user_check
+                       run can prove that same token is rejected post-deletion.
   deleted_user_check - takes a previously-issued access token for a now-deleted
                        user and confirms the protected endpoint rejects it.
 
@@ -56,6 +68,9 @@ def result(scenario, expected, actual, evidence, passed=None):
     return passed == "PASS"
 
 
+TEST_PASSWORD = "E2eTestPassword123!"
+
+
 def signup_and_login(env_name: str, email: str, password: str):
     env = ENVS[env_name]
     with httpx.Client(timeout=15.0) as client:
@@ -67,41 +82,48 @@ def signup_and_login(env_name: str, email: str, password: str):
         return signup
 
 
+def login(env_name: str, email: str, password: str):
+    env = ENVS[env_name]
+    with httpx.Client(timeout=15.0) as client:
+        return client.post(
+            f"{env['supabase_url']}/auth/v1/token?grant_type=password",
+            headers={"apikey": env["anon_key"], "Content-Type": "application/json"},
+            json={"email": email, "password": password},
+        )
+
+
 def run_full():
     all_pass = True
     email = f"phase2-e2e-{uuid.uuid4().hex[:12]}@playbook-e2e-test.com"
-    password = "E2eTestPassword123!"
+    password = TEST_PASSWORD
 
     # Scenario 1: signup -> profile creation -> login -> authenticated request
     signup = signup_and_login("dev", email, password)
     access_token = None
+    user_id = None
     if signup.status_code in (200, 201):
         body = signup.json()
         access_token = body.get("access_token")
         user_id = body.get("user", {}).get("id") or body.get("id")
         if not access_token:
             # Email confirmation required before a session is issued; try login directly.
-            with httpx.Client(timeout=15.0) as client:
-                login = client.post(
-                    f"{ENVS['dev']['supabase_url']}/auth/v1/token?grant_type=password",
-                    headers={"apikey": ENVS["dev"]["anon_key"], "Content-Type": "application/json"},
-                    json={"email": email, "password": password},
-                )
-            login_gave_session = login.status_code == 200 and "access_token" in login.text
+            login_resp = login("dev", email, password)
+            login_gave_session = login_resp.status_code == 200 and "access_token" in login_resp.text
             # Either outcome is a legitimate PASS: Supabase itself decides whether email
             # confirmation is required. A clear rejection (not a 500) is as valid a proof
             # of "signup works correctly" as an immediate session, given this project's
             # actual configured settings, which this test observes rather than assumes.
-            confirmation_required = login.status_code in (400, 401) and not login_gave_session
+            confirmation_required = login_resp.status_code in (400, 401) and not login_gave_session
             all_pass &= result(
                 "1_signup_then_login",
                 "200-with-session OR clean rejection pending email confirmation (not 500)",
-                f"signup={signup.status_code}, login={login.status_code}, login_body={login.text[:300]}",
+                f"signup={signup.status_code}, login={login_resp.status_code}, login_body={login_resp.text[:300]}",
                 "Supabase project's own configured email-confirmation setting determines which "
                 "of these two valid outcomes occurs; both are acceptable, only a 500 is not.",
                 passed=(login_gave_session or confirmation_required),
             )
-            access_token = login.json().get("access_token") if login_gave_session else None
+            access_token = login_resp.json().get("access_token") if login_gave_session else None
+            print(f"PRIMARY_TEST_SUBJECT|email={email}|id={user_id}")
         else:
             all_pass &= result(
                 "1_signup_then_login",
@@ -237,6 +259,101 @@ def run_full():
     return all_pass
 
 
+def run_finish_scenarios():
+    all_pass = True
+    primary_email = os.environ["PRIMARY_EMAIL"]
+    delete_email = os.environ["DELETE_EMAIL"]
+
+    # Both accounts must already be confirmed out-of-band (directly against the
+    # DB, scoped to the throwaway test-email domain) before this mode is run --
+    # it logs in for real rather than trying to bypass confirmation itself.
+    primary_login = login("dev", primary_email, TEST_PASSWORD)
+    if primary_login.status_code == 200 and "access_token" in primary_login.text:
+        access_token = primary_login.json()["access_token"]
+
+        with httpx.Client(timeout=15.0) as client:
+            profile = client.get(
+                f"{ENVS['dev']['api_gateway']}/v1/user/profile",
+                headers={"Authorization": f"Bearer {access_token}"},
+            )
+        all_pass &= result(
+            "1_authenticated_request_after_login",
+            "200",
+            f"{profile.status_code} {profile.text[:300]}",
+            "GET /v1/user/profile with a real, freshly-confirmed access token.",
+        )
+
+        with httpx.Client(timeout=15.0) as client:
+            internal_with_user_jwt = client.get(
+                f"{ENVS['dev']['ai_orchestrator']}/v1/internal/ping",
+                headers={"X-Internal-Token": access_token},
+            )
+        all_pass &= result(
+            "5_user_jwt_against_internal_endpoint",
+            "401",
+            internal_with_user_jwt.status_code,
+            internal_with_user_jwt.text[:300],
+        )
+
+        with httpx.Client(timeout=15.0) as client:
+            onboarding_missing = client.patch(
+                f"{ENVS['dev']['api_gateway']}/v1/user/profile",
+                headers={"Authorization": f"Bearer {access_token}"},
+                json={"display_name": "E2E Test"},
+            )
+        all_pass &= result(
+            "10_onboarding_without_jurisdiction",
+            "422",
+            f"{onboarding_missing.status_code} {onboarding_missing.text[:300]}",
+            "PATCH /v1/user/profile with no jurisdiction_state field.",
+        )
+
+        with httpx.Client(timeout=15.0) as client:
+            onboarding_ok = client.patch(
+                f"{ENVS['dev']['api_gateway']}/v1/user/profile",
+                headers={"Authorization": f"Bearer {access_token}"},
+                json={"jurisdiction_state": "NJ"},
+            )
+        all_pass &= result(
+            "10b_onboarding_with_jurisdiction_sanity_check",
+            "200",
+            f"{onboarding_ok.status_code} {onboarding_ok.text[:300]}",
+            "Sanity check: a valid submission should still succeed.",
+        )
+    else:
+        all_pass &= result(
+            "primary_login_after_confirm",
+            "200 with access_token",
+            f"{primary_login.status_code} {primary_login.text[:300]}",
+            "Login for the primary test subject after out-of-band email confirmation.",
+        )
+
+    delete_login = login("dev", delete_email, TEST_PASSWORD)
+    if delete_login.status_code == 200 and "access_token" in delete_login.text:
+        delete_token = delete_login.json()["access_token"]
+        with httpx.Client(timeout=15.0) as client:
+            profile = client.get(
+                f"{ENVS['dev']['api_gateway']}/v1/user/profile",
+                headers={"Authorization": f"Bearer {delete_token}"},
+            )
+        all_pass &= result(
+            "4_before_delete_token_valid",
+            "200",
+            f"{profile.status_code} {profile.text[:300]}",
+            "The deleted-user test subject's token works BEFORE the underlying row is deleted.",
+        )
+        print(f"DELETE_TEST_ACCESS_TOKEN|token={delete_token}")
+    else:
+        all_pass &= result(
+            "delete_subject_login_after_confirm",
+            "200 with access_token",
+            f"{delete_login.status_code} {delete_login.text[:300]}",
+            "Login for the deleted-user test subject after out-of-band email confirmation.",
+        )
+
+    return all_pass
+
+
 def run_deleted_user_check():
     token = os.environ["EXISTING_ACCESS_TOKEN"]
     with httpx.Client(timeout=15.0) as client:
@@ -254,5 +371,10 @@ def run_deleted_user_check():
 
 if __name__ == "__main__":
     mode = sys.argv[1] if len(sys.argv) > 1 else "full"
-    ok = run_full() if mode == "full" else run_deleted_user_check()
+    if mode == "full":
+        ok = run_full()
+    elif mode == "finish_scenarios":
+        ok = run_finish_scenarios()
+    else:
+        ok = run_deleted_user_check()
     sys.exit(0 if ok else 1)
