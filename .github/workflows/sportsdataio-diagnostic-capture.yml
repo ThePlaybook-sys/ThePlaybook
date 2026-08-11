@@ -2,34 +2,41 @@ name: SportsDataIO Diagnostic Capture (TEMPORARY)
 
 # TEMPORARY workflow (Mac, 2026-08-11/12) -- triggers the throwaway
 # capture endpoint in apps/sports-intel-layer/app/diagnostics/. Deleted
-# alongside that endpoint once validation is complete. See PROGRESS.md
-# for the full approved plan.
+# alongside that endpoint (and this whole branch) once validation is
+# complete. See PROGRESS.md for the full approved plan.
+#
+# Deliberately push-triggered, scoped to this exact temporary branch name
+# only -- NOT workflow_dispatch. workflow_dispatch requires a workflow to
+# exist on the repo's default branch (main) to become dispatchable via the
+# API (a real constraint this project already hit once before, see
+# PROGRESS.md's phase2-e2e.yml note); promoting a throwaway diagnostic to
+# main just to satisfy that would also trigger a real deploy-staging run
+# (ci-cd.yml fires on every push to main). This push-trigger approach
+# avoids both: it fires from the exact commit being pushed, no default-
+# branch registration needed, and `sportsdataio-diagnostic-run` isn't
+# `dev`/`main`/a tag, so ci-cd.yml's own triggers (push/PR to dev or main,
+# `v*` tags) never match it -- confirmed by inspection before this file
+# was written, not assumed.
 
 on:
-  workflow_dispatch:
-    inputs:
-      categories:
-        description: "Comma-separated categories to attempt, or leave as 'all'"
-        required: false
-        default: "all"
+  push:
+    branches: [sportsdataio-diagnostic-run]
 
 jobs:
   capture:
     runs-on: ubuntu-latest
     # Required for GitHub to inject the dev-Environment-scoped secret
     # (SPORTSDATAIO_DIAGNOSTIC_TOKEN) below -- repo-level secrets don't
-    # need this, Environment secrets do.
+    # need this, Environment secrets do. This job only ever reads that
+    # token -- SPORTSDATAIO_API_KEY itself is never referenced here or
+    # anywhere in GitHub; it stays in Railway dev only.
     environment: dev
     steps:
       - name: Call diagnostic endpoint, save full response to a file (not the log)
         env:
           DIAGNOSTIC_TOKEN: ${{ secrets.SPORTSDATAIO_DIAGNOSTIC_TOKEN }}
-          CATEGORIES: ${{ inputs.categories }}
         run: |
           url="https://sports-intel-layer-dev.up.railway.app/diagnostics/sportsdataio-capture"
-          if [ -n "$CATEGORIES" ] && [ "$CATEGORIES" != "all" ]; then
-            url="${url}?categories=${CATEGORIES}"
-          fi
           http_status=$(curl -sS \
             -H "X-Diagnostic-Token: ${DIAGNOSTIC_TOKEN}" \
             "$url" \
