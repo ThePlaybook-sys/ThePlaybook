@@ -1,11 +1,12 @@
 # The Playbook — Volume 2
 ## System Architecture, Backend Design, Railway Deployment, API Strategy, AI Orchestration, DevOps
 
-**Version:** v4.1
-**Last updated:** 2026-08-07
+**Version:** v4.2
+**Last updated:** 2026-08-10
 **Depends on:** Volume 1 (v3.0) — subscription tiers, personas, and core product principles are treated as fixed constraints here
 **v4.0 note:** Core Architecture Principles added (§1.1) as the explicit lens for future decisions. Recommendation Worker added (§4.4) — proactive recommendation generation coexisting with on-demand. Environment data-source policy formalized (§5). See `CHANGELOG.md` v4.0 entry for full reasoning.
 **v4.1 note:** §9 updated to reflect that Railway's native git-autodeploy is disabled on all three environments — the Actions-gated `railway up` step is now the only deploy path anywhere, which is what actually makes this section's test-gating claim true end-to-end. Also documents the `skipDeploys: true` config-mutation rule and the required explicit `environment=` parameter on Sentry initialization. See `CHANGELOG.md` v4.1 entry for full reasoning.
+**v4.2 note:** §8's refresh-cadence table revised based on a real cost/volatility review conducted before any Phase 3 provider purchase — the Odds Worker and Injury Worker move from flat 24/7 polling to adaptive/window-aware cadences, and a Postgame Ingestion Worker is added as a named row, event-triggered by `GameFinished` (§4.5) and implementing §1.1 principle #1 ("download once, reuse everywhere") for finalized game data rather than restating that principle. See `CHANGELOG.md` v4.2 entry for full reasoning.
 **Read next:** Volume 3 (Database Architecture) — this volume defines the services that read/write the schema Volume 3 will specify
 
 ---
@@ -220,19 +221,20 @@ This is a deployment-shape overview; full agent-level detail belongs in Volume 4
 
 **Caching — Redis (v3.0):** the Sports Intelligence Layer caches normalized responses in Redis, sitting in front of every adapter, with category-appropriate TTLs — odds data needs near-real-time freshness (seconds), injury/roster data can tolerate minutes, weather can tolerate longer. Cached responses are shared across all users, not per-user — this is both a cost control (fewer provider calls) and a load control (protects against provider rate limits during traffic spikes), and matters most during concentrated windows like Sunday NFL slates where hundreds of users are effectively asking for the same data at once.
 
-**Concrete refresh cadences (v3.0) — replaces the previously vague "category-appropriate" language with real numbers:**
+**Concrete refresh cadences (v3.0, revised v4.2) — replaces the previously vague "category-appropriate" language with real numbers:**
 
 | Worker | Cadence | Purpose |
 |---|---|---|
 | Master Refresh | Daily, 6:00 AM | Full pull: games, odds, props, injuries, weather, news, rosters, schedule updates — this feeds `daily_game_intelligence` (Volume 3 §5.1) |
-| Odds Worker | Every 5 minutes | Refresh `odds_snapshots` |
-| Player Props Worker | Every 5 minutes | Refresh prop markets specifically — highest volatility, highest user interest |
-| Injury Worker | Every 10 minutes | Refresh injury reports |
+| Odds Worker | **Adaptive, game-aware (v4.2)** | Refresh `odds_snapshots`. Polling frequency ramps up as a game's kickoff approaches (infrequent snapshots for games still days out, every-few-minutes in the final hour, stopping at kickoff) rather than a flat every-5-minutes cadence applied identically whether kickoff is in 10 minutes or 4 days. Mirrors the Player Props Worker's cadence shape below — both are the same market-data category and share the same real-world volatility pattern. |
+| Player Props Worker | Adaptive, game-aware (v4.1, unchanged) | Refresh prop markets specifically — highest volatility, highest user interest. Per-game pregame monitoring cycle: 1 morning snapshot, then ramping frequency through 2h/60min/15min/5min windows before kickoff, stopping at kickoff — not a continuous 24/7 five-minute poll. |
+| Injury Worker | **Window-aware (v4.2)** | Refresh injury reports. Real injury-report volatility is bursty, not continuous: practice-report updates land roughly once daily Wednesday–Friday, official designations post Friday, and inactive lists post ~90 minutes before kickoff. Polling ramps up only inside those windows and stays infrequent the rest of the week, replacing the previous flat every-10-minutes-24/7 cadence. |
 | Weather Worker | Every 15 minutes | Refresh weather snapshots |
 | News Worker | Every 15 minutes | Refresh news/sentiment feed |
 | Pregame Worker | Triggered, T-minus kickoff | Final refresh of all critical data immediately before a game starts — catches last-minute inactive lists and line moves the scheduled cadences might miss by a few minutes |
+| **Postgame Ingestion Worker (v4.2)** | **Event-triggered by `GameFinished` (§4.5), plus a small number of bounded reconciliation checks — not continuous polling** | Fetches a game's final score, final team stats, and final player stats when that game's status transitions to final. Real-world NFL stat corrections can occur in the days following a game (see `PROGRESS.md`'s 2026-08-10 corrections research), so this worker performs the initial fetch plus a small, fixed number of reconciliation checks over a bounded post-finalization window, then treats the stored record as authoritative — this is §1.1 principle #1 ("download once, reuse everywhere") applied with the correct scope (finalized *and confirmed-stable* data), not literal single-fetch-forever. §4.4 already scoped "postgame review generation (triggered by game completion)" as a Background Worker responsibility; this row makes that concrete with a name and a trigger. See CHANGELOG.md v4.2 entry. |
 
-**Why exact cadences matter enough to specify (not just "make it fast"):** the AI Transparency Meter's `data_quality` dimension (Volume 5 §5, v2.0) needs a real, calculable number — "how stale is this data right now" only means something if there's a known cadence to measure staleness against. Vague TTLs made that dimension a placeholder; concrete cadences make it real.
+**Why exact cadences matter enough to specify (not just "make it fast"):** the AI Transparency Meter's `data_quality` dimension (Volume 5 §5, v2.0) needs a real, calculable number — "how stale is this data right now" only means something if there's a known cadence to measure staleness against. Vague TTLs made that dimension a placeholder; concrete cadences make it real. The v4.2 revision keeps this intent but stops applying it uniformly — a 24/7 flat cadence measured staleness against a number that didn't reflect the data's actual real-world volatility, which is exactly what the adaptive/window-aware cadences above correct.
 
 ---
 

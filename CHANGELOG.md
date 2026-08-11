@@ -317,4 +317,31 @@ This document does not change any Volume's version number — it's a build-seque
 
 **Expected impact:** Application code across Phase 2 onward must not assume `jurisdiction_state` is always populated — every bet-relevant code path needs its own `is not null` check, exactly as Phase 2's roadmap Key Tasks already anticipated ("enforce the not null constraint's intent at the application layer too"). No other volume references this column directly, so this stays a MINOR, Volume-3-only bump. Volume 3 §3's body updated in the same pass (not header-only), continuing the discipline established after the v2.0.1/v2.0.2 lesson.
 
+---
+
+## v4.2 — 2026-08-10 — MINOR
+
+**Volume affected:** Volume 2 (System Architecture) only.
+
+**Reason:** Before any Phase 3 provider purchase, Mac required the same cost-and-cadence discipline applied across the whole Sports Intelligence Layer, not just The Odds API's player-prop cadence (already revised in the Phase 3A credit-projection work). Reviewing each SportsDataIO- and Odds-API-backed category separately against real-world change frequency surfaced that §8's flat 24/7 cadences didn't match actual data volatility for three categories, and that finalized postgame data (final score, final team stats, final player stats) had no named worker at all despite §4.4 already scoping "postgame review generation (triggered by game completion)" as a Background Worker responsibility and §4.5 already defining a `GameFinished` event for exactly this trigger.
+
+**Decision:**
+- **Odds Worker** moves from a flat every-5-minutes-24/7 cadence to the same adaptive, game-aware cadence shape already governing the Player Props Worker (ramping frequency as kickoff approaches, stopping at kickoff) — both are the same underlying market-data category with the same volatility pattern, so treating them identically was the inconsistency, not the original 5-minute number in isolation.
+- **Injury Worker** moves from a flat every-10-minutes-24/7 cadence to a window-aware cadence, ramping up only during the real injury-report cycle (Wednesday–Friday practice-report windows, the Friday official-designation window, and the ~90-minutes-pre-kickoff inactive-list window) and staying infrequent otherwise.
+- **Postgame Ingestion Worker** added as a new, explicitly named §8 row: event-triggered by the existing `GameFinished` event (§4.5), fetching final score/team stats/player stats exactly once per game. This is §1.1 principle #1 ("download once, reuse everywhere") applied to finalized game data, not a new principle — no rewrite of §1.1's text, only a cross-reference from the new row back to it and to §4.5.
+- Weather Worker and News Worker cadences are unchanged in this pass — reviewed and found not to be cost-driven at current volume (WeatherAPI's free tier covers current usage regardless of cadence; NewsAPI/GNews pricing is flat-tier, not metered, so cadence doesn't move cost either way) — a candidate NewsAPI→GNews primary/fallback vendor swap was identified on pricing grounds but is explicitly **not** part of this amendment, pending a full coverage/latency/reliability/licensing comparison Mac requested be done as its own procurement decision.
+
+**Alternatives considered:**
+- Leaving Odds Worker on its original flat 5-minute cadence while only revising Player Props — rejected; both are the same category (market/odds data) under the same provider cost model, and applying the adaptive shape to only one of them was an inconsistency with no principled justification once reviewed side by side.
+- Treating the postgame-ingestion gap as a new architectural principle requiring new text in §1.1 — rejected; §1.1 principle #1 already states the "download once, reuse everywhere" rule in general terms, and §4.4/§4.5 already named the responsibility and the triggering event. The gap was the missing concrete row in §8's cadence table, not missing principle-level guidance — adding a duplicate principle would have been redundant with existing text rather than filling a real gap.
+- Making the Postgame Ingestion Worker an open-ended polling worker (checking game status/stats indefinitely on a fixed interval) instead of event-triggered with a bounded reconciliation window — rejected; while a completed game's stats are *mostly* stable once final (Group C), they are not permanently immutable at the moment of initial ingestion — real NFL stat corrections occur in the days following a game (see `PROGRESS.md`'s 2026-08-10 corrections research). Open-ended continuous polling would still violate §1.1 principle #1's intent, but treating the first fetch as permanently final would risk silently grading bets or reconstructing history against data the league itself later corrected. A small, fixed number of bounded reconciliation checks is the design that satisfies both constraints.
+
+**Expected impact:**
+- Phase 3B/3C worker implementations (not yet built) must implement the adaptive/window-aware cadence shapes described here for the Odds and Injury Workers, and must implement the Postgame Ingestion Worker as an event subscriber to `GameFinished`, not a new poller — this is a MINOR, Volume-2-only bump, since it revises cadence values and adds one worker row within the section that already owned this content, without touching any other volume's schema, agents, or product decisions.
+- No Volume 3 schema change required — the Postgame Ingestion Worker persists into already-existing `games.final_score`/`team_stats`/`player_stats` tables (verified directly against the live `dev` schema before concluding this).
+- Provider-provenance persistence and postgame stat-correction/reconciliation behavior are tracked as separate, still-open items (see `PROGRESS.md`'s 2026-08-10 entries) — deliberately not folded into this amendment, since neither changes a cadence or adds a worker; they're schema-provenance and data-correctness questions respectively.
+- §8's body updated in the same pass as this entry (not header-only), continuing the discipline established after the v2.0.1/v2.0.2 lesson.
+
+**Full technical detail:** This entry, plus the reasoning inline in Volume 2's v4.2 note and §8. Also logged operationally in `PROGRESS.md`'s 2026-08-10 notes.
+
 **Full technical detail:** Also logged operationally in `PROGRESS.md`'s Phase 2 notes.
