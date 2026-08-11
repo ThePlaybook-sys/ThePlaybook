@@ -1,0 +1,16 @@
+{
+  "id": "0f1e2d3c4b5a69788796a5b4c3d2e1f0",
+  "sport_key": "americanfootball_nfl",
+  "sport_title": "NFL",
+  "commence_time": "2026-09-14T20:25:00Z",
+  "home_team": "San Francisco 49ers",
+  "away_team": "Buffalo Bills",
+  "bookmakers": [
+    {
+      "key": "draftkings",
+      "title": "DraftKings",
+      "last_update": "2026-09-14T12:00:00Z",
+      "markets": []
+    }
+  ]
+}

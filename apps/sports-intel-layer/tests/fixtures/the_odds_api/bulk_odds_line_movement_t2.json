@@ -1,0 +1,27 @@
+[
+  {
+    "id": "e912304de2b25f2879b0293fd6a48ef4",
+    "sport_key": "americanfootball_nfl",
+    "sport_title": "NFL",
+    "commence_time": "2026-09-14T17:00:00Z",
+    "home_team": "Kansas City Chiefs",
+    "away_team": "Baltimore Ravens",
+    "bookmakers": [
+      {
+        "key": "draftkings",
+        "title": "DraftKings",
+        "last_update": "2026-09-14T12:30:00Z",
+        "markets": [
+          {
+            "key": "spreads",
+            "last_update": "2026-09-14T12:30:00Z",
+            "outcomes": [
+              {"name": "Kansas City Chiefs", "price": -115, "point": -3.5},
+              {"name": "Baltimore Ravens", "price": -105, "point": 3.5}
+            ]
+          }
+        ]
+      }
+    ]
+  }
+]
