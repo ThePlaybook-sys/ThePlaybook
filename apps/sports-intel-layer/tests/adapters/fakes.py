@@ -8,9 +8,9 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from app.adapters.base import OddsAdapter, TeamStatsAdapter
+from app.adapters.base import NewsAdapter, OddsAdapter, TeamStatsAdapter, WeatherAdapter
 from app.adapters.errors import ProviderUnavailableError
-from app.adapters.models import AdapterResponse, OddsLine, TeamStatLine
+from app.adapters.models import AdapterResponse, NewsArticle, OddsLine, TeamStatLine, WeatherConditions
 
 
 class FakeOddsAdapterV1(OddsAdapter):
@@ -86,3 +86,46 @@ class FakeTeamStatsAdapter(TeamStatsAdapter):
             ),
         ]
         return AdapterResponse(value=lines, source=self.provider_name)
+
+
+class FakeWeatherAdapter(WeatherAdapter):
+    provider_name = "fake_weather_provider"
+
+    def __init__(self, *, fail: bool = False):
+        self._fail = fail
+
+    async def fetch_weather(
+        self, game_external_id: str, kickoff: datetime
+    ) -> AdapterResponse[WeatherConditions]:
+        if self._fail:
+            raise ProviderUnavailableError("simulated outage", provider=self.provider_name)
+        conditions = WeatherConditions(
+            game_external_id=game_external_id,
+            temperature_f=65.0,
+            wind_mph=5.0,
+            precipitation_pct=0,
+            conditions="Clear",
+            is_dome=False,
+        )
+        return AdapterResponse(value=conditions, source=self.provider_name)
+
+
+class FakeNewsAdapter(NewsAdapter):
+    provider_name = "fake_news_provider"
+
+    def __init__(self, *, fail: bool = False):
+        self._fail = fail
+
+    async def fetch_news(self, team: str | None = None) -> AdapterResponse[list[NewsArticle]]:
+        if self._fail:
+            raise ProviderUnavailableError("simulated outage", provider=self.provider_name)
+        articles = [
+            NewsArticle(
+                headline="Fake headline",
+                url="https://example.com/fake",
+                source="fakenews",
+                published_at=datetime(2026, 9, 1),
+                related_teams=[team] if team else [],
+            )
+        ]
+        return AdapterResponse(value=articles, source=self.provider_name)

@@ -1,0 +1,12 @@
+{
+  "status": "ok",
+  "totalResults": 1,
+  "articles": [
+    {
+      "source": {"name": "ESPN"},
+      "author": "Adam Schefter",
+      "description": "Missing required title/url fields.",
+      "publishedAt": "2026-09-12T14:00:00Z"
+    }
+  ]
+}

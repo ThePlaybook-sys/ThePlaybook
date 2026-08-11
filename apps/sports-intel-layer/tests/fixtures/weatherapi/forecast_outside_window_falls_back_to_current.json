@@ -1,0 +1,19 @@
+{
+  "location": {
+    "name": "Kansas City",
+    "region": "Missouri",
+    "country": "USA",
+    "lat": 39.05,
+    "lon": -94.48
+  },
+  "current": {
+    "last_updated": "2026-09-14 09:00",
+    "temp_f": 68.0,
+    "wind_mph": 6.9,
+    "precip_in": 0.02,
+    "condition": {"text": "Light rain"}
+  },
+  "forecast": {
+    "forecastday": []
+  }
+}

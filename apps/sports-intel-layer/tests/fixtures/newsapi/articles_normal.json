@@ -1,0 +1,36 @@
+{
+  "status": "ok",
+  "totalResults": 3,
+  "articles": [
+    {
+      "source": {"id": "espn", "name": "ESPN"},
+      "author": "Adam Schefter",
+      "title": "Chiefs, Ravens set for statement Week 2 matchup",
+      "description": "Kansas City hosts Baltimore in a rematch of last year's AFC finish.",
+      "url": "https://www.espn.com/nfl/story/_/id/1001/chiefs-ravens-preview",
+      "urlToImage": "https://a.espncdn.com/1001.jpg",
+      "publishedAt": "2026-09-12T14:00:00Z",
+      "content": "Kansas City hosts Baltimore..."
+    },
+    {
+      "source": {"id": null, "name": "Pro Football Talk"},
+      "author": "Mike Florio",
+      "title": "Mahomes: 'We know what's at stake'",
+      "description": "Chiefs QB addresses the media ahead of Sunday's game.",
+      "url": "https://profootballtalk.nbcsports.com/2026/09/13/mahomes-stakes/",
+      "urlToImage": null,
+      "publishedAt": "2026-09-13T18:30:00Z",
+      "content": "Patrick Mahomes met with reporters..."
+    },
+    {
+      "source": {"id": "bleacher-report", "name": "Bleacher Report"},
+      "author": null,
+      "title": "Week 2 injury report: What to watch",
+      "description": "A full rundown of Sunday's key injury designations.",
+      "url": "https://bleacherreport.com/articles/1003-week-2-injuries",
+      "urlToImage": "https://bleacherreport.com/1003.jpg",
+      "publishedAt": "2026-09-14T09:15:00Z",
+      "content": "Several starters carry questionable tags..."
+    }
+  ]
+}
