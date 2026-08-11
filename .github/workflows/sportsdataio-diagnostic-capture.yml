@@ -32,6 +32,23 @@ jobs:
     # anywhere in GitHub; it stays in Railway dev only.
     environment: dev
     steps:
+      - name: Preflight -- confirm routing/auth without a token (expect 401, not 404)
+        # Deliberately omits X-Diagnostic-Token. The endpoint checks token
+        # validity *before* the one-shot guard and before touching
+        # SportsDataIO, so this proves the diagnostics router is live on
+        # the freshly-deployed build at zero cost: no budget consumed, no
+        # one-shot guard burned. A non-401 result (e.g. still 404) means
+        # the fresh deploy did not fix routing -- fail here rather than
+        # spend any of the 12-call budget against a broken endpoint.
+        run: |
+          url="https://sports-intel-layer-dev.up.railway.app/diagnostics/sportsdataio-capture"
+          http_status=$(curl -sS "$url" -o /dev/null -w "%{http_code}")
+          echo "preflight (no token) HTTP status: ${http_status}"
+          if [ "$http_status" != "401" ]; then
+            echo "Expected 401 (invalid diagnostic token), got ${http_status} -- stopping before the real capture."
+            exit 1
+          fi
+
       - name: Call diagnostic endpoint, save full response to a file (not the log)
         env:
           DIAGNOSTIC_TOKEN: ${{ secrets.SPORTSDATAIO_DIAGNOSTIC_TOKEN }}
