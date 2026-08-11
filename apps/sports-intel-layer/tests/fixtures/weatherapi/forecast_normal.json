@@ -1,0 +1,29 @@
+{
+  "location": {
+    "name": "Kansas City",
+    "region": "Missouri",
+    "country": "USA",
+    "lat": 39.05,
+    "lon": -94.48
+  },
+  "current": {
+    "last_updated": "2026-09-14 09:00",
+    "temp_f": 68.0,
+    "wind_mph": 6.9,
+    "precip_in": 0.0,
+    "condition": {"text": "Partly cloudy"}
+  },
+  "forecast": {
+    "forecastday": [
+      {
+        "date": "2026-09-14",
+        "day": {"maxtemp_f": 74.0, "mintemp_f": 60.0},
+        "hour": [
+          {"time": "2026-09-14 11:00", "temp_f": 70.0, "wind_mph": 8.1, "chance_of_rain": 10, "condition": {"text": "Sunny"}},
+          {"time": "2026-09-14 12:00", "temp_f": 72.0, "wind_mph": 9.4, "chance_of_rain": 5, "condition": {"text": "Sunny"}},
+          {"time": "2026-09-14 13:00", "temp_f": 73.5, "wind_mph": 10.2, "chance_of_rain": 5, "condition": {"text": "Sunny"}}
+        ]
+      }
+    ]
+  }
+}

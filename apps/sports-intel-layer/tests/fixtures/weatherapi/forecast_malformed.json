@@ -1,0 +1,14 @@
+{
+  "location": {"name": "Kansas City", "region": "Missouri", "country": "USA"},
+  "current": {"last_updated": "2026-09-14 09:00", "wind_mph": 6.9, "condition": {"text": "Cloudy"}},
+  "forecast": {
+    "forecastday": [
+      {
+        "date": "2026-09-14",
+        "hour": [
+          {"time": "2026-09-14 11:00", "wind_mph": 8.1, "condition": {"text": "Sunny"}}
+        ]
+      }
+    ]
+  }
+}

@@ -225,3 +225,33 @@
     9. Live provider data flowing into persistence (today's persistence proof used a fixture-derived payload against the real schema — real, but not sourced from a live vendor call)
     10. Actual credit usage/cost validation against the existing ≈41K/mo production, ≈4.8K/mo staging projections (2026-08-10)
   - **No purchase made, no account created.** Awaiting Mac's review of this evidence before proceeding into 3C.
+- **2026-08-11 — Independent CI confirmation obtained, PR #34 merged into `dev`.** Mac approved the fixture-based implementation pending real CI evidence (not just the local venv run) — PR opened, actual `sports-intel-layer` job log pulled directly (not just the checkmark): `36 passed in 1.13s`, exact match to the local result. All other jobs (`api-gateway`, `ai-orchestrator`, `workers`, `test-frontend`) also green; `deploy-*` correctly `skipped` (this was a PR, not a push to `dev`/`main`/a tag). Merged per Mac's explicit go-ahead once CI matched local. **Still not proceeding into 3C** — per Mac's explicit instruction, that waits for his review of the final A/B sign-off evidence table below.
+
+**Phase 3B evidence table, presented for Mac's review — not a unilateral closure:**
+
+| A. IMPLEMENTATION / FIXTURE-PROVEN | Evidence |
+|---|---|
+| Adapter implementation | `TheOddsApiOddsAdapter` + `TheOddsApiPlayerPropsAdapter`, real production-shaped code against the documented v4 contract, HTTP client injected |
+| Normalization | `OddsLine`/`PlayerProp` correctly populated from fixture payloads across all scenarios (multi-game, multi-book, h2h/spreads/totals→moneyline/spread/total, props Over/Under grouping) |
+| Error translation | 401→`ProviderAuthError`, 429→`ProviderRateLimitError` (retry_after parsed), 5xx/timeout/connect-error→`ProviderUnavailableError`, malformed/non-JSON→`ProviderDataError` — no raw httpx/vendor exception ever escapes |
+| Caching behavior | Cache hit avoids a second HTTP call; TTL expiry triggers a fresh one; reused 3A's `CachingAdapter`/`InMemoryCacheBackend` unchanged against the real adapter |
+| Persistence | `app/persistence/odds_snapshots.py`, real httpx/PostgREST write; **live round-trip proven directly against dev's real schema** via Supabase MCP (`begin`/`rollback`), confirmed unpolluted afterward |
+| Downstream read | `read_latest_odds_snapshots`, proven both in the fully-mocked pipeline test and the live Supabase round-trip |
+| Vendor/transport swap | Extended 3A's own acceptance test — a fake adapter and the real fixture-backed adapter behind byte-identical caller code |
+| Internal Sunday-slate load behavior | 13 games × 18-call adaptive cadence, `asyncio.gather`, cache boundary collapses 234 calls to 13 real calls, completes well under the sanity bound — explicitly our pipeline's concurrency, not the provider's |
+| **CI confirmation** | **`sports-intel-layer`: 36 passed, independently verified from the actual job log (PR #34, run `31504521301`), not just an overall-green checkmark** |
+
+| B. DEFERRED — FINANCIAL/EXTERNAL DEPENDENCY | Status |
+|---|---|
+| Real authentication | Never attempted — no key exists |
+| Actual live payload shape | Every field/shape assumption is ASSUMED, not diffed against a real response |
+| Real NFL market coverage | Unconfirmed which books/markets are actually live for NFL |
+| Real player-prop market behavior | The 5 assumed prop markets, the Over/Under pairing shape, and the no-player-id gap are all unverified |
+| Real quota headers | Presence/exact names of `x-requests-remaining` etc. unconfirmed |
+| Real provider rate-limit behavior | 429 body/headers and real throttling behavior unconfirmed |
+| Real provider latency/throughput | Load test proves our pipeline only, not the vendor's real performance |
+| Fixture-vs-live payload comparison | Never run — no live response exists yet to diff against |
+| Live provider data into persistence | Today's persistence proof used a fixture-derived payload, not a live vendor call |
+| Real credit/cost validation | The ≈41K/mo production, ≈4.8K/mo staging projections (2026-08-10) remain unvalidated against real usage |
+
+**Phase 3B is not declared closed.** Per Mac's explicit instruction, this table is presented for his review; 3C does not begin until he responds.
