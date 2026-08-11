@@ -345,3 +345,36 @@ This document does not change any Volume's version number — it's a build-seque
 **Full technical detail:** This entry, plus the reasoning inline in Volume 2's v4.2 note and §8. Also logged operationally in `PROGRESS.md`'s 2026-08-10 notes.
 
 **Full technical detail:** Also logged operationally in `PROGRESS.md`'s Phase 2 notes.
+
+---
+
+## v4.3 — 2026-08-10 — MINOR
+
+**Volume affected:** Volume 3 (Database Architecture) only.
+
+**Reason:** The v4.2 Postgame Ingestion Worker amendment (Volume 2 §8) established that finalized NFL stats can receive real, provider-issued corrections after a game is marked final, and flagged an open question: how should a later stat correction interact with an already-settled wager? Left undocumented, this risked Phase 5 either building bet-grading logic that silently recalculates a wager's outcome from corrected stats (misrepresenting what the bettor actually experienced), or discovering the settlement-history gap identified below as a surprise mid-build rather than a known, planned-for item. Mac reviewed and approved a full six-rule policy governing this relationship, with an explicit instruction that Phase 3 not implement any of it, but that Phase 3's architecture also not be built in a way that makes it impossible to implement later.
+
+**Decision:** Added a new subsection to §6 (Bet Verification & Performance Attribution), **Stat Correction ↔ Bet Settlement Policy**, documenting Mac's six rules verbatim in substance:
+1. Sportsbook settlement (`verified_bets.outcome`) and sports-stat truth (`player_stats`/`team_stats`/`games.final_score`) are separate, related records — never automatically equivalent.
+2. A wager's graded outcome comes from the official settlement source, never inferred solely from corrected statistics.
+3. A provider stat correction updates/supersedes the stat record but preserves the previous version, records that a correction occurred, preserves when it became known, and never silently overwrites an already-settled wager outcome.
+4. A sportsbook regrade preserves the original settlement, records the regrade as a new historical event (not an in-place update), updates the current effective outcome, preserves when the regrade became known, and retains enough history to reconstruct both settlements.
+5. Performance analytics (`verified_user_performance`, `ai_performance`) use the effective sportsbook-settled outcome, never the stats tables directly, when a settlement record exists.
+6. Time Machine reconstruction must distinguish recommendation-time information, initial postgame stats, later corrections and their discovery time, the original settlement, any regrade, and the current effective outcome — none of which a later correction or regrade may rewrite.
+
+A one-line cross-reference was added to §7's `postgame_reviews` description (`outcome_summary` narrates recommendation performance, not wager settlement) pointing back to this policy, since that table is generated on the same `games.status = 'final'` trigger this policy concerns itself with.
+
+**Schema gap check performed before writing anything** (per Mac's explicit instruction to verify existing structures first and report gaps rather than build ahead of Phase 5): rules 1, 2, and 5 are already structurally satisfied by the existing separation between `verified_bets`/`verified_user_performance`/`ai_performance` and the stats tables — no schema change needed. Rule 3's history-preservation half is already possible today without a migration, since `team_stats`/`player_stats` carry no uniqueness constraint blocking a correction from being inserted as a new row; what's missing is an explicit "this row is a correction" marker, folded into the Milestone F provenance migration already proposed (not applied) in `PROGRESS.md`. **Rule 4 surfaced a genuine, real gap:** `verified_bets` is a single mutable row per wager with no append-only/versioning pattern (unlike `odds_snapshots`), so an in-place update on a regrade would destructively overwrite the original settlement today. This is **not being closed now** — per Mac's explicit instruction not to pull Phase 5 implementation backward into Phase 3, it's documented as a known, flagged gap for Phase 5's schema work (most likely an append-only settlement-history table mirroring the `odds_snapshots` pattern) rather than built or migrated here.
+
+**Alternatives considered:**
+- Silently deferring this policy to be written when Phase 5 actually starts, rather than documenting it now — rejected; Mac's explicit request was to lock in the policy now, while the reasoning and the schema-gap analysis are fresh, specifically so Phase 3's architecture can be checked against it today rather than risk an incompatible design shipping first.
+- Closing the `verified_bets` settlement-history gap with a migration in this same pass, since the gap is already identified — rejected; Mac's instruction was explicit ("do not pull a Phase 5 implementation backward into Phase 3 merely to close a future requirement"), and Phase 3 doesn't touch `verified_bets` at all, so nothing about Phase 3's own scope requires this table to change now.
+- Placing the full policy in §7 (`postgame_reviews`) instead of §6 — considered, since the initial framing of "which section owns this" cited §7, but corrected before writing: `verified_bets`, the table this policy is actually about, lives in §6; §7's `postgame_reviews` only narrates recommendation performance and is not itself a settlement record, so it gets a one-line cross-reference, not the primary text.
+
+**Expected impact:**
+- This is documentation of a Phase 5 policy, not a schema or Phase 3 implementation change — MINOR, Volume-3-only bump, no migration applied, no other volume touched.
+- Phase 5's roadmap scope now has a concrete, pre-approved specification to build against for bet-grading/settlement, including one named schema gap (`verified_bets` settlement history) to design for rather than discover cold.
+- Phase 3 requires no architecture change as a result of this policy — its current design (Postgame Ingestion Worker inserting new rows rather than overwriting; no code path touching `verified_bets`) already satisfies the "don't foreclose this later" boundary Mac set.
+- §6's body updated in the same pass as this entry (not header-only), continuing the discipline established after the v2.0.1/v2.0.2 lesson.
+
+**Full technical detail:** This entry, plus the reasoning inline in Volume 3's v4.3 note and §6. Also logged operationally in `PROGRESS.md`'s 2026-08-10 notes.

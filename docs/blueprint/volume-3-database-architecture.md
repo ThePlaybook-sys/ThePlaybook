@@ -1,12 +1,13 @@
 # The Playbook — Volume 3
 ## Database Architecture: Tables, Relationships, Indexes, Triggers, Migrations, RLS
 
-**Version:** v4.2
-**Last updated:** 2026-08-09
-**Depends on:** Volume 1 (v3.0 — tiers, personas, principles) and Volume 2 (v4.0 — service shape, routing table reference, RLS placeholder, scoped event system, Redis cache layer)
+**Version:** v4.3
+**Last updated:** 2026-08-10
+**Depends on:** Volume 1 (v3.0 — tiers, personas, principles) and Volume 2 (v4.2 — service shape, routing table reference, RLS placeholder, scoped event system, Redis cache layer, Postgame Ingestion Worker)
 **v4.0 note:** Normalized multi-sport core added (§4.0) — `sports`/`leagues`/`seasons`/`teams`/`players`/`player_stats`/`team_stats` plus the `player_stats_nfl` extension pattern. `games` gains `sport_id`/`league_id`/`season_id` while the legacy `sport` text field is kept, deprecated, for Phase 0/1 backward compatibility. Data quality metadata convention added to `daily_game_intelligence` (§4.1). See `CHANGELOG.md` v4.0 entry for full reasoning.
 **v4.1.1 note (PATCH):** §10 gained a clarification that its RLS scope covers "every table requiring access control," not only tables containing per-user data (Phase 1 Milestone 2). The three tables named in the v2.0 UUIDv7 amendment (`odds_snapshots`, `recommendation_agent_outputs`, `market_monitoring_events`) use a custom `uuid_generate_v7()` function, since the deployed Postgres version predates native `uuidv7()` support. See `CHANGELOG.md` v4.1.1 entry for full reasoning.
 **v4.2 note (MINOR):** §3's `user_profiles.jurisdiction_state` relaxed from `not null` to nullable — Phase 2's signup trigger creates the row before onboarding (where jurisdiction is actually collected) ever runs. The `not null` *intent* is now enforced at the application layer. See `CHANGELOG.md` v4.2 entry for full reasoning.
+**v4.3 note (MINOR):** §6 gains the Stat Correction ↔ Bet Settlement Policy — Phase 5 grading/outcome policy, documented now so Phase 3's postgame architecture doesn't foreclose it later. No schema changed; one real gap (`verified_bets` has no settlement-history/versioning pattern) identified and explicitly deferred to Phase 5. See `CHANGELOG.md` v4.3 entry for full reasoning.
 **Read next:** Volume 4 (AI Intelligence) — the agent, consensus, and orchestration tables defined here are the tables Volume 4's logic reads and writes
 
 ---
@@ -484,6 +485,30 @@ create table verified_user_performance (
 ```
 **Why three tables instead of one `performance` table with a `type` enum column:** the master spec is explicit — "Never mix these." A single table with a type column makes it trivially easy to write a query (deliberately or by accident) that averages projected and verified performance together, which would misrepresent real user results as AI-validated fact. Separate tables make that mistake require deliberately joining three tables — a much higher bar than forgetting a `WHERE type = 'verified'` clause.
 
+### Stat Correction ↔ Bet Settlement Policy (v4.3)
+
+**This is policy for Phase 5's grading/outcome implementation, not a Phase 3 build item.** Phase 3 does not implement bet-grading logic. It is documented here, now, because Phase 3's ingestion/provenance/postgame-reconciliation architecture (Volume 2 §8's Postgame Ingestion Worker, and the Milestone F provenance work referenced below) has to be built in a way that doesn't foreclose this policy later — history preserved, nothing destructively overwritten — even though nothing here gets implemented until Phase 5.
+
+**1. Sportsbook settlement and sports-stat truth are separate, related records.** A wager's graded outcome (`verified_bets.outcome`) and the underlying sports statistics (`player_stats`, `team_stats`, `games.final_score`) are not the same thing and must never be treated as automatically equivalent. A later correction to sports statistics is never, by itself, a change to a wager's official settlement.
+
+**2. A wager's graded outcome comes from the official settlement/result source used for grading — never inferred solely from corrected statistics.** `verified_user_performance` and `ai_performance` must read the *effective sportsbook-settled outcome*, not independently recalculate win/loss/push from the latest `player_stats`/`team_stats`/`final_score` row. (This is already the schema's structural default — `verified_user_performance` references `verified_bets`, not the stats tables, directly — Phase 5 must not add a path that bypasses this.)
+
+**3. When a provider issues a postgame statistical correction:** update or supersede the underlying stat record, but preserve the previous version; record explicitly that a correction occurred (not just infer it from row order); preserve when The Playbook learned of the correction; and never let a stat correction silently overwrite an already-settled wager outcome. Historical evidence stays reconstructable, never destructively replaced — the same append-only philosophy `odds_snapshots` already uses.
+
+**4. If the official sportsbook/result source itself later regrades a wager:** preserve the original settlement, record the regrade as a new historical event/version (not an in-place update), update the wager's current effective outcome, preserve when The Playbook learned of the regrade, and retain enough history to reconstruct both the original and the revised settlement.
+
+**5. Performance analytics use the effective sportsbook-settled outcome, never `player_stats`/`team_stats`/`final_score` directly**, when an authoritative settlement record exists — keeping recommendation performance aligned with what the bettor actually experienced, not a recalculation from raw stats.
+
+**6. Time Machine reconstruction must be able to distinguish, for any historical recommendation:** what was known at recommendation time (`recommendation_snapshots`, already satisfies this); the initial postgame stats/results (Postgame Ingestion Worker's first fetch, Volume 2 §8); any later provider stat corrections and when they became known (Milestone F provenance work, below); the original sportsbook settlement; any subsequent regrade; and the current effective settlement outcome. "What did The Playbook know at that time" must never be rewritten by a later correction or regrade.
+
+**Schema gap check against the six requirements above (per Mac's explicit instruction to verify before changing anything):**
+- Rules 1, 2, 5 are already structurally satisfied — `verified_bets`/`verified_user_performance`/`ai_performance` have never been coupled to the stats tables; nothing today would need to change for Phase 5 to honor them.
+- Rule 3's version-preservation half is already structurally possible without a migration: `team_stats`/`player_stats` carry no uniqueness constraint on `(team_id/player_id, game_id)`, so a correction can already be inserted as a new row rather than an overwrite. What's *not* yet present is an explicit "this row is a correction" marker (today it would only be inferable from row order) — a refinement to fold into the Milestone F provenance migration already proposed in `PROGRESS.md` (2026-08-10), not a new table.
+- **Rule 4 is a real, unclosed gap.** `verified_bets` is a single mutable row per wager with no history/versioning pattern — unlike `odds_snapshots`, it has no append-only structure today. An in-place `update ... set outcome = ...` on a regrade would destructively overwrite the original settlement with no record it ever changed. Closing this requires a genuine schema addition (most likely an append-only `verified_bet_settlements`-style history table, mirroring the `odds_snapshots` pattern, plus a way to mark which row is currently effective) — **explicitly not built now.** This is Phase 5's schema work, flagged here so it isn't rediscovered as a surprise when Phase 5 begins.
+- Rule 6 depends on rules 3 and 4 above: satisfied for the recommendation-time and initial-postgame-stat legs today; the correction-marker refinement (rule 3) and the settlement-history gap (rule 4) are exactly what's still missing, and are the same two items already named above — nothing additional.
+
+**Phase 3's actual obligation:** don't destructively overwrite provider data or correction evidence, and don't build anything that assumes a stat correction updates a wager's settlement. Both are already true of the current Phase 3 design (Volume 2 §8's Postgame Ingestion Worker inserts new rows rather than overwriting, and nothing in Phase 3 touches `verified_bets` at all) — no Phase 3 architecture change is required by this policy.
+
 ---
 
 ## 7. Postgame Review & Market Monitoring
@@ -504,7 +529,7 @@ create table postgame_reviews (
   created_at timestamptz default now()
 );
 ```
-Generated automatically by the scheduled worker (Volume 2, Section 4.4) once `games.status = 'final'`. This table is what feeds the "correct_agents / underperforming_agents" data back into `agent_performance_scores` — the Continuous Learning Engine loop, fully specified in Volume 4, closes here at the schema level.
+Generated automatically by the scheduled worker (Volume 2, Section 4.4) once `games.status = 'final'`. This table is what feeds the "correct_agents / underperforming_agents" data back into `agent_performance_scores` — the Continuous Learning Engine loop, fully specified in Volume 4, closes here at the schema level. **`outcome_summary` narrates recommendation performance, not wager settlement** — it must not be treated as, or conflated with, a graded bet outcome. See §6's Stat Correction ↔ Bet Settlement Policy (v4.3) for the full separation requirement; that policy is Phase 5 scope, not built here.
 
 ### `market_monitoring_events`
 ```sql
