@@ -1,0 +1,27 @@
+[
+  {
+    "id": "a1b2c3d4e5f60718293a4b5c6d7e8f90",
+    "sport_key": "americanfootball_nfl",
+    "sport_title": "NFL",
+    "commence_time": "2026-09-14T20:25:00Z",
+    "home_team": "Dallas Cowboys",
+    "away_team": "Philadelphia Eagles",
+    "bookmakers": [
+      {
+        "key": "draftkings",
+        "title": "DraftKings",
+        "last_update": "2026-09-14T12:00:00Z",
+        "markets": [
+          {
+            "key": "h2h",
+            "last_update": "2026-09-14T12:00:00Z",
+            "outcomes": [
+              {"name": "Dallas Cowboys", "price": 105},
+              {"name": "Philadelphia Eagles", "price": -125}
+            ]
+          }
+        ]
+      }
+    ]
+  }
+]

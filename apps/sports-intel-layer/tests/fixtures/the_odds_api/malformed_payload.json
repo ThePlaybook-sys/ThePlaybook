@@ -1,0 +1,20 @@
+[
+  {
+    "sport_key": "americanfootball_nfl",
+    "home_team": "Kansas City Chiefs",
+    "away_team": "Baltimore Ravens",
+    "bookmakers": [
+      {
+        "key": "draftkings",
+        "markets": [
+          {
+            "key": "h2h",
+            "outcomes": [
+              {"name": "Kansas City Chiefs"}
+            ]
+          }
+        ]
+      }
+    ]
+  }
+]
