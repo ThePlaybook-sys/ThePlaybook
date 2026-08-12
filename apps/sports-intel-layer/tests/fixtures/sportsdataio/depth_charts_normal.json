@@ -1,0 +1,1380 @@
+[
+  {
+    "TeamID": 16,
+    "Offense": [
+      {
+        "DepthChartID": 3961,
+        "TeamID": 16,
+        "PlayerID": 18890,
+        "Name": "Patrick Mahomes",
+        "PositionCategory": "OFF",
+        "Position": "QB",
+        "DepthOrder": 1,
+        "Updated": "2026-08-11T12:36:43"
+      },
+      {
+        "DepthChartID": 3962,
+        "TeamID": 16,
+        "PlayerID": 22492,
+        "Name": "Justin Fields",
+        "PositionCategory": "OFF",
+        "Position": "QB",
+        "DepthOrder": 2,
+        "Updated": "2026-08-11T12:36:43"
+      },
+      {
+        "DepthChartID": 3963,
+        "TeamID": 16,
+        "PlayerID": 25871,
+        "Name": "Garrett Nussmeier",
+        "PositionCategory": "OFF",
+        "Position": "QB",
+        "DepthOrder": 3,
+        "Updated": "2026-08-11T12:36:43"
+      },
+      {
+        "DepthChartID": 3966,
+        "TeamID": 16,
+        "PlayerID": 23214,
+        "Name": "Kenneth Walker",
+        "PositionCategory": "OFF",
+        "Position": "RB",
+        "DepthOrder": 1,
+        "Updated": "2026-08-11T12:36:43"
+      },
+      {
+        "DepthChartID": 3967,
+        "TeamID": 16,
+        "PlayerID": 24609,
+        "Name": "Emari Demercado",
+        "PositionCategory": "OFF",
+        "Position": "RB",
+        "DepthOrder": 2,
+        "Updated": "2026-08-11T12:36:43"
+      },
+      {
+        "DepthChartID": 3968,
+        "TeamID": 16,
+        "PlayerID": 26835,
+        "Name": "Emmett Johnson",
+        "PositionCategory": "OFF",
+        "Position": "RB",
+        "DepthOrder": 3,
+        "Updated": "2026-08-11T12:36:43"
+      },
+      {
+        "DepthChartID": 3969,
+        "TeamID": 16,
+        "PlayerID": 25899,
+        "Name": "Brashard Smith",
+        "PositionCategory": "OFF",
+        "Position": "RB",
+        "DepthOrder": 4,
+        "Updated": "2026-08-11T12:36:43"
+      },
+      {
+        "DepthChartID": 3976,
+        "TeamID": 16,
+        "PlayerID": 23469,
+        "Name": "Tyquan Thornton",
+        "PositionCategory": "OFF",
+        "Position": "LWR",
+        "DepthOrder": 1,
+        "Updated": "2026-08-11T12:36:43"
+      },
+      {
+        "DepthChartID": 3977,
+        "TeamID": 16,
+        "PlayerID": 25911,
+        "Name": "Jalen Royals",
+        "PositionCategory": "OFF",
+        "Position": "LWR",
+        "DepthOrder": 2,
+        "Updated": "2026-08-11T12:36:43"
+      },
+      {
+        "DepthChartID": 3978,
+        "TeamID": 16,
+        "PlayerID": 24345,
+        "Name": "Jason Brownlee",
+        "PositionCategory": "OFF",
+        "Position": "LWR",
+        "DepthOrder": 3,
+        "Updated": "2026-08-11T12:36:43"
+      },
+      {
+        "DepthChartID": 3981,
+        "TeamID": 16,
+        "PlayerID": 24924,
+        "Name": "Xavier Worthy",
+        "PositionCategory": "OFF",
+        "Position": "RWR",
+        "DepthOrder": 1,
+        "Updated": "2026-08-11T12:36:43"
+      },
+      {
+        "DepthChartID": 3982,
+        "TeamID": 16,
+        "PlayerID": 26657,
+        "Name": "Jimmy Holiday",
+        "PositionCategory": "OFF",
+        "Position": "RWR",
+        "DepthOrder": 2,
+        "Updated": "2026-08-11T12:36:43"
+      },
+      {
+        "DepthChartID": 3986,
+        "TeamID": 16,
+        "PlayerID": 24120,
+        "Name": "Rashee Rice",
+        "PositionCategory": "OFF",
+        "Position": "SWR",
+        "DepthOrder": 1,
+        "Updated": "2026-08-11T12:36:43"
+      },
+      {
+        "DepthChartID": 3987,
+        "TeamID": 16,
+        "PlayerID": 26979,
+        "Name": "Cyrus Allen",
+        "PositionCategory": "OFF",
+        "Position": "SWR",
+        "DepthOrder": 2,
+        "Updated": "2026-08-11T12:36:43"
+      },
+      {
+        "DepthChartID": 3991,
+        "TeamID": 16,
+        "PlayerID": 15048,
+        "Name": "Travis Kelce",
+        "PositionCategory": "OFF",
+        "Position": "TE",
+        "DepthOrder": 1,
+        "Updated": "2026-08-11T12:36:43"
+      },
+      {
+        "DepthChartID": 3992,
+        "TeamID": 16,
+        "PlayerID": 21785,
+        "Name": "Noah Gray",
+        "PositionCategory": "OFF",
+        "Position": "TE",
+        "DepthOrder": 2,
+        "Updated": "2026-08-11T12:36:43"
+      },
+      {
+        "DepthChartID": 3993,
+        "TeamID": 16,
+        "PlayerID": 25112,
+        "Name": "Jared Wiley",
+        "PositionCategory": "OFF",
+        "Position": "TE",
+        "DepthOrder": 3,
+        "Updated": "2026-08-11T12:36:43"
+      },
+      {
+        "DepthChartID": 3996,
+        "TeamID": 16,
+        "PlayerID": 26012,
+        "Name": "Josh Simmons",
+        "PositionCategory": "OFF",
+        "Position": "LT",
+        "DepthOrder": 1,
+        "Updated": "2026-08-11T12:36:43"
+      },
+      {
+        "DepthChartID": 3997,
+        "TeamID": 16,
+        "PlayerID": 26262,
+        "Name": "Esa Pole",
+        "PositionCategory": "OFF",
+        "Position": "LT",
+        "DepthOrder": 2,
+        "Updated": "2026-08-11T12:36:43"
+      },
+      {
+        "DepthChartID": 4001,
+        "TeamID": 16,
+        "PlayerID": 24937,
+        "Name": "Kingsley Suamataia",
+        "PositionCategory": "OFF",
+        "Position": "LG",
+        "DepthOrder": 1,
+        "Updated": "2026-08-11T12:36:43"
+      },
+      {
+        "DepthChartID": 4002,
+        "TeamID": 16,
+        "PlayerID": 23926,
+        "Name": "Mike Caliendo",
+        "PositionCategory": "OFF",
+        "Position": "LG",
+        "DepthOrder": 2,
+        "Updated": "2026-08-11T12:36:43"
+      },
+      {
+        "DepthChartID": 4003,
+        "TeamID": 16,
+        "PlayerID": 25181,
+        "Name": "C.J. Hanson",
+        "PositionCategory": "OFF",
+        "Position": "LG",
+        "DepthOrder": 3,
+        "Updated": "2026-08-11T12:36:43"
+      },
+      {
+        "DepthChartID": 4006,
+        "TeamID": 16,
+        "PlayerID": 22845,
+        "Name": "Creed Humphrey",
+        "PositionCategory": "OFF",
+        "Position": "C",
+        "DepthOrder": 1,
+        "Updated": "2026-08-11T12:36:43"
+      },
+      {
+        "DepthChartID": 4007,
+        "TeamID": 16,
+        "PlayerID": 25282,
+        "Name": "Hunter Nourzad",
+        "PositionCategory": "OFF",
+        "Position": "C",
+        "DepthOrder": 2,
+        "Updated": "2026-08-11T12:36:43"
+      },
+      {
+        "DepthChartID": 4011,
+        "TeamID": 16,
+        "PlayerID": 22797,
+        "Name": "Trey Smith",
+        "PositionCategory": "OFF",
+        "Position": "RG",
+        "DepthOrder": 1,
+        "Updated": "2026-08-11T12:36:43"
+      },
+      {
+        "DepthChartID": 4012,
+        "TeamID": 16,
+        "PlayerID": 28416,
+        "Name": "Pete Nygra",
+        "PositionCategory": "OFF",
+        "Position": "RG",
+        "DepthOrder": 2,
+        "Updated": "2026-08-11T12:36:43"
+      },
+      {
+        "DepthChartID": 4016,
+        "TeamID": 16,
+        "PlayerID": 22884,
+        "Name": "Jaylon Moore",
+        "PositionCategory": "OFF",
+        "Position": "RT",
+        "DepthOrder": 1,
+        "Updated": "2026-08-11T12:36:43"
+      },
+      {
+        "DepthChartID": 4017,
+        "TeamID": 16,
+        "PlayerID": 28172,
+        "Name": "Kahlil Benson",
+        "PositionCategory": "OFF",
+        "Position": "RT",
+        "DepthOrder": 2,
+        "Updated": "2026-08-11T12:36:43"
+      },
+      {
+        "DepthChartID": 4018,
+        "TeamID": 16,
+        "PlayerID": 24828,
+        "Name": "Chukwuebuka Godrick",
+        "PositionCategory": "OFF",
+        "Position": "RT",
+        "DepthOrder": 3,
+        "Updated": "2026-08-11T12:36:43"
+      }
+    ],
+    "Defense": [
+      {
+        "DepthChartID": 4021,
+        "TeamID": 16,
+        "PlayerID": 23259,
+        "Name": "George Karlaftis",
+        "PositionCategory": "DEF",
+        "Position": "LDE",
+        "DepthOrder": 1,
+        "Updated": "2026-08-11T12:36:43"
+      },
+      {
+        "DepthChartID": 4022,
+        "TeamID": 16,
+        "PlayerID": 26786,
+        "Name": "R Mason Thomas",
+        "PositionCategory": "DEF",
+        "Position": "LDE",
+        "DepthOrder": 2,
+        "Updated": "2026-08-11T12:36:43"
+      },
+      {
+        "DepthChartID": 4026,
+        "TeamID": 16,
+        "PlayerID": 18331,
+        "Name": "Chris Jones",
+        "PositionCategory": "DEF",
+        "Position": "LDT",
+        "DepthOrder": 1,
+        "Updated": "2026-08-11T12:36:43"
+      },
+      {
+        "DepthChartID": 4027,
+        "TeamID": 16,
+        "PlayerID": 26781,
+        "Name": "Peter Woods",
+        "PositionCategory": "DEF",
+        "Position": "LDT",
+        "DepthOrder": 2,
+        "Updated": "2026-08-11T12:36:43"
+      },
+      {
+        "DepthChartID": 4028,
+        "TeamID": 16,
+        "PlayerID": 25158,
+        "Name": "Marcus Harris",
+        "PositionCategory": "DEF",
+        "Position": "LDT",
+        "DepthOrder": 3,
+        "Updated": "2026-08-11T12:36:43"
+      },
+      {
+        "DepthChartID": 4036,
+        "TeamID": 16,
+        "PlayerID": 22778,
+        "Name": "Khyiris Tonga",
+        "PositionCategory": "DEF",
+        "Position": "RDT",
+        "DepthOrder": 1,
+        "Updated": "2026-08-11T12:36:43"
+      },
+      {
+        "DepthChartID": 4041,
+        "TeamID": 16,
+        "PlayerID": 26125,
+        "Name": "Ashton Gillotte",
+        "PositionCategory": "DEF",
+        "Position": "RDE",
+        "DepthOrder": 1,
+        "Updated": "2026-08-11T12:36:43"
+      },
+      {
+        "DepthChartID": 4042,
+        "TeamID": 16,
+        "PlayerID": 24109,
+        "Name": "Felix Anudike-Uzomah",
+        "PositionCategory": "DEF",
+        "Position": "RDE",
+        "DepthOrder": 2,
+        "Updated": "2026-08-11T12:36:43"
+      },
+      {
+        "DepthChartID": 4043,
+        "TeamID": 16,
+        "PlayerID": 23379,
+        "Name": "Tyreke Smith",
+        "PositionCategory": "DEF",
+        "Position": "RDE",
+        "DepthOrder": 3,
+        "Updated": "2026-08-11T12:36:43"
+      },
+      {
+        "DepthChartID": 4046,
+        "TeamID": 16,
+        "PlayerID": 20968,
+        "Name": "Drue Tranquill",
+        "PositionCategory": "DEF",
+        "Position": "LOLB",
+        "DepthOrder": 1,
+        "Updated": "2026-08-11T12:36:43"
+      },
+      {
+        "DepthChartID": 4047,
+        "TeamID": 16,
+        "PlayerID": 22321,
+        "Name": "Cole Christiansen",
+        "PositionCategory": "DEF",
+        "Position": "LOLB",
+        "DepthOrder": 2,
+        "Updated": "2026-08-11T12:36:43"
+      },
+      {
+        "DepthChartID": 4056,
+        "TeamID": 16,
+        "PlayerID": 22714,
+        "Name": "Nick Bolton",
+        "PositionCategory": "DEF",
+        "Position": "MLB",
+        "DepthOrder": 1,
+        "Updated": "2026-08-11T12:36:43"
+      },
+      {
+        "DepthChartID": 4057,
+        "TeamID": 16,
+        "PlayerID": 26069,
+        "Name": "Jeffrey Bassa",
+        "PositionCategory": "DEF",
+        "Position": "MLB",
+        "DepthOrder": 2,
+        "Updated": "2026-08-11T12:36:43"
+      },
+      {
+        "DepthChartID": 4058,
+        "TeamID": 16,
+        "PlayerID": 23687,
+        "Name": "Jack Cochrane",
+        "PositionCategory": "DEF",
+        "Position": "MLB",
+        "DepthOrder": 3,
+        "Updated": "2026-08-11T12:36:43"
+      },
+      {
+        "DepthChartID": 4066,
+        "TeamID": 16,
+        "PlayerID": 26658,
+        "Name": "Cooper McDonald",
+        "PositionCategory": "DEF",
+        "Position": "ROLB",
+        "DepthOrder": 1,
+        "Updated": "2026-08-11T12:36:43"
+      },
+      {
+        "DepthChartID": 4067,
+        "TeamID": 16,
+        "PlayerID": 26619,
+        "Name": "Kam Arnold",
+        "PositionCategory": "DEF",
+        "Position": "ROLB",
+        "DepthOrder": 2,
+        "Updated": "2026-08-11T12:36:43"
+      },
+      {
+        "DepthChartID": 4071,
+        "TeamID": 16,
+        "PlayerID": 21934,
+        "Name": "L'Jarius Sneed",
+        "PositionCategory": "DEF",
+        "Position": "LCB",
+        "DepthOrder": 1,
+        "Updated": "2026-08-11T12:36:43"
+      },
+      {
+        "DepthChartID": 4072,
+        "TeamID": 16,
+        "PlayerID": 22084,
+        "Name": "Kristian Fulton",
+        "PositionCategory": "DEF",
+        "Position": "LCB",
+        "DepthOrder": 2,
+        "Updated": "2026-08-11T12:36:43"
+      },
+      {
+        "DepthChartID": 4076,
+        "TeamID": 16,
+        "PlayerID": 26773,
+        "Name": "Mansoor Delane",
+        "PositionCategory": "DEF",
+        "Position": "RCB",
+        "DepthOrder": 1,
+        "Updated": "2026-08-11T12:36:43"
+      },
+      {
+        "DepthChartID": 4077,
+        "TeamID": 16,
+        "PlayerID": 26179,
+        "Name": "Nohl Williams",
+        "PositionCategory": "DEF",
+        "Position": "RCB",
+        "DepthOrder": 2,
+        "Updated": "2026-08-11T12:36:43"
+      },
+      {
+        "DepthChartID": 4078,
+        "TeamID": 16,
+        "PlayerID": 23320,
+        "Name": "Kaiir Elam",
+        "PositionCategory": "DEF",
+        "Position": "RCB",
+        "DepthOrder": 3,
+        "Updated": "2026-08-11T12:36:43"
+      },
+      {
+        "DepthChartID": 4081,
+        "TeamID": 16,
+        "PlayerID": 23726,
+        "Name": "Kader Kohou",
+        "PositionCategory": "DEF",
+        "Position": "NB",
+        "DepthOrder": 1,
+        "Updated": "2026-08-11T12:36:43"
+      },
+      {
+        "DepthChartID": 4082,
+        "TeamID": 16,
+        "PlayerID": 28116,
+        "Name": "Jadon Canady",
+        "PositionCategory": "DEF",
+        "Position": "NB",
+        "DepthOrder": 2,
+        "Updated": "2026-08-11T12:36:43"
+      },
+      {
+        "DepthChartID": 4083,
+        "TeamID": 16,
+        "PlayerID": 26429,
+        "Name": "Kevin Knowles",
+        "PositionCategory": "DEF",
+        "Position": "NB",
+        "DepthOrder": 3,
+        "Updated": "2026-08-11T12:36:43"
+      },
+      {
+        "DepthChartID": 4086,
+        "TeamID": 16,
+        "PlayerID": 21939,
+        "Name": "Alohi Gilman",
+        "PositionCategory": "DEF",
+        "Position": "FS",
+        "DepthOrder": 1,
+        "Updated": "2026-08-11T12:36:43"
+      },
+      {
+        "DepthChartID": 4087,
+        "TeamID": 16,
+        "PlayerID": 25148,
+        "Name": "Chris Roland-Wallace",
+        "PositionCategory": "DEF",
+        "Position": "FS",
+        "DepthOrder": 2,
+        "Updated": "2026-08-11T12:36:43"
+      },
+      {
+        "DepthChartID": 4091,
+        "TeamID": 16,
+        "PlayerID": 24241,
+        "Name": "Chamarri Conner",
+        "PositionCategory": "DEF",
+        "Position": "SS",
+        "DepthOrder": 1,
+        "Updated": "2026-08-11T12:36:43"
+      },
+      {
+        "DepthChartID": 4092,
+        "TeamID": 16,
+        "PlayerID": 24969,
+        "Name": "Jaden Hicks",
+        "PositionCategory": "DEF",
+        "Position": "SS",
+        "DepthOrder": 2,
+        "Updated": "2026-08-11T12:36:43"
+      }
+    ],
+    "SpecialTeams": [
+      {
+        "DepthChartID": 4096,
+        "TeamID": 16,
+        "PlayerID": 19073,
+        "Name": "Harrison Butker",
+        "PositionCategory": "ST",
+        "Position": "K",
+        "DepthOrder": 1,
+        "Updated": "2026-08-11T12:36:43"
+      },
+      {
+        "DepthChartID": 4101,
+        "TeamID": 16,
+        "PlayerID": 23281,
+        "Name": "Matt Araiza",
+        "PositionCategory": "ST",
+        "Position": "P",
+        "DepthOrder": 1,
+        "Updated": "2026-08-11T12:36:43"
+      },
+      {
+        "DepthChartID": 4106,
+        "TeamID": 16,
+        "PlayerID": 24343,
+        "Name": "Nikko Remigio",
+        "PositionCategory": "ST",
+        "Position": "KR",
+        "DepthOrder": 1,
+        "Updated": "2026-08-11T12:36:43"
+      },
+      {
+        "DepthChartID": 4107,
+        "TeamID": 16,
+        "PlayerID": 25899,
+        "Name": "Brashard Smith",
+        "PositionCategory": "ST",
+        "Position": "KR",
+        "DepthOrder": 2,
+        "Updated": "2026-08-11T12:36:43"
+      },
+      {
+        "DepthChartID": 4111,
+        "TeamID": 16,
+        "PlayerID": 24343,
+        "Name": "Nikko Remigio",
+        "PositionCategory": "ST",
+        "Position": "PR",
+        "DepthOrder": 1,
+        "Updated": "2026-08-11T12:36:43"
+      },
+      {
+        "DepthChartID": 4112,
+        "TeamID": 16,
+        "PlayerID": 25899,
+        "Name": "Brashard Smith",
+        "PositionCategory": "ST",
+        "Position": "PR",
+        "DepthOrder": 2,
+        "Updated": "2026-08-11T12:36:43"
+      },
+      {
+        "DepthChartID": 4116,
+        "TeamID": 16,
+        "PlayerID": 15917,
+        "Name": "James Winchester",
+        "PositionCategory": "ST",
+        "Position": "LS",
+        "DepthOrder": 1,
+        "Updated": "2026-08-11T12:36:43"
+      },
+      {
+        "DepthChartID": 4121,
+        "TeamID": 16,
+        "PlayerID": 19073,
+        "Name": "Harrison Butker",
+        "PositionCategory": "ST",
+        "Position": "KOS",
+        "DepthOrder": 1,
+        "Updated": "2026-08-11T12:36:43"
+      }
+    ]
+  },
+  {
+    "TeamID": 1,
+    "Offense": [
+      {
+        "DepthChartID": 1,
+        "TeamID": 1,
+        "PlayerID": 18018,
+        "Name": "Jacoby Brissett",
+        "PositionCategory": "OFF",
+        "Position": "QB",
+        "DepthOrder": 1,
+        "Updated": "2026-08-11T16:58:27"
+      },
+      {
+        "DepthChartID": 2,
+        "TeamID": 1,
+        "PlayerID": 20880,
+        "Name": "Gardner Minshew II",
+        "PositionCategory": "OFF",
+        "Position": "QB",
+        "DepthOrder": 2,
+        "Updated": "2026-08-11T16:58:27"
+      },
+      {
+        "DepthChartID": 3,
+        "TeamID": 1,
+        "PlayerID": 24994,
+        "Name": "Carson Beck",
+        "PositionCategory": "OFF",
+        "Position": "QB",
+        "DepthOrder": 3,
+        "Updated": "2026-08-11T16:58:27"
+      },
+      {
+        "DepthChartID": 6,
+        "TeamID": 1,
+        "PlayerID": 26768,
+        "Name": "Jeremiyah Love",
+        "PositionCategory": "OFF",
+        "Position": "RB",
+        "DepthOrder": 1,
+        "Updated": "2026-08-11T16:58:27"
+      },
+      {
+        "DepthChartID": 7,
+        "TeamID": 1,
+        "PlayerID": 23250,
+        "Name": "Tyler Allgeier",
+        "PositionCategory": "OFF",
+        "Position": "RB",
+        "DepthOrder": 2,
+        "Updated": "2026-08-11T16:58:27"
+      },
+      {
+        "DepthChartID": 8,
+        "TeamID": 1,
+        "PlayerID": 18983,
+        "Name": "James Conner",
+        "PositionCategory": "OFF",
+        "Position": "RB",
+        "DepthOrder": 3,
+        "Updated": "2026-08-11T16:58:27"
+      },
+      {
+        "DepthChartID": 9,
+        "TeamID": 1,
+        "PlayerID": 24292,
+        "Name": "Trey Benson",
+        "PositionCategory": "OFF",
+        "Position": "RB",
+        "DepthOrder": 4,
+        "Updated": "2026-08-11T16:58:27"
+      },
+      {
+        "DepthChartID": 16,
+        "TeamID": 1,
+        "PlayerID": 24974,
+        "Name": "Marvin Harrison Jr.",
+        "PositionCategory": "OFF",
+        "Position": "LWR",
+        "DepthOrder": 1,
+        "Updated": "2026-08-11T16:58:27"
+      },
+      {
+        "DepthChartID": 17,
+        "TeamID": 1,
+        "PlayerID": 26945,
+        "Name": "Reggie Virgil",
+        "PositionCategory": "OFF",
+        "Position": "LWR",
+        "DepthOrder": 2,
+        "Updated": "2026-08-11T16:58:27"
+      },
+      {
+        "DepthChartID": 18,
+        "TeamID": 1,
+        "PlayerID": 25032,
+        "Name": "Xavier Weaver",
+        "PositionCategory": "OFF",
+        "Position": "LWR",
+        "DepthOrder": 3,
+        "Updated": "2026-08-11T16:58:27"
+      },
+      {
+        "DepthChartID": 21,
+        "TeamID": 1,
+        "PlayerID": 24173,
+        "Name": "Michael Wilson",
+        "PositionCategory": "OFF",
+        "Position": "RWR",
+        "DepthOrder": 1,
+        "Updated": "2026-08-11T16:58:27"
+      },
+      {
+        "DepthChartID": 22,
+        "TeamID": 1,
+        "PlayerID": 22645,
+        "Name": "Simi Fehoko",
+        "PositionCategory": "OFF",
+        "Position": "RWR",
+        "DepthOrder": 2,
+        "Updated": "2026-08-11T16:58:27"
+      },
+      {
+        "DepthChartID": 23,
+        "TeamID": 1,
+        "PlayerID": 24397,
+        "Name": "Jalen Brooks",
+        "PositionCategory": "OFF",
+        "Position": "RWR",
+        "DepthOrder": 3,
+        "Updated": "2026-08-11T16:58:27"
+      },
+      {
+        "DepthChartID": 26,
+        "TeamID": 1,
+        "PlayerID": 19318,
+        "Name": "Kendrick Bourne",
+        "PositionCategory": "OFF",
+        "Position": "SWR",
+        "DepthOrder": 1,
+        "Updated": "2026-08-11T16:58:27"
+      },
+      {
+        "DepthChartID": 27,
+        "TeamID": 1,
+        "PlayerID": 21721,
+        "Name": "Devin Duvernay",
+        "PositionCategory": "OFF",
+        "Position": "SWR",
+        "DepthOrder": 2,
+        "Updated": "2026-08-11T16:58:27"
+      },
+      {
+        "DepthChartID": 31,
+        "TeamID": 1,
+        "PlayerID": 23251,
+        "Name": "Trey McBride",
+        "PositionCategory": "OFF",
+        "Position": "TE",
+        "DepthOrder": 1,
+        "Updated": "2026-08-11T16:58:27"
+      },
+      {
+        "DepthChartID": 32,
+        "TeamID": 1,
+        "PlayerID": 24449,
+        "Name": "Elijah Higgins",
+        "PositionCategory": "OFF",
+        "Position": "TE",
+        "DepthOrder": 2,
+        "Updated": "2026-08-11T16:58:27"
+      },
+      {
+        "DepthChartID": 36,
+        "TeamID": 1,
+        "PlayerID": 24130,
+        "Name": "Paris Johnson Jr.",
+        "PositionCategory": "OFF",
+        "Position": "LT",
+        "DepthOrder": 1,
+        "Updated": "2026-08-11T16:58:27"
+      },
+      {
+        "DepthChartID": 37,
+        "TeamID": 1,
+        "PlayerID": 26413,
+        "Name": "Josh Fryar",
+        "PositionCategory": "OFF",
+        "Position": "LT",
+        "DepthOrder": 2,
+        "Updated": "2026-08-11T16:58:27"
+      },
+      {
+        "DepthChartID": 38,
+        "TeamID": 1,
+        "PlayerID": 25186,
+        "Name": "Christian Jones",
+        "PositionCategory": "OFF",
+        "Position": "LT",
+        "DepthOrder": 3,
+        "Updated": "2026-08-11T16:58:27"
+      },
+      {
+        "DepthChartID": 41,
+        "TeamID": 1,
+        "PlayerID": 18009,
+        "Name": "Isaac Seumalo",
+        "PositionCategory": "OFF",
+        "Position": "LG",
+        "DepthOrder": 1,
+        "Updated": "2026-08-11T16:58:27"
+      },
+      {
+        "DepthChartID": 42,
+        "TeamID": 1,
+        "PlayerID": 24408,
+        "Name": "Jon Gaines II",
+        "PositionCategory": "OFF",
+        "Position": "LG",
+        "DepthOrder": 2,
+        "Updated": "2026-08-11T16:58:27"
+      },
+      {
+        "DepthChartID": 46,
+        "TeamID": 1,
+        "PlayerID": 20761,
+        "Name": "Hjalte Froholdt",
+        "PositionCategory": "OFF",
+        "Position": "C",
+        "DepthOrder": 1,
+        "Updated": "2026-08-11T16:58:27"
+      },
+      {
+        "DepthChartID": 47,
+        "TeamID": 1,
+        "PlayerID": 26230,
+        "Name": "Hayden Conner",
+        "PositionCategory": "OFF",
+        "Position": "C",
+        "DepthOrder": 2,
+        "Updated": "2026-08-11T16:58:27"
+      },
+      {
+        "DepthChartID": 51,
+        "TeamID": 1,
+        "PlayerID": 25115,
+        "Name": "Isaiah Adams",
+        "PositionCategory": "OFF",
+        "Position": "RG",
+        "DepthOrder": 1,
+        "Updated": "2026-08-11T16:58:27"
+      },
+      {
+        "DepthChartID": 52,
+        "TeamID": 1,
+        "PlayerID": 20043,
+        "Name": "Matt Pryor",
+        "PositionCategory": "OFF",
+        "Position": "RG",
+        "DepthOrder": 2,
+        "Updated": "2026-08-11T16:58:27"
+      },
+      {
+        "DepthChartID": 53,
+        "TeamID": 1,
+        "PlayerID": 26877,
+        "Name": "Chase Bisontis",
+        "PositionCategory": "OFF",
+        "Position": "RG",
+        "DepthOrder": 3,
+        "Updated": "2026-08-11T16:58:27"
+      },
+      {
+        "DepthChartID": 56,
+        "TeamID": 1,
+        "PlayerID": 19479,
+        "Name": "Elijah Wilkinson",
+        "PositionCategory": "OFF",
+        "Position": "RT",
+        "DepthOrder": 1,
+        "Updated": "2026-08-11T16:58:27"
+      },
+      {
+        "DepthChartID": 57,
+        "TeamID": 1,
+        "PlayerID": 20969,
+        "Name": "Oli Udoh",
+        "PositionCategory": "OFF",
+        "Position": "RT",
+        "DepthOrder": 2,
+        "Updated": "2026-08-11T16:58:27"
+      }
+    ],
+    "Defense": [
+      {
+        "DepthChartID": 61,
+        "TeamID": 1,
+        "PlayerID": 25993,
+        "Name": "Walter Nolen III",
+        "PositionCategory": "DEF",
+        "Position": "LDE",
+        "DepthOrder": 1,
+        "Updated": "2026-08-11T16:58:27"
+      },
+      {
+        "DepthChartID": 62,
+        "TeamID": 1,
+        "PlayerID": 21008,
+        "Name": "L.J. Collier",
+        "PositionCategory": "DEF",
+        "Position": "LDE",
+        "DepthOrder": 2,
+        "Updated": "2026-08-11T16:58:27"
+      },
+      {
+        "DepthChartID": 63,
+        "TeamID": 1,
+        "PlayerID": 23375,
+        "Name": "Zach Carter",
+        "PositionCategory": "DEF",
+        "Position": "LDE",
+        "DepthOrder": 3,
+        "Updated": "2026-08-11T16:58:27"
+      },
+      {
+        "DepthChartID": 81,
+        "TeamID": 1,
+        "PlayerID": 25299,
+        "Name": "Darius Robinson",
+        "PositionCategory": "DEF",
+        "Position": "RDE",
+        "DepthOrder": 1,
+        "Updated": "2026-08-11T16:58:27"
+      },
+      {
+        "DepthChartID": 82,
+        "TeamID": 1,
+        "PlayerID": 24440,
+        "Name": "Dante Stills",
+        "PositionCategory": "DEF",
+        "Position": "RDE",
+        "DepthOrder": 2,
+        "Updated": "2026-08-11T16:58:27"
+      },
+      {
+        "DepthChartID": 83,
+        "TeamID": 1,
+        "PlayerID": 22332,
+        "Name": "Jonah Williams",
+        "PositionCategory": "DEF",
+        "Position": "RDE",
+        "DepthOrder": 3,
+        "Updated": "2026-08-11T16:58:27"
+      },
+      {
+        "DepthChartID": 86,
+        "TeamID": 1,
+        "PlayerID": 22697,
+        "Name": "Zaven Collins",
+        "PositionCategory": "DEF",
+        "Position": "LOLB",
+        "DepthOrder": 1,
+        "Updated": "2026-08-11T16:58:27"
+      },
+      {
+        "DepthChartID": 87,
+        "TeamID": 1,
+        "PlayerID": 22727,
+        "Name": "Baron Browning",
+        "PositionCategory": "DEF",
+        "Position": "LOLB",
+        "DepthOrder": 2,
+        "Updated": "2026-08-11T16:58:27"
+      },
+      {
+        "DepthChartID": 88,
+        "TeamID": 1,
+        "PlayerID": 26202,
+        "Name": "Jordan Burch",
+        "PositionCategory": "DEF",
+        "Position": "LOLB",
+        "DepthOrder": 3,
+        "Updated": "2026-08-11T16:58:27"
+      },
+      {
+        "DepthChartID": 107,
+        "TeamID": 1,
+        "PlayerID": 24092,
+        "Name": "BJ Ojulari",
+        "PositionCategory": "DEF",
+        "Position": "ROLB",
+        "DepthOrder": 2,
+        "Updated": "2026-08-11T16:58:27"
+      },
+      {
+        "DepthChartID": 108,
+        "TeamID": 1,
+        "PlayerID": 24273,
+        "Name": "Eku Leota",
+        "PositionCategory": "DEF",
+        "Position": "ROLB",
+        "DepthOrder": 3,
+        "Updated": "2026-08-11T16:58:27"
+      },
+      {
+        "DepthChartID": 111,
+        "TeamID": 1,
+        "PlayerID": 26052,
+        "Name": "Will Johnson",
+        "PositionCategory": "DEF",
+        "Position": "LCB",
+        "DepthOrder": 1,
+        "Updated": "2026-08-11T16:58:27"
+      },
+      {
+        "DepthChartID": 112,
+        "TeamID": 1,
+        "PlayerID": 24456,
+        "Name": "Starling Thomas V",
+        "PositionCategory": "DEF",
+        "Position": "LCB",
+        "DepthOrder": 2,
+        "Updated": "2026-08-11T16:58:27"
+      },
+      {
+        "DepthChartID": 113,
+        "TeamID": 1,
+        "PlayerID": 24189,
+        "Name": "Kei'Trel Clark",
+        "PositionCategory": "DEF",
+        "Position": "LCB",
+        "DepthOrder": 3,
+        "Updated": "2026-08-11T16:58:27"
+      },
+      {
+        "DepthChartID": 114,
+        "TeamID": 1,
+        "PlayerID": 28263,
+        "Name": "Elijah Culp",
+        "PositionCategory": "DEF",
+        "Position": "LCB",
+        "DepthOrder": 4,
+        "Updated": "2026-08-11T16:58:27"
+      },
+      {
+        "DepthChartID": 116,
+        "TeamID": 1,
+        "PlayerID": 25017,
+        "Name": "Denzel Burke",
+        "PositionCategory": "DEF",
+        "Position": "RCB",
+        "DepthOrder": 1,
+        "Updated": "2026-08-11T16:58:27"
+      },
+      {
+        "DepthChartID": 117,
+        "TeamID": 1,
+        "PlayerID": 25165,
+        "Name": "Max Melton",
+        "PositionCategory": "DEF",
+        "Position": "RCB",
+        "DepthOrder": 2,
+        "Updated": "2026-08-11T16:58:27"
+      },
+      {
+        "DepthChartID": 118,
+        "TeamID": 1,
+        "PlayerID": 25173,
+        "Name": "Elijah Jones",
+        "PositionCategory": "DEF",
+        "Position": "RCB",
+        "DepthOrder": 3,
+        "Updated": "2026-08-11T16:58:27"
+      },
+      {
+        "DepthChartID": 122,
+        "TeamID": 1,
+        "PlayerID": 21050,
+        "Name": "Sean Murphy-Bunting",
+        "PositionCategory": "DEF",
+        "Position": "NB",
+        "DepthOrder": 2,
+        "Updated": "2026-08-11T16:58:27"
+      },
+      {
+        "DepthChartID": 126,
+        "TeamID": 1,
+        "PlayerID": 21281,
+        "Name": "Andrew Wingard",
+        "PositionCategory": "DEF",
+        "Position": "FS",
+        "DepthOrder": 1,
+        "Updated": "2026-08-11T16:58:27"
+      },
+      {
+        "DepthChartID": 127,
+        "TeamID": 1,
+        "PlayerID": 25138,
+        "Name": "Dadrion Taylor-Demerson",
+        "PositionCategory": "DEF",
+        "Position": "FS",
+        "DepthOrder": 2,
+        "Updated": "2026-08-11T16:58:27"
+      },
+      {
+        "DepthChartID": 131,
+        "TeamID": 1,
+        "PlayerID": 18927,
+        "Name": "Budda Baker",
+        "PositionCategory": "DEF",
+        "Position": "SS",
+        "DepthOrder": 1,
+        "Updated": "2026-08-11T16:58:27"
+      },
+      {
+        "DepthChartID": 132,
+        "TeamID": 1,
+        "PlayerID": 26165,
+        "Name": "Kitan Crawford",
+        "PositionCategory": "DEF",
+        "Position": "SS",
+        "DepthOrder": 2,
+        "Updated": "2026-08-11T16:58:27"
+      },
+      {
+        "DepthChartID": 5296,
+        "TeamID": 1,
+        "PlayerID": 22928,
+        "Name": "Roy Lopez",
+        "PositionCategory": "DEF",
+        "Position": "NT",
+        "DepthOrder": 1,
+        "Updated": "2026-08-11T16:58:27"
+      },
+      {
+        "DepthChartID": 5297,
+        "TeamID": 1,
+        "PlayerID": 17968,
+        "Name": "Andrew Billings",
+        "PositionCategory": "DEF",
+        "Position": "NT",
+        "DepthOrder": 2,
+        "Updated": "2026-08-11T16:58:27"
+      },
+      {
+        "DepthChartID": 5298,
+        "TeamID": 1,
+        "PlayerID": 24461,
+        "Name": "Brodric Martin",
+        "PositionCategory": "DEF",
+        "Position": "NT",
+        "DepthOrder": 3,
+        "Updated": "2026-08-11T16:58:27"
+      },
+      {
+        "DepthChartID": 5301,
+        "TeamID": 1,
+        "PlayerID": 26074,
+        "Name": "Cody Simon",
+        "PositionCategory": "DEF",
+        "Position": "LILB",
+        "DepthOrder": 1,
+        "Updated": "2026-08-11T16:58:27"
+      },
+      {
+        "DepthChartID": 5302,
+        "TeamID": 1,
+        "PlayerID": 24003,
+        "Name": "Jack Gibbens",
+        "PositionCategory": "DEF",
+        "Position": "LILB",
+        "DepthOrder": 2,
+        "Updated": "2026-08-11T16:58:27"
+      },
+      {
+        "DepthChartID": 5303,
+        "TeamID": 1,
+        "PlayerID": 26305,
+        "Name": "Austin Keys",
+        "PositionCategory": "DEF",
+        "Position": "LILB",
+        "DepthOrder": 3,
+        "Updated": "2026-08-11T16:58:27"
+      },
+      {
+        "DepthChartID": 5306,
+        "TeamID": 1,
+        "PlayerID": 20994,
+        "Name": "Mack Wilson Sr.",
+        "PositionCategory": "DEF",
+        "Position": "RILB",
+        "DepthOrder": 1,
+        "Updated": "2026-08-11T16:58:27"
+      },
+      {
+        "DepthChartID": 5307,
+        "TeamID": 1,
+        "PlayerID": 24267,
+        "Name": "Owen Pappoe",
+        "PositionCategory": "DEF",
+        "Position": "RILB",
+        "DepthOrder": 2,
+        "Updated": "2026-08-11T16:58:27"
+      },
+      {
+        "DepthChartID": 5308,
+        "TeamID": 1,
+        "PlayerID": 28101,
+        "Name": "Karson Sharar",
+        "PositionCategory": "DEF",
+        "Position": "RILB",
+        "DepthOrder": 3,
+        "Updated": "2026-08-11T16:58:27"
+      }
+    ],
+    "SpecialTeams": [
+      {
+        "DepthChartID": 136,
+        "TeamID": 1,
+        "PlayerID": 24436,
+        "Name": "Chad Ryland",
+        "PositionCategory": "ST",
+        "Position": "K",
+        "DepthOrder": 1,
+        "Updated": "2026-08-11T16:58:27"
+      },
+      {
+        "DepthChartID": 141,
+        "TeamID": 1,
+        "PlayerID": 22442,
+        "Name": "Blake Gillikin",
+        "PositionCategory": "ST",
+        "Position": "P",
+        "DepthOrder": 1,
+        "Updated": "2026-08-11T16:58:27"
+      },
+      {
+        "DepthChartID": 146,
+        "TeamID": 1,
+        "PlayerID": 21721,
+        "Name": "Devin Duvernay",
+        "PositionCategory": "ST",
+        "Position": "KR",
+        "DepthOrder": 1,
+        "Updated": "2026-08-11T16:58:27"
+      },
+      {
+        "DepthChartID": 147,
+        "TeamID": 1,
+        "PlayerID": 24397,
+        "Name": "Jalen Brooks",
+        "PositionCategory": "ST",
+        "Position": "KR",
+        "DepthOrder": 2,
+        "Updated": "2026-08-11T16:58:27"
+      },
+      {
+        "DepthChartID": 148,
+        "TeamID": 1,
+        "PlayerID": 25032,
+        "Name": "Xavier Weaver",
+        "PositionCategory": "ST",
+        "Position": "KR",
+        "DepthOrder": 3,
+        "Updated": "2026-08-11T16:58:27"
+      },
+      {
+        "DepthChartID": 151,
+        "TeamID": 1,
+        "PlayerID": 21721,
+        "Name": "Devin Duvernay",
+        "PositionCategory": "ST",
+        "Position": "PR",
+        "DepthOrder": 1,
+        "Updated": "2026-08-11T16:58:27"
+      },
+      {
+        "DepthChartID": 152,
+        "TeamID": 1,
+        "PlayerID": 25032,
+        "Name": "Xavier Weaver",
+        "PositionCategory": "ST",
+        "Position": "PR",
+        "DepthOrder": 2,
+        "Updated": "2026-08-11T16:58:27"
+      },
+      {
+        "DepthChartID": 153,
+        "TeamID": 1,
+        "PlayerID": 24173,
+        "Name": "Michael Wilson",
+        "PositionCategory": "ST",
+        "Position": "PR",
+        "DepthOrder": 3,
+        "Updated": "2026-08-11T16:58:27"
+      },
+      {
+        "DepthChartID": 156,
+        "TeamID": 1,
+        "PlayerID": 16365,
+        "Name": "Casey Kreiter",
+        "PositionCategory": "ST",
+        "Position": "LS",
+        "DepthOrder": 1,
+        "Updated": "2026-08-11T16:58:27"
+      },
+      {
+        "DepthChartID": 161,
+        "TeamID": 1,
+        "PlayerID": 24436,
+        "Name": "Chad Ryland",
+        "PositionCategory": "ST",
+        "Position": "KOS",
+        "DepthOrder": 1,
+        "Updated": "2026-08-11T16:58:27"
+      }
+    ]
+  }
+]
