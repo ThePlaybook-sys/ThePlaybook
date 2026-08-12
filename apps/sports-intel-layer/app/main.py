@@ -26,11 +26,3 @@ if os.environ.get("RAILWAY_ENVIRONMENT_NAME", "dev") == "dev":
     @app.get("/sentry-debug")
     async def trigger_error():
         division_by_zero = 1 / 0
-
-    # TEMPORARY (Mac, 2026-08-11/12) -- SportsDataIO authenticated
-    # validation capture. Removed in a follow-up commit immediately after
-    # capture. See app/diagnostics/sportsdataio_capture.py and
-    # PROGRESS.md for the full approved plan and safeguards.
-    from app.diagnostics.sportsdataio_capture import router as _sportsdataio_router
-
-    app.include_router(_sportsdataio_router)
