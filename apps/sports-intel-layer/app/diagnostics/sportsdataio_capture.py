@@ -79,12 +79,19 @@ _TEAM = "KC"
 _HISTORICAL_SEASON = "2025REG"
 _HISTORICAL_WEEK = 1
 
+#: Endpoint paths corrected against primary-source SportsDataIO documentation
+#: (Mac, 2026-08-12 -- manually inspected via his authenticated account, not
+#: inferred from search snippets). The prior paths were simply wrong, on two
+#: independent axes: category segment (some live under /stats/json/, not
+#: /scores/json/) and endpoint name (e.g. "TeamGameStats", not
+#: "TeamGameStatsByWeek"). The earlier 404s from the wrong paths are NOT
+#: evidence of missing Free Trial access -- see PROGRESS.md.
 _CATEGORIES: dict[str, str] = {
-    "injuries": f"/v3/nfl/scores/json/InjuriesByWeek/{_HISTORICAL_SEASON}/{_HISTORICAL_WEEK}",
+    "injuries": f"/v3/nfl/stats/json/Injuries/{_HISTORICAL_SEASON}/{_HISTORICAL_WEEK}",
     "rosters": f"/v3/nfl/scores/json/Players/{_TEAM}",
     "schedules": f"/v3/nfl/scores/json/Schedules/{_SEASON}",
-    "team_stats": f"/v3/nfl/scores/json/TeamGameStatsByWeek/{_HISTORICAL_SEASON}/{_HISTORICAL_WEEK}",
-    "player_stats": f"/v3/nfl/scores/json/PlayerGameStatsByWeek/{_HISTORICAL_SEASON}/{_HISTORICAL_WEEK}",
+    "team_stats": f"/v3/nfl/scores/json/TeamGameStats/{_HISTORICAL_SEASON}/{_HISTORICAL_WEEK}",
+    "player_stats": f"/v3/nfl/stats/json/PlayerGameStatsByWeek/{_HISTORICAL_SEASON}/{_HISTORICAL_WEEK}",
     "depth_charts": "/v3/nfl/scores/json/DepthCharts",
 }
 
