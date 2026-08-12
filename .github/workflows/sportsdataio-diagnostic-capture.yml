@@ -49,11 +49,11 @@ jobs:
             exit 1
           fi
 
-      - name: Call diagnostic endpoint, save full response to a file (not the log)
+      - name: Call diagnostic endpoint (team_stats only -- step 1 of the approved staged sequence), save full response to a file (not the log)
         env:
           DIAGNOSTIC_TOKEN: ${{ secrets.SPORTSDATAIO_DIAGNOSTIC_TOKEN }}
         run: |
-          url="https://sports-intel-layer-dev.up.railway.app/diagnostics/sportsdataio-capture"
+          url="https://sports-intel-layer-dev.up.railway.app/diagnostics/sportsdataio-capture?categories=team_stats"
           http_status=$(curl -sS \
             -H "X-Diagnostic-Token: ${DIAGNOSTIC_TOKEN}" \
             "$url" \
