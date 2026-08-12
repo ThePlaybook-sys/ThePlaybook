@@ -22,21 +22,30 @@ Safeguards, per Mac's explicit corrections to the original plan:
   the HTTP response for the caller to save as a file/artifact -- it is
   never written to a log line.
 - A hard ceiling of 12 total provider requests for the process lifetime,
-  enforced here, not left to operator discipline -- once reached, further
-  categories in the same or a later invocation (within this process) are
-  skipped and reported as such, not attempted.
+  enforced here, not left to operator discipline -- checked before every
+  single provider call, not just at the top of a batch. Once reached, all
+  further provider calls in the same or a later invocation (within this
+  process) are skipped and reported as such, not attempted.
 - One request per category per invocation; no automatic retry of any
   kind, including on 401/403/429/malformed-body responses. A second,
   narrower invocation (via the `categories` query param) targeting only
   the specific categories that failed is how a corrected endpoint path
   gets re-tried -- a deliberate, human-in-the-loop second call, not a
   loop in this code.
-- One-shot guard: a module-level, in-memory flag refuses any invocation
-  after the first, for the lifetime of this process. This resets on a
-  container restart -- an explicit, known limitation of an in-memory
-  guard, not a durable lock. Acceptable here specifically because this is
-  a same-session, immediately-deleted diagnostic and no redeploy/restart
-  is planned between the approved capture run and its removal.
+- Per-category attempt tracking (Mac, 2026-08-12 correction): a
+  module-level, in-memory set records which categories have already been
+  attempted (successfully or not) this process lifetime. A category in
+  that set is skipped on any later invocation, reported as such, rather
+  than silently re-called -- the same category cannot be accidentally
+  re-attempted without an explicit code/process change. This replaced an
+  earlier blanket one-shot guard that refused *any* second invocation
+  regardless of category, which made a deliberate staged sequence
+  (call one category, inspect, decide, call the next) impossible without
+  a full redeploy between every single call -- a real gap against this
+  diagnostic's own stated intent, not a hypothetical one. Still resets on
+  a container restart, an explicit, known limitation of in-memory state,
+  not a durable lock -- acceptable here for the same reason as before:
+  same-session, immediately-deleted diagnostic.
 """
 from __future__ import annotations
 
@@ -53,24 +62,34 @@ _logger = logging.getLogger("sports-intel-layer.diagnostics")
 _BASE_URL = "https://api.sportsdata.io"
 _MAX_TOTAL_REQUESTS = 12
 
-#: ASSUMED season/week/team scoping -- kept small deliberately to keep
-#: each captured response small and the call budget cheap. Corrected on
-#: a real 404 via a second, narrower invocation, not guessed twice here.
+#: Current-season scoping for categories that aren't week-scoped stats.
+#: Schedules stays on the real upcoming season -- CONFIRMED from the first
+#: capture pass that 2026REG Week 1 kicks off 2026-09-09, so this was never
+#: wrong for Schedules and is left untouched.
 _SEASON = "2026REG"
-_WEEK = 1
 _TEAM = "KC"
 
+#: Historical season/week correction (Mac, 2026-08-12): the original
+#: 2026REG Week 1 scoping 404'd for injuries/team_stats/player_stats
+#: because that week hasn't been played yet -- confirmed from the first
+#: pass's own Schedules capture, not guessed. These three week-scoped
+#: categories are corrected to the most recently completed regular season
+#: instead, per Mac's explicit second-pass plan. Deliberately NOT another
+#: guess at the current season.
+_HISTORICAL_SEASON = "2025REG"
+_HISTORICAL_WEEK = 1
+
 _CATEGORIES: dict[str, str] = {
-    "injuries": f"/v3/nfl/scores/json/InjuriesByWeek/{_SEASON}/{_WEEK}",
+    "injuries": f"/v3/nfl/scores/json/InjuriesByWeek/{_HISTORICAL_SEASON}/{_HISTORICAL_WEEK}",
     "rosters": f"/v3/nfl/scores/json/Players/{_TEAM}",
     "schedules": f"/v3/nfl/scores/json/Schedules/{_SEASON}",
-    "team_stats": f"/v3/nfl/scores/json/TeamGameStatsByWeek/{_SEASON}/{_WEEK}",
-    "player_stats": f"/v3/nfl/scores/json/PlayerGameStatsByWeek/{_SEASON}/{_WEEK}",
+    "team_stats": f"/v3/nfl/scores/json/TeamGameStatsByWeek/{_HISTORICAL_SEASON}/{_HISTORICAL_WEEK}",
+    "player_stats": f"/v3/nfl/scores/json/PlayerGameStatsByWeek/{_HISTORICAL_SEASON}/{_HISTORICAL_WEEK}",
     "depth_charts": "/v3/nfl/scores/json/DepthCharts",
 }
 
 # In-memory only, process-lifetime only -- see module docstring.
-_state = {"already_run": False, "total_requests": 0}
+_state = {"total_requests": 0, "attempted_categories": set()}
 
 
 @router.get("/diagnostics/sportsdataio-capture")
@@ -85,13 +104,6 @@ async def sportsdataio_capture(
     if not expected_token or x_diagnostic_token != expected_token:
         raise HTTPException(status_code=401, detail="invalid diagnostic token")
 
-    if _state["already_run"]:
-        raise HTTPException(
-            status_code=423,
-            detail="capture already attempted this process lifetime -- one-shot guard engaged",
-        )
-    _state["already_run"] = True
-
     api_key = os.environ.get("SPORTSDATAIO_API_KEY")
     if not api_key:
         raise HTTPException(status_code=500, detail="SPORTSDATAIO_API_KEY not configured")
@@ -104,12 +116,21 @@ async def sportsdataio_capture(
             if name not in wanted:
                 continue
 
+            if name in _state["attempted_categories"]:
+                results[name] = {
+                    "status": "skipped",
+                    "reason": "category already attempted this process lifetime -- explicit retry required",
+                }
+                _logger.warning("SPORTSDATAIO_CAPTURE: %s skipped, already attempted", name)
+                continue
+
             if _state["total_requests"] >= _MAX_TOTAL_REQUESTS:
                 results[name] = {"status": "skipped", "reason": "budget ceiling reached"}
                 _logger.warning("SPORTSDATAIO_CAPTURE: %s skipped, budget ceiling reached", name)
                 continue
 
             _state["total_requests"] += 1
+            _state["attempted_categories"].add(name)
             try:
                 response = await client.get(path, headers={"Ocp-Apim-Subscription-Key": api_key})
             except httpx.HTTPError as exc:
