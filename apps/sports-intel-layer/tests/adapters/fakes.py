@@ -8,9 +8,28 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from app.adapters.base import NewsAdapter, OddsAdapter, TeamStatsAdapter, WeatherAdapter
+from app.adapters.base import (
+    InjuryAdapter,
+    NewsAdapter,
+    OddsAdapter,
+    PlayerStatsAdapter,
+    RosterAdapter,
+    ScheduleAdapter,
+    TeamStatsAdapter,
+    WeatherAdapter,
+)
 from app.adapters.errors import ProviderUnavailableError
-from app.adapters.models import AdapterResponse, NewsArticle, OddsLine, TeamStatLine, WeatherConditions
+from app.adapters.models import (
+    AdapterResponse,
+    InjuryReport,
+    NewsArticle,
+    OddsLine,
+    PlayerStatLine,
+    RosterEntry,
+    ScheduleEntry,
+    TeamStatLine,
+    WeatherConditions,
+)
 
 
 class FakeOddsAdapterV1(OddsAdapter):
@@ -108,6 +127,79 @@ class FakeWeatherAdapter(WeatherAdapter):
             is_dome=False,
         )
         return AdapterResponse(value=conditions, source=self.provider_name)
+
+
+class FakeRosterAdapter(RosterAdapter):
+    provider_name = "fake_roster_provider"
+
+    def __init__(self, *, fail: bool = False):
+        self._fail = fail
+
+    async def fetch_roster(self, team: str) -> AdapterResponse[list[RosterEntry]]:
+        if self._fail:
+            raise ProviderUnavailableError("simulated outage", provider=self.provider_name)
+        entries = [
+            RosterEntry(
+                team=team, player_external_id="1", player_name="Fake Player",
+                position="QB", depth_chart_rank=1,
+            )
+        ]
+        return AdapterResponse(value=entries, source=self.provider_name)
+
+
+class FakeScheduleAdapter(ScheduleAdapter):
+    provider_name = "fake_schedule_provider"
+
+    def __init__(self, *, fail: bool = False):
+        self._fail = fail
+
+    async def fetch_schedule(self, season_external_id: str) -> AdapterResponse[list[ScheduleEntry]]:
+        if self._fail:
+            raise ProviderUnavailableError("simulated outage", provider=self.provider_name)
+        entries = [
+            ScheduleEntry(
+                game_external_id="fake-game-1", home_team="home", away_team="away",
+                scheduled_start=datetime(2026, 9, 1, 17, 0), stadium="Fake Stadium",
+                status="scheduled",
+            )
+        ]
+        return AdapterResponse(value=entries, source=self.provider_name)
+
+
+class FakeInjuryAdapter(InjuryAdapter):
+    provider_name = "fake_injury_provider"
+
+    def __init__(self, *, fail: bool = False):
+        self._fail = fail
+
+    async def fetch_injuries(self, team: str | None = None) -> AdapterResponse[list[InjuryReport]]:
+        if self._fail:
+            raise ProviderUnavailableError("simulated outage", provider=self.provider_name)
+        reports = [
+            InjuryReport(
+                game_external_id="fake-game-1", player_external_id="1",
+                player_name="Fake Player", team=team or "home", status="questionable",
+            )
+        ]
+        return AdapterResponse(value=reports, source=self.provider_name)
+
+
+class FakePlayerStatsAdapter(PlayerStatsAdapter):
+    provider_name = "fake_player_stats_provider"
+
+    def __init__(self, *, fail: bool = False):
+        self._fail = fail
+
+    async def fetch_player_stats(self, game_external_id: str) -> AdapterResponse[list[PlayerStatLine]]:
+        if self._fail:
+            raise ProviderUnavailableError("simulated outage", provider=self.provider_name)
+        lines = [
+            PlayerStatLine(
+                game_external_id=game_external_id, player_external_id="1",
+                player_name="Fake Player", team="home", stats={"passing_yards": 250},
+            )
+        ]
+        return AdapterResponse(value=lines, source=self.provider_name)
 
 
 class FakeNewsAdapter(NewsAdapter):

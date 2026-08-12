@@ -1,0 +1,13 @@
+[
+  {
+    "TeamID": 1,
+    "Offense": [
+      {
+        "Name": "Nobody",
+        "Position": "QB"
+      }
+    ],
+    "Defense": [],
+    "SpecialTeams": []
+  }
+]
