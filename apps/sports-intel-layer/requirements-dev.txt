@@ -2,3 +2,8 @@ pytest==8.3.3
 pytest-asyncio==0.24.0
 httpx==0.27.2
 respx==0.21.1
+# Test-only: emulates a Redis server in-process so RedisCacheBackend can be
+# fully tested (Phase 3D) without a real Redis instance -- no hosted Redis
+# has been provisioned yet, by explicit decision (see PROGRESS.md). Never
+# imported by app/ code, only by tests.
+fakeredis==2.30.3
