@@ -3,8 +3,8 @@
 -- Run via `supabase test db` (pgTAP), or manually inside a transaction that's rolled back.
 --
 -- Coverage: 7 user-owned tables (owner/non-owner, 2 assertions each), recommendations'
--- tier-gated + soft-delete policy (3 assertions), 29 public-read tables (1 assertion each),
--- 14 default-deny tables (1 assertion each). 14 + 3 + 29 + 14 = 60 assertions total.
+-- tier-gated + soft-delete policy (3 assertions), 30 public-read tables (1 assertion each),
+-- 14 default-deny tables (1 assertion each). 14 + 3 + 30 + 14 = 61 assertions total.
 --
 -- All results are collected into a temp table (test_results) rather than left as bare
 -- top-level SELECTs, so a single client round-trip can inspect every assertion's outcome.
@@ -12,7 +12,7 @@
 begin;
 create extension if not exists pgtap with schema extensions;
 create temp table test_results (id serial primary key, result text);
-select plan(60);
+select plan(61);
 
 -- ============================================================================
 -- Fixture data (inserted as the elevated role, which bypasses RLS)
@@ -40,6 +40,7 @@ insert into teams (id, league_id, name) values ('c0000000-0000-0000-0000-0000000
 insert into players (id, team_id, name) values ('c0000000-0000-0000-0000-000000000005', 'c0000000-0000-0000-0000-000000000004', 'Test Player');
 insert into games (id, external_provider_id, sport_id, league_id, season_id, sport, home_team, away_team, scheduled_start, status)
 values ('c0000000-0000-0000-0000-000000000006', 'rlstest-game', 'c0000000-0000-0000-0000-000000000001', 'c0000000-0000-0000-0000-000000000002', 'c0000000-0000-0000-0000-000000000003', 'nfl', 'Home', 'Away', now() + interval '1 day', 'scheduled');
+insert into game_provider_ids (game_id, provider_name, provider_game_id) values ('c0000000-0000-0000-0000-000000000006', 'the_odds_api', 'rlstest-game');
 insert into player_stats (id, player_id, game_id, stats) values ('c0000000-0000-0000-0000-000000000007', 'c0000000-0000-0000-0000-000000000005', 'c0000000-0000-0000-0000-000000000006', '{}');
 insert into team_stats (id, team_id, game_id, stats) values ('c0000000-0000-0000-0000-000000000008', 'c0000000-0000-0000-0000-000000000004', 'c0000000-0000-0000-0000-000000000006', '{}');
 insert into player_stats_nfl (player_stat_id) values ('c0000000-0000-0000-0000-000000000007');
@@ -121,12 +122,12 @@ declare
   ];
   row_pair text[];
   public_tables text[] := array[
-    'sports','leagues','seasons','teams','players','games','player_stats','team_stats','player_stats_nfl',
-    'odds_snapshots','injury_reports','weather_snapshots','depth_chart_snapshots','referee_assignments',
-    'daily_game_intelligence','weather_scores','injury_scores','travel_scores','rest_scores',
-    'momentum_scores','matchup_scores','line_value_scores','sharp_money_scores','schedule_difficulty_scores',
-    'offensive_matchup_scores','defensive_matchup_scores','coaching_edge_scores','public_sentiment_scores',
-    'feature_flags'
+    'sports','leagues','seasons','teams','players','games','game_provider_ids','player_stats','team_stats',
+    'player_stats_nfl','odds_snapshots','injury_reports','weather_snapshots','depth_chart_snapshots',
+    'referee_assignments','daily_game_intelligence','weather_scores','injury_scores','travel_scores',
+    'rest_scores','momentum_scores','matchup_scores','line_value_scores','sharp_money_scores',
+    'schedule_difficulty_scores','offensive_matchup_scores','defensive_matchup_scores',
+    'coaching_edge_scores','public_sentiment_scores','feature_flags'
   ];
   deny_tables text[] := array[
     'agents','agent_performance_scores','recommendation_agent_outputs','consensus_snapshots',

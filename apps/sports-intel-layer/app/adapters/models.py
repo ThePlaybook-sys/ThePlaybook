@@ -136,6 +136,13 @@ class ScheduleEntry(BaseModel):
     scheduled_start: datetime
     stadium: str | None = None
     status: str  # matches games.status check constraint
+    #: Normalized internal vocabulary (games.season_type check constraint, Phase 3E-1
+    #: Decision 1) -- 'preseason' | 'regular' | 'postseason' | None, never a provider's
+    #: raw value. Optional: not every sport/provider supplies a season phase.
+    season_type: str | None = None
+    #: NFL week number at launch (games.week, Phase 3E-1 Decision 1). Optional: not
+    #: every sport/provider uses week numbering.
+    week: int | None = None
 
 
 class NewsArticle(BaseModel):

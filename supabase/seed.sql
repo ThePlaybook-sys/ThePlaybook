@@ -63,6 +63,15 @@ insert into games (id, external_provider_id, sport_id, league_id, season_id, spo
   ('a5000000-0000-0000-0000-000000000003', 'seed-game-upcoming', 'a2000000-0000-0000-0000-000000000001', 'a2000000-0000-0000-0000-000000000002', 'a2000000-0000-0000-0000-000000000003', 'nfl', 'Dallas Cowboys', 'Baltimore Ravens', now() + interval '2 days', 'AT&T Stadium', 'scheduled', null),
   ('a5000000-0000-0000-0000-000000000004', 'seed-game-later', 'a2000000-0000-0000-0000-000000000001', 'a2000000-0000-0000-0000-000000000002', 'a2000000-0000-0000-0000-000000000003', 'nfl', 'Buffalo Bills', 'Kansas City Chiefs', now() + interval '9 days', 'Highmark Stadium', 'scheduled', null);
 
+-- game_provider_ids: mirrors the 3E-1 migration's backfill behavior (every existing
+-- games.external_provider_id treated as a the_odds_api id) so a fresh `supabase db reset`
+-- lands in the same state as dev's migrated data.
+insert into game_provider_ids (game_id, provider_name, provider_game_id) values
+  ('a5000000-0000-0000-0000-000000000001', 'the_odds_api', 'seed-game-final'),
+  ('a5000000-0000-0000-0000-000000000002', 'the_odds_api', 'seed-game-live'),
+  ('a5000000-0000-0000-0000-000000000003', 'the_odds_api', 'seed-game-upcoming'),
+  ('a5000000-0000-0000-0000-000000000004', 'the_odds_api', 'seed-game-later');
+
 insert into player_stats (id, player_id, game_id, stats) values
   ('a6000000-0000-0000-0000-000000000001', 'a4000000-0000-0000-0000-000000000001', 'a5000000-0000-0000-0000-000000000001', '{"completions": 24, "attempts": 33}'),
   ('a6000000-0000-0000-0000-000000000002', 'a4000000-0000-0000-0000-000000000003', 'a5000000-0000-0000-0000-000000000001', '{"completions": 26, "attempts": 40}');
