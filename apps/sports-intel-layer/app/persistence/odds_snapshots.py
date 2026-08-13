@@ -7,6 +7,16 @@ any vendor-specific shape. That's the actual proof that the pipeline
 downstream of an adapter can't tell which vendor produced the data it's
 persisting -- the same guarantee 3A's adapter-swap test proves one layer
 up.
+
+Game resolution (Phase 3E-1, Decision 2, 2026-08-13): this module used to
+resolve every OddsLine's game_external_id by matching it directly against
+games.external_provider_id -- a hidden assumption that column was always
+The Odds API's own event id, with no way for a second vendor's id to ever
+coexist on the same game. It now resolves through the general
+game_provider_ids mapping table (via app.persistence.game_identity),
+explicitly as provider_name="the_odds_api" -- the only provider this
+module's own AdapterResponse.source is ever expected to carry, since this
+file is the odds/props persistence path, not a generic one.
 """
 from __future__ import annotations
 
@@ -15,6 +25,13 @@ import os
 import httpx
 
 from app.adapters.models import AdapterResponse, OddsLine
+from app.persistence.game_identity import resolve_game_ids
+
+#: The only provider this module ever persists odds/props for. Not derived
+#: from AdapterResponse.source, so a caller can't accidentally point this
+#: module's writes at some other provider's game_provider_ids rows by
+#: passing a differently-sourced AdapterResponse.
+_PROVIDER_NAME = "the_odds_api"
 
 
 class PersistenceError(Exception):
@@ -22,30 +39,6 @@ class PersistenceError(Exception):
     deliberately distinct from ProviderError: a failure here is on our
     side of the adapter boundary, not the vendor's, and callers should
     never confuse the two."""
-
-
-async def _resolve_game_ids(
-    client: httpx.AsyncClient, headers: dict, external_ids: list[str]
-) -> dict[str, str]:
-    """Maps games.external_provider_id -> games.id for the given external
-    ids. A game with no matching row is simply absent from the returned
-    dict -- callers decide how to handle that, this function doesn't guess.
-    """
-    if not external_ids:
-        return {}
-    response = await client.get(
-        "/rest/v1/games",
-        params={
-            "external_provider_id": f"in.({','.join(external_ids)})",
-            "select": "id,external_provider_id",
-        },
-        headers=headers,
-    )
-    if response.status_code != 200:
-        raise PersistenceError(
-            f"failed to resolve game ids: {response.status_code} {response.text}"
-        )
-    return {row["external_provider_id"]: row["id"] for row in response.json()}
 
 
 def _auth_headers() -> dict:
@@ -72,8 +65,11 @@ async def persist_odds_lines(response: AdapterResponse[list[OddsLine]]) -> int:
     headers = _auth_headers()
 
     async with httpx.AsyncClient(base_url=supabase_url, timeout=5.0) as client:
-        game_ids = await _resolve_game_ids(
-            client, headers, sorted({line.game_external_id for line in lines})
+        game_ids = await resolve_game_ids(
+            client,
+            headers,
+            provider_name=_PROVIDER_NAME,
+            provider_game_ids=sorted({line.game_external_id for line in lines}),
         )
         rows = [
             {
@@ -106,19 +102,15 @@ async def read_latest_odds_snapshots(game_external_id: str, *, limit: int = 10) 
     headers = _auth_headers()
 
     async with httpx.AsyncClient(base_url=supabase_url, timeout=5.0) as client:
-        game_response = await client.get(
-            "/rest/v1/games",
-            params={"external_provider_id": f"eq.{game_external_id}", "select": "id"},
-            headers=headers,
+        game_ids = await resolve_game_ids(
+            client,
+            headers,
+            provider_name=_PROVIDER_NAME,
+            provider_game_ids=[game_external_id],
         )
-        if game_response.status_code != 200:
-            raise PersistenceError(
-                f"failed to resolve game id: {game_response.status_code} {game_response.text}"
-            )
-        rows = game_response.json()
-        if not rows:
+        if game_external_id not in game_ids:
             return []
-        game_id = rows[0]["id"]
+        game_id = game_ids[game_external_id]
 
         snapshots_response = await client.get(
             "/rest/v1/odds_snapshots",

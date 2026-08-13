@@ -1,13 +1,14 @@
 # The Playbook — Volume 3
 ## Database Architecture: Tables, Relationships, Indexes, Triggers, Migrations, RLS
 
-**Version:** v4.3
-**Last updated:** 2026-08-10
+**Version:** v4.4
+**Last updated:** 2026-08-13
 **Depends on:** Volume 1 (v3.0 — tiers, personas, principles) and Volume 2 (v4.2 — service shape, routing table reference, RLS placeholder, scoped event system, Redis cache layer, Postgame Ingestion Worker)
 **v4.0 note:** Normalized multi-sport core added (§4.0) — `sports`/`leagues`/`seasons`/`teams`/`players`/`player_stats`/`team_stats` plus the `player_stats_nfl` extension pattern. `games` gains `sport_id`/`league_id`/`season_id` while the legacy `sport` text field is kept, deprecated, for Phase 0/1 backward compatibility. Data quality metadata convention added to `daily_game_intelligence` (§4.1). See `CHANGELOG.md` v4.0 entry for full reasoning.
 **v4.1.1 note (PATCH):** §10 gained a clarification that its RLS scope covers "every table requiring access control," not only tables containing per-user data (Phase 1 Milestone 2). The three tables named in the v2.0 UUIDv7 amendment (`odds_snapshots`, `recommendation_agent_outputs`, `market_monitoring_events`) use a custom `uuid_generate_v7()` function, since the deployed Postgres version predates native `uuidv7()` support. See `CHANGELOG.md` v4.1.1 entry for full reasoning.
 **v4.2 note (MINOR):** §3's `user_profiles.jurisdiction_state` relaxed from `not null` to nullable — Phase 2's signup trigger creates the row before onboarding (where jurisdiction is actually collected) ever runs. The `not null` *intent* is now enforced at the application layer. See `CHANGELOG.md` v4.2 entry for full reasoning.
 **v4.3 note (MINOR):** §6 gains the Stat Correction ↔ Bet Settlement Policy — Phase 5 grading/outcome policy, documented now so Phase 3's postgame architecture doesn't foreclose it later. No schema changed; one real gap (`verified_bets` has no settlement-history/versioning pattern) identified and explicitly deferred to Phase 5. See `CHANGELOG.md` v4.3 entry for full reasoning.
+**v4.4 note (MINOR):** §4.0 gains `game_provider_ids` — the authoritative multi-provider game identity mechanism (Phase 3E-1, Decision 2), replacing `games.external_provider_id`'s hidden single-vendor assumption. `games` gains nullable `season_type`/`week` (Decision 1) and `external_provider_id` becomes nullable/deprecated rather than dropped. See `CHANGELOG.md` v4.4 entry for full reasoning.
 **Read next:** Volume 4 (AI Intelligence) — the agent, consensus, and orchestration tables defined here are the tables Volume 4's logic reads and writes
 
 ---
@@ -196,11 +197,13 @@ create table player_stats_nfl (
 
 **Why extension tables instead of one wide table with every sport's columns:** a `player_stats` row with 40 mostly-null columns (passing yards for a basketball player, rebounds for a quarterback) is exactly the maintenance problem Section 1's principles warn against — every new sport would mean altering one increasingly unwieldy shared table. The extension pattern means adding NBA later is a new table (`player_stats_nba`) and zero changes to the existing NFL data or code path.
 
-### `games` (updated, v4.0 — backward-compatible transition)
+### `games` (updated, v4.4 — Phase 3E-1 additions)
 ```sql
 create table games (
   id uuid primary key default gen_random_uuid(),
-  external_provider_id text not null,       -- ID from the provider adapter, for traceability
+  external_provider_id text,                -- DEPRECATED (v4.4): see game_provider_ids below.
+                                             -- Nullable since v4.4; retained read-only for
+                                             -- pre-3E-1 rows.
   sport_id uuid references sports(id),      -- v4.0: normalized reference
   league_id uuid references leagues(id),    -- v4.0
   season_id uuid references seasons(id),    -- v4.0
@@ -210,6 +213,8 @@ create table games (
   scheduled_start timestamptz not null,
   stadium text,
   status text check (status in ('scheduled','live','final','postponed','canceled')),
+  season_type text check (season_type in ('preseason','regular','postseason')),  -- v4.4, nullable
+  week integer,                             -- v4.4, nullable — NFL week number at launch
   final_score jsonb,
   created_at timestamptz default now(),
   updated_at timestamptz default now()
@@ -219,6 +224,28 @@ create index idx_games_status on games(status) where status in ('scheduled','liv
 create index idx_games_sport on games(sport_id);
 ```
 **Migration policy (approved with this modification):** the legacy `sport` text field is *not* removed now. Both fields coexist through Phase 0 and Phase 1 — new code paths should populate and read `sport_id`, but nothing currently depending on the `sport` text column breaks. `sport` is formally marked deprecated here, scheduled for removal once the NFL migration to the normalized model is verified complete (a Phase 1 acceptance criterion, not a later cleanup task left to drift). This trades a small amount of temporary duplication for zero Phase-0 disruption — the same reasoning that's governed every other schema decision in this document.
+
+**`season_type`/`week` (v4.4, Phase 3E-1, 2026-08-13):** normalized internal vocabulary — `preseason`/`regular`/`postseason` — never a single provider's raw terminology (e.g. SportsDataIO's own numeric `SeasonType` 1/2/3). Checked before adding: no existing internal season-phase vocabulary existed anywhere in this codebase to reuse. Both columns are nullable: `season_type` because not every future sport/provider supplies a season phase, `week` because it's an NFL-specific concept, matching the `player_stats_nfl` extension-table precedent of not forcing one sport's shape onto a shared table. At launch, only `SeasonType == 1` (regular season) has been CONFIRMED FROM LIVE DATA against the SportsDataIO Free Trial and is normalized (`SportsDataIOScheduleAdapter._SEASON_TYPE_MAP`); preseason/postseason mapping is a known gap, not yet wired, pending a live Schedule call against those season types.
+
+### `game_provider_ids` (new, v4.4 — Phase 3E-1, Decision 2, 2026-08-13)
+
+The authoritative multi-provider game identity mechanism, replacing `games.external_provider_id`'s hidden single-vendor assumption. `odds_snapshots.py` used to resolve every game by matching `external_provider_id` directly against The Odds API's own event id — a hidden assumption with no way for a second vendor's id (e.g. SportsDataIO's `GameKey`) to ever coexist on the same game. This table makes that mapping explicit and general: one internal game can carry many `(provider_name, provider_game_id)` pairs.
+
+```sql
+create table game_provider_ids (
+  id uuid primary key default gen_random_uuid(),
+  game_id uuid not null references games(id) on delete cascade,
+  provider_name text not null check (provider_name in ('the_odds_api', 'sportsdataio')),
+  provider_game_id text not null,
+  created_at timestamptz not null default now(),
+  unique (provider_name, provider_game_id),  -- a provider's id resolves to exactly one game
+  unique (game_id, provider_name)            -- a game has at most one id per provider
+);
+```
+
+**Constraint design:** the two unique constraints are the actual proof, at the database level and not just in application code, of the two properties Mac's architecture checkpoint required: a SportsDataIO id and a The Odds API id can both resolve to the same `games.id` without creating a duplicate game (they're independent rows sharing one `game_id`), and a provider id cannot silently map to two different games (`unique(provider_name, provider_game_id)` rejects it). `provider_name` is constrained to the providers this codebase actually integrates with today; adding a new vendor is a small follow-up migration, matching the existing convention for `games.status`'s own check-in list. Both unique constraints create their own covering index, which is exactly the pair of lookup paths this table needs — no separate index required. RLS: public-read, service-role-only writes, same as every other sports data table in this section.
+
+**Do not add further provider-specific columns to `games`.** New vendor identity goes into `game_provider_ids`, not a new column.
 
 ### `odds_snapshots`
 ```sql
@@ -278,6 +305,8 @@ create table daily_game_intelligence (
 }
 ```
 `status` is computed against the cadence table in Volume 2 §8 — e.g. weather is `needs_refresh` once it exceeds its 15-minute cadence without a successful update. This is what makes the AI Transparency Meter's `data_quality` dimension (Volume 5 §5) a real, per-category number instead of one vague freshness score for the whole recommendation, and it's what lets an agent (or the Meta Agent, Volume 4 §2.6) reason explicitly about *which specific inputs* were stale rather than treating the whole packet as uniformly trustworthy or not.
+
+**`public_betting`/`sharp_money` — DEFERRED, EXTERNAL/VENDOR DEPENDENCY (v4.4, Decision 3, 2026-08-13).** Both columns stay in the schema as approved, but populating them requires a betting-percentage/handle data vendor this project has not selected or purchased — no vendor decision has been made, and no data is fabricated to fill the gap in the meantime. Until that vendor decision happens, both columns are `null`, which is semantically distinct from a computed neutral/zero value — any Phase 4/5 consumer reading `daily_game_intelligence` must treat `null` here as "unavailable," never coerce it to a default. `travel`/`rest`, by contrast, are populated at launch from data this project already has (existing Schedule/game/stadium data), per the same Decision 3.
 
 ### 4.2 Derived Intelligence Score Tables (v3.0)
 

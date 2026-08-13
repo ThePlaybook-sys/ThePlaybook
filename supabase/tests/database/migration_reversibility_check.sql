@@ -13,6 +13,31 @@
 -- Supabase CLI migrations are forward-only by convention (no paired up/down files), so this
 -- script is a verification artifact, not part of the normal apply path — never run against
 -- dev/staging/production directly.
+--
+-- 2026-08-13 addition (3E-1): 20260813180000_game_provider_ids_and_season_week is purely
+-- additive (one new table, two new nullable columns, two column comments) -- no column
+-- removal or type change, so it follows the same additive-migration convention as the five
+-- Phase 1 migrations below. Its DOWN block is prepended since it's the most recently applied.
+-- 20260813180500_games_external_provider_id_nullable is a constraint relaxation (NOT NULL ->
+-- nullable); its DOWN would re-add NOT NULL, which is only safe if no row has a null value --
+-- true immediately after this migration (no code writes null there yet), not guaranteed once
+-- Schedule ingestion has actually run, so this DOWN block is documented but not silently
+-- assumed always-safe to run.
+
+-- ============================================================================
+-- DOWN: 20260813180500_games_external_provider_id_nullable
+-- ============================================================================
+alter table games alter column external_provider_id set not null;
+-- expected table count after this block: 39 (no table count change, constraint only --
+-- will FAIL if any games row has a null external_provider_id at the time this runs)
+
+-- ============================================================================
+-- DOWN: 20260813180000_game_provider_ids_and_season_week
+-- ============================================================================
+alter table games drop column if exists week;
+alter table games drop column if exists season_type;
+drop table if exists game_provider_ids;
+-- expected table count after this block: 38 (back to the pre-3E-1 table count)
 
 -- ============================================================================
 -- DOWN: 20260807220949_performance_postgame_config_tables

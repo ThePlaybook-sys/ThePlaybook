@@ -63,11 +63,13 @@ async def test_fixture_to_adapter_to_cache_to_persistence_to_downstream_read():
 
     # 3. Persistence boundary — Supabase PostgREST, also respx-intercepted.
     # No vendor-shaped data crosses this boundary, only normalized OddsLine.
-    games_lookup_route = respx.get(f"{SUPABASE_URL}/rest/v1/games").mock(
+    # Game resolution goes through game_provider_ids (Phase 3E-1, Decision 2),
+    # not games.external_provider_id directly.
+    game_lookup_route = respx.get(f"{SUPABASE_URL}/rest/v1/game_provider_ids").mock(
         return_value=httpx.Response(
             200,
             json=[
-                {"id": GAME_CHIEFS_RAVENS_DB_ID, "external_provider_id": GAME_CHIEFS_RAVENS}
+                {"game_id": GAME_CHIEFS_RAVENS_DB_ID, "provider_game_id": GAME_CHIEFS_RAVENS}
             ],
         )
     )
@@ -77,7 +79,7 @@ async def test_fixture_to_adapter_to_cache_to_persistence_to_downstream_read():
 
     written_count = await persist_odds_lines(response)
     assert written_count == len(response.value)
-    assert games_lookup_route.called
+    assert game_lookup_route.called
     assert insert_route.called
 
     inserted_rows = respx.calls.last.request.content
@@ -89,9 +91,12 @@ async def test_fixture_to_adapter_to_cache_to_persistence_to_downstream_read():
 
     # 4. Downstream read — proves a caller reading persisted data back never
     # touches the adapter or the vendor shape at all.
-    respx.get(f"{SUPABASE_URL}/rest/v1/games").mock(
+    respx.get(f"{SUPABASE_URL}/rest/v1/game_provider_ids").mock(
         return_value=httpx.Response(
-            200, json=[{"id": GAME_CHIEFS_RAVENS_DB_ID}]
+            200,
+            json=[
+                {"game_id": GAME_CHIEFS_RAVENS_DB_ID, "provider_game_id": GAME_CHIEFS_RAVENS}
+            ],
         )
     )
     respx.get(f"{SUPABASE_URL}/rest/v1/odds_snapshots").mock(
@@ -128,8 +133,10 @@ async def test_lines_for_unresolved_games_are_skipped_not_silently_written():
     )
     response = await adapter.fetch_odds([GAME_CHIEFS_RAVENS])
 
-    # Supabase has no matching games row for this external id at all.
-    respx.get(f"{SUPABASE_URL}/rest/v1/games").mock(return_value=httpx.Response(200, json=[]))
+    # Supabase has no matching game_provider_ids row for this external id at all.
+    respx.get(f"{SUPABASE_URL}/rest/v1/game_provider_ids").mock(
+        return_value=httpx.Response(200, json=[])
+    )
     insert_route = respx.post(f"{SUPABASE_URL}/rest/v1/odds_snapshots").mock(
         return_value=httpx.Response(201)
     )

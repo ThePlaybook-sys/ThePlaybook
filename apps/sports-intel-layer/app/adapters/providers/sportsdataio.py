@@ -144,6 +144,17 @@ from app.adapters.models import (
 #: other value, including a JSON null, raises rather than being guessed.
 _SCHEDULE_STATUS_MAP = {"Scheduled": "scheduled"}
 
+#: CONFIRMED FROM LIVE FREE TRIAL, same discipline as _SCHEDULE_STATUS_MAP above:
+#: every one of the 304 captured Schedules rows -- fetched by requesting the
+#: "2026REG" season string -- carried SeasonType 1, and only 1. SportsDataIO's own
+#: preseason/postseason SeasonType integers (commonly documented elsewhere as 2/3)
+#: were never observed against this trial account, so they are deliberately NOT
+#: mapped here rather than guessed -- an unmapped value raises ProviderDataError,
+#: same as an unrecognized Status. This is a known gap, not an oversight (see 3E-1
+#: completion report's "assumptions remaining" -- production wiring against a real
+#: preseason/postseason Schedule call is required before this map can safely grow).
+_SEASON_TYPE_MAP = {1: "regular"}
+
 #: CONFIRMED FROM PROVIDER DOCUMENTATION (Mac, 2026-08-12): SportsDataIO's
 #: own docs state a 5-minute call interval for these categories -- used as
 #: the default bulk-payload cache TTL so repeated per-game/per-team calls
@@ -329,6 +340,7 @@ class SportsDataIOScheduleAdapter(ScheduleAdapter):
         try:
             for g in games:
                 status = self._normalize_status(g.get("Status"))
+                season_type = self._normalize_season_type(g.get("SeasonType"))
                 stadium_details = g.get("StadiumDetails") or {}
                 entries.append(
                     ScheduleEntry(
@@ -338,6 +350,8 @@ class SportsDataIOScheduleAdapter(ScheduleAdapter):
                         scheduled_start=_parse_timestamp_utc(g["DateTimeUTC"]),
                         stadium=stadium_details.get("Name"),
                         status=status,
+                        season_type=season_type,
+                        week=g.get("Week"),
                     )
                 )
         except (KeyError, TypeError, ValueError) as exc:
@@ -354,6 +368,16 @@ class SportsDataIOScheduleAdapter(ScheduleAdapter):
                 provider=self.provider_name,
             )
         return _SCHEDULE_STATUS_MAP[raw_status]
+
+    def _normalize_season_type(self, raw_season_type: object) -> str:
+        if raw_season_type not in _SEASON_TYPE_MAP:
+            raise ProviderDataError(
+                f"unrecognized SeasonType {raw_season_type!r} -- only "
+                f"{sorted(_SEASON_TYPE_MAP)} are CONFIRMED from live data, "
+                "not silently mapped",
+                provider=self.provider_name,
+            )
+        return _SEASON_TYPE_MAP[raw_season_type]
 
 
 class SportsDataIOTeamStatsAdapter(TeamStatsAdapter, _WeeklyBulkCacheMixin):
