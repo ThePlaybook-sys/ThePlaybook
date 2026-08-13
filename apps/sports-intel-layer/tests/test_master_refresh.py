@@ -1,0 +1,570 @@
+"""Orchestration tests for app.master_refresh.run (Phase 3E-2).
+
+Every HTTP boundary -- Supabase and SportsDataIO both -- is respx-mocked.
+`run_master_refresh`'s signature only ever accepts a `supabase_client` and
+a `sportsdataio_client` -- structurally, there is no way for it to call
+The Odds API, WeatherAPI, or NewsAPI/GNews, which is itself the strongest
+proof of Decision 1's "does not directly fetch odds/props/injuries/
+weather/news." No real network is used anywhere in this file.
+"""
+from __future__ import annotations
+
+import json as _json
+from datetime import date, datetime, timezone
+
+import httpx
+import pytest
+import respx
+
+from app.adapters.cache import InMemoryCacheBackend, RedisCacheBackend
+from app.master_refresh.run import run_master_refresh
+
+SUPABASE_URL = "https://test-project.supabase.co"
+SPORTSDATAIO_URL = "https://api.sportsdata.io"
+
+TODAY = date(2026, 9, 9)
+
+
+def _headers_env(monkeypatch):
+    monkeypatch.setenv("SUPABASE_URL", SUPABASE_URL)
+    monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "test-service-role-key")
+
+
+def _game_row(game_key, home, away, dt, week=1, stadium="Lumen Field"):
+    return {
+        "GameKey": game_key,
+        "SeasonType": 1,
+        "Season": 2026,
+        "Week": week,
+        "HomeTeam": home,
+        "AwayTeam": away,
+        "DateTimeUTC": dt,
+        "Status": "Scheduled",
+        "StadiumDetails": {"Name": stadium},
+    }
+
+
+def _mock_season(seasons_response=None):
+    respx.get(f"{SUPABASE_URL}/rest/v1/leagues").mock(
+        return_value=httpx.Response(200, json=[{"id": "league-nfl"}])
+    )
+    respx.get(f"{SUPABASE_URL}/rest/v1/seasons").mock(
+        return_value=httpx.Response(
+            200,
+            json=seasons_response
+            or [{"year": 2026, "start_date": "2026-09-04", "end_date": "2027-02-14"}],
+        )
+    )
+
+
+def _mock_players_and_depth_charts(teams):
+    respx.get(f"{SPORTSDATAIO_URL}/v3/nfl/scores/json/DepthCharts").mock(
+        return_value=httpx.Response(200, json=[])
+    )
+    for team in teams:
+        respx.get(f"{SPORTSDATAIO_URL}/v3/nfl/scores/json/Players/{team}").mock(
+            return_value=httpx.Response(
+                200,
+                json=[
+                    {"PlayerID": 1, "Team": team, "Name": f"{team} QB", "Position": "QB"},
+                ],
+            )
+        )
+
+
+def _mock_empty_intelligence():
+    respx.get(f"{SUPABASE_URL}/rest/v1/odds_snapshots").mock(return_value=httpx.Response(200, json=[]))
+    respx.get(f"{SUPABASE_URL}/rest/v1/injury_reports").mock(return_value=httpx.Response(200, json=[]))
+    respx.get(f"{SUPABASE_URL}/rest/v1/weather_snapshots").mock(return_value=httpx.Response(200, json=[]))
+    respx.get(f"{SUPABASE_URL}/rest/v1/daily_game_intelligence").mock(return_value=httpx.Response(200, json=[]))
+
+
+def _mock_games_read(slate_rows, previous_by_team=None):
+    """One route serves both list_games_in_window (no `status` filter) and
+    find_previous_final_game (has `status=eq.final`) -- distinguished by
+    inspecting the request's own query params, since respx matches routes
+    by URL, not by query string, unless told to."""
+    previous_by_team = previous_by_team or {}
+
+    def _respond(request: httpx.Request) -> httpx.Response:
+        params = request.url.params
+        if params.get("status") == "eq.final":
+            or_clause = params.get("or", "")
+            for team, row in previous_by_team.items():
+                if team in or_clause:
+                    return httpx.Response(200, json=[row] if row else [])
+            return httpx.Response(200, json=[])
+        return httpx.Response(200, json=slate_rows)
+
+    respx.get(f"{SUPABASE_URL}/rest/v1/games").mock(side_effect=_respond)
+
+
+def _mock_game_provider_ids(existing: dict | None = None):
+    existing = existing or {}
+
+    def _get_respond(request: httpx.Request) -> httpx.Response:
+        ids_param = request.url.params.get("provider_game_id", "")
+        rows = []
+        for game_key, game_id in existing.items():
+            if game_key in ids_param:
+                rows.append({"game_id": game_id, "provider_game_id": game_key})
+        return httpx.Response(200, json=rows)
+
+    respx.get(f"{SUPABASE_URL}/rest/v1/game_provider_ids").mock(side_effect=_get_respond)
+    respx.post(f"{SUPABASE_URL}/rest/v1/game_provider_ids").mock(return_value=httpx.Response(201))
+
+
+def _mock_games_create(created_id="db-game-1"):
+    return respx.post(f"{SUPABASE_URL}/rest/v1/games").mock(
+        return_value=httpx.Response(201, json=[{"id": created_id}])
+    )
+
+
+def _mock_games_patch():
+    return respx.patch(f"{SUPABASE_URL}/rest/v1/games").mock(return_value=httpx.Response(204))
+
+
+def _mock_dgi_upsert():
+    return respx.post(f"{SUPABASE_URL}/rest/v1/daily_game_intelligence").mock(
+        return_value=httpx.Response(201)
+    )
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_normal_master_refresh(monkeypatch):
+    _headers_env(monkeypatch)
+    _mock_season()
+    respx.get(f"{SPORTSDATAIO_URL}/v3/nfl/scores/json/Schedules/2026REG").mock(
+        return_value=httpx.Response(
+            200, json=[_game_row("g1", "SEA", "NE", "2026-09-10T00:20:00")]
+        )
+    )
+    _mock_game_provider_ids()
+    _mock_games_create()
+    _mock_games_read([{"id": "db-game-1", "home_team": "SEA", "away_team": "NE", "scheduled_start": "2026-09-10T00:20:00+00:00", "stadium": "Lumen Field", "status": "scheduled"}])
+    _mock_players_and_depth_charts(["SEA", "NE"])
+    _mock_empty_intelligence()
+    dgi_route = _mock_dgi_upsert()
+
+    async with (
+        httpx.AsyncClient(base_url=SUPABASE_URL) as supabase_client,
+        httpx.AsyncClient(base_url=SPORTSDATAIO_URL) as sdio_client,
+    ):
+        result = await run_master_refresh(
+            supabase_client=supabase_client,
+            sportsdataio_client=sdio_client,
+            sportsdataio_api_key="test-key",
+            today=TODAY,
+        )
+
+    assert result.status == "success"
+    assert result.season_string == "2026REG"
+    assert result.games_in_slate == 1
+    assert result.games_created == 1
+    assert result.daily_game_intelligence_written == 1
+    assert dgi_route.called
+    body = _json.loads(dgi_route.calls.last.request.content)
+    assert set(body.keys()).isdisjoint(
+        {"ai_scores", "momentum", "matchup_ratings", "ev_calculations", "confidence_scores", "recommendation_candidates"}
+    )
+    assert body["public_betting"] is None and body["sharp_money"] is None
+    assert body["rest"]["home"]["season_opener"] is True  # no prior games mocked
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_empty_slate(monkeypatch):
+    _headers_env(monkeypatch)
+    _mock_season()
+    # Only a game far outside the 7-day window.
+    respx.get(f"{SPORTSDATAIO_URL}/v3/nfl/scores/json/Schedules/2026REG").mock(
+        return_value=httpx.Response(200, json=[_game_row("g-far", "SEA", "NE", "2026-10-01T00:20:00")])
+    )
+
+    async with (
+        httpx.AsyncClient(base_url=SUPABASE_URL) as supabase_client,
+        httpx.AsyncClient(base_url=SPORTSDATAIO_URL) as sdio_client,
+    ):
+        result = await run_master_refresh(
+            supabase_client=supabase_client,
+            sportsdataio_client=sdio_client,
+            sportsdataio_api_key="test-key",
+            today=TODAY,
+        )
+
+    assert result.status == "success"
+    assert result.games_in_slate == 0
+    assert result.games_created == 0
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_full_slate_multiple_games(monkeypatch):
+    _headers_env(monkeypatch)
+    _mock_season()
+    games = [
+        _game_row("g1", "SEA", "NE", "2026-09-10T00:20:00"),
+        _game_row("g2", "KC", "BUF", "2026-09-13T17:00:00"),
+        _game_row("g3", "DAL", "PHI", "2026-09-14T20:00:00"),
+    ]
+    respx.get(f"{SPORTSDATAIO_URL}/v3/nfl/scores/json/Schedules/2026REG").mock(
+        return_value=httpx.Response(200, json=games)
+    )
+    _mock_game_provider_ids()
+    created_ids = iter(["db-1", "db-2", "db-3"])
+    respx.post(f"{SUPABASE_URL}/rest/v1/games").mock(
+        side_effect=lambda request: httpx.Response(201, json=[{"id": next(created_ids)}])
+    )
+    slate_rows = [
+        {"id": "db-1", "home_team": "SEA", "away_team": "NE", "scheduled_start": "2026-09-10T00:20:00+00:00", "stadium": "Lumen Field", "status": "scheduled"},
+        {"id": "db-2", "home_team": "KC", "away_team": "BUF", "scheduled_start": "2026-09-13T17:00:00+00:00", "stadium": "Arrowhead", "status": "scheduled"},
+        {"id": "db-3", "home_team": "DAL", "away_team": "PHI", "scheduled_start": "2026-09-14T20:00:00+00:00", "stadium": "AT&T Stadium", "status": "scheduled"},
+    ]
+    _mock_games_read(slate_rows)
+    _mock_players_and_depth_charts(["SEA", "NE", "KC", "BUF", "DAL", "PHI"])
+    _mock_empty_intelligence()
+    _mock_dgi_upsert()
+
+    async with (
+        httpx.AsyncClient(base_url=SUPABASE_URL) as supabase_client,
+        httpx.AsyncClient(base_url=SPORTSDATAIO_URL) as sdio_client,
+    ):
+        result = await run_master_refresh(
+            supabase_client=supabase_client,
+            sportsdataio_client=sdio_client,
+            sportsdataio_api_key="test-key",
+            today=TODAY,
+        )
+
+    assert result.status == "success"
+    assert result.games_in_slate == 3
+    assert result.games_created == 3
+    assert result.daily_game_intelligence_written == 3
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_rerun_idempotency_no_duplicate_provider_calls(monkeypatch):
+    _headers_env(monkeypatch)
+    _mock_season()
+    schedule_route = respx.get(f"{SPORTSDATAIO_URL}/v3/nfl/scores/json/Schedules/2026REG").mock(
+        return_value=httpx.Response(200, json=[_game_row("g1", "SEA", "NE", "2026-09-10T00:20:00")])
+    )
+    # Second run resolves via an already-existing game_provider_ids mapping.
+    _mock_game_provider_ids(existing={"g1": "db-game-1"})
+    patch_route = _mock_games_patch()
+    create_route = respx.post(f"{SUPABASE_URL}/rest/v1/games").mock(
+        return_value=httpx.Response(201, json=[{"id": "should-not-be-created"}])
+    )
+    _mock_games_read([{"id": "db-game-1", "home_team": "SEA", "away_team": "NE", "scheduled_start": "2026-09-10T00:20:00+00:00", "stadium": "Lumen Field", "status": "scheduled"}])
+    depth_route = respx.get(f"{SPORTSDATAIO_URL}/v3/nfl/scores/json/DepthCharts").mock(
+        return_value=httpx.Response(200, json=[])
+    )
+    respx.get(f"{SPORTSDATAIO_URL}/v3/nfl/scores/json/Players/SEA").mock(
+        return_value=httpx.Response(200, json=[])
+    )
+    respx.get(f"{SPORTSDATAIO_URL}/v3/nfl/scores/json/Players/NE").mock(
+        return_value=httpx.Response(200, json=[])
+    )
+    _mock_empty_intelligence()
+    _mock_dgi_upsert()
+
+    cache = InMemoryCacheBackend()
+    async with (
+        httpx.AsyncClient(base_url=SUPABASE_URL) as supabase_client,
+        httpx.AsyncClient(base_url=SPORTSDATAIO_URL) as sdio_client,
+    ):
+        result1 = await run_master_refresh(
+            supabase_client=supabase_client, sportsdataio_client=sdio_client,
+            sportsdataio_api_key="test-key", today=TODAY, cache_backend=cache,
+        )
+        result2 = await run_master_refresh(
+            supabase_client=supabase_client, sportsdataio_client=sdio_client,
+            sportsdataio_api_key="test-key", today=TODAY, cache_backend=cache,
+        )
+
+    assert result1.status == "success" and result2.status == "success"
+    assert not create_route.called  # existing mapping -> PATCH path both times, never a create
+    assert patch_route.call_count == 2  # one per run
+    assert schedule_route.call_count == 1  # second run hit the 24h cache
+    assert depth_route.call_count == 1  # roster bulk cache also reused
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_schedule_provider_failure_blocks_the_run(monkeypatch):
+    _headers_env(monkeypatch)
+    _mock_season()
+    respx.get(f"{SPORTSDATAIO_URL}/v3/nfl/scores/json/Schedules/2026REG").mock(
+        return_value=httpx.Response(503)
+    )
+
+    async with (
+        httpx.AsyncClient(base_url=SUPABASE_URL) as supabase_client,
+        httpx.AsyncClient(base_url=SPORTSDATAIO_URL) as sdio_client,
+    ):
+        result = await run_master_refresh(
+            supabase_client=supabase_client, sportsdataio_client=sdio_client,
+            sportsdataio_api_key="test-key", today=TODAY,
+        )
+
+    assert result.status == "failed"
+    assert "Schedule fetch failed" in result.error
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_malformed_schedule_row_blocks_the_run_strictly(monkeypatch):
+    _headers_env(monkeypatch)
+    _mock_season()
+    # Missing GameKey -- SportsDataIOScheduleAdapter's existing strict
+    # behavior (no new code needed for Decision 5).
+    respx.get(f"{SPORTSDATAIO_URL}/v3/nfl/scores/json/Schedules/2026REG").mock(
+        return_value=httpx.Response(
+            200,
+            json=[{"HomeTeam": "SEA", "AwayTeam": "NE", "DateTimeUTC": "2026-09-10T00:20:00", "Status": "Scheduled", "SeasonType": 1}],
+        )
+    )
+    games_write_route = respx.post(f"{SUPABASE_URL}/rest/v1/games")
+    dgi_route = respx.post(f"{SUPABASE_URL}/rest/v1/daily_game_intelligence")
+
+    async with (
+        httpx.AsyncClient(base_url=SUPABASE_URL) as supabase_client,
+        httpx.AsyncClient(base_url=SPORTSDATAIO_URL) as sdio_client,
+    ):
+        result = await run_master_refresh(
+            supabase_client=supabase_client, sportsdataio_client=sdio_client,
+            sportsdataio_api_key="test-key", today=TODAY,
+        )
+
+    assert result.status == "failed"
+    assert "Schedule fetch failed" in result.error
+    assert not games_write_route.called  # nothing partially written
+    assert not dgi_route.called
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_one_team_roster_failure_does_not_block_other_games(monkeypatch):
+    _headers_env(monkeypatch)
+    _mock_season()
+    respx.get(f"{SPORTSDATAIO_URL}/v3/nfl/scores/json/Schedules/2026REG").mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                _game_row("g1", "SEA", "NE", "2026-09-10T00:20:00"),
+                _game_row("g2", "KC", "BUF", "2026-09-13T17:00:00"),
+            ],
+        )
+    )
+    _mock_game_provider_ids()
+    created_ids = iter(["db-1", "db-2"])
+    respx.post(f"{SUPABASE_URL}/rest/v1/games").mock(
+        side_effect=lambda request: httpx.Response(201, json=[{"id": next(created_ids)}])
+    )
+    _mock_games_read(
+        [
+            {"id": "db-1", "home_team": "SEA", "away_team": "NE", "scheduled_start": "2026-09-10T00:20:00+00:00", "stadium": "Lumen Field", "status": "scheduled"},
+            {"id": "db-2", "home_team": "KC", "away_team": "BUF", "scheduled_start": "2026-09-13T17:00:00+00:00", "stadium": "Arrowhead", "status": "scheduled"},
+        ]
+    )
+    respx.get(f"{SPORTSDATAIO_URL}/v3/nfl/scores/json/DepthCharts").mock(return_value=httpx.Response(200, json=[]))
+    respx.get(f"{SPORTSDATAIO_URL}/v3/nfl/scores/json/Players/SEA").mock(return_value=httpx.Response(200, json=[]))
+    respx.get(f"{SPORTSDATAIO_URL}/v3/nfl/scores/json/Players/NE").mock(return_value=httpx.Response(500))  # fails
+    respx.get(f"{SPORTSDATAIO_URL}/v3/nfl/scores/json/Players/KC").mock(return_value=httpx.Response(200, json=[]))
+    respx.get(f"{SPORTSDATAIO_URL}/v3/nfl/scores/json/Players/BUF").mock(return_value=httpx.Response(200, json=[]))
+    _mock_empty_intelligence()
+    _mock_dgi_upsert()
+
+    async with (
+        httpx.AsyncClient(base_url=SUPABASE_URL) as supabase_client,
+        httpx.AsyncClient(base_url=SPORTSDATAIO_URL) as sdio_client,
+    ):
+        result = await run_master_refresh(
+            supabase_client=supabase_client, sportsdataio_client=sdio_client,
+            sportsdataio_api_key="test-key", today=TODAY,
+        )
+
+    assert result.status == "partial"
+    assert result.roster_failures == ["NE"]
+    assert result.games_created == 2
+    assert result.daily_game_intelligence_written == 2  # both games still got a row
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_cache_outage_degrades_gracefully(monkeypatch):
+    """Reuses 3D's own fail-open RedisCacheBackend guarantee rather than
+    reinventing cache-failure handling in Master Refresh itself."""
+    _headers_env(monkeypatch)
+    _mock_season()
+    respx.get(f"{SPORTSDATAIO_URL}/v3/nfl/scores/json/Schedules/2026REG").mock(
+        return_value=httpx.Response(200, json=[_game_row("g1", "SEA", "NE", "2026-09-10T00:20:00")])
+    )
+    _mock_game_provider_ids()
+    _mock_games_create()
+    _mock_games_read([{"id": "db-game-1", "home_team": "SEA", "away_team": "NE", "scheduled_start": "2026-09-10T00:20:00+00:00", "stadium": "Lumen Field", "status": "scheduled"}])
+    _mock_players_and_depth_charts(["SEA", "NE"])
+    _mock_empty_intelligence()
+    _mock_dgi_upsert()
+
+    class _BrokenRedisClient:
+        async def get(self, key):
+            import redis.exceptions
+
+            raise redis.exceptions.ConnectionError("simulated outage")
+
+        async def set(self, key, value, ex=None):
+            import redis.exceptions
+
+            raise redis.exceptions.ConnectionError("simulated outage")
+
+    broken_cache = RedisCacheBackend(_BrokenRedisClient())
+
+    async with (
+        httpx.AsyncClient(base_url=SUPABASE_URL) as supabase_client,
+        httpx.AsyncClient(base_url=SPORTSDATAIO_URL) as sdio_client,
+    ):
+        result = await run_master_refresh(
+            supabase_client=supabase_client, sportsdataio_client=sdio_client,
+            sportsdataio_api_key="test-key", today=TODAY, cache_backend=broken_cache,
+        )
+
+    assert result.status == "success"  # degraded to real calls, did not crash
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_database_partial_failure_isolated_per_game(monkeypatch):
+    _headers_env(monkeypatch)
+    _mock_season()
+    respx.get(f"{SPORTSDATAIO_URL}/v3/nfl/scores/json/Schedules/2026REG").mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                _game_row("g1", "SEA", "NE", "2026-09-10T00:20:00"),
+                _game_row("g2", "KC", "BUF", "2026-09-13T17:00:00"),
+            ],
+        )
+    )
+    _mock_game_provider_ids()
+    created_ids = iter(["db-1", "db-2"])
+    respx.post(f"{SUPABASE_URL}/rest/v1/games").mock(
+        side_effect=lambda request: httpx.Response(201, json=[{"id": next(created_ids)}])
+    )
+    _mock_games_read(
+        [
+            {"id": "db-1", "home_team": "SEA", "away_team": "NE", "scheduled_start": "2026-09-10T00:20:00+00:00", "stadium": "Lumen Field", "status": "scheduled"},
+            {"id": "db-2", "home_team": "KC", "away_team": "BUF", "scheduled_start": "2026-09-13T17:00:00+00:00", "stadium": "Arrowhead", "status": "scheduled"},
+        ]
+    )
+    _mock_players_and_depth_charts(["SEA", "NE", "KC", "BUF"])
+    _mock_empty_intelligence()
+
+    def _dgi_respond(request: httpx.Request) -> httpx.Response:
+        body = _json.loads(request.content)
+        if body["game_id"] == "db-1":
+            return httpx.Response(500, text="simulated write failure")
+        return httpx.Response(201)
+
+    respx.post(f"{SUPABASE_URL}/rest/v1/daily_game_intelligence").mock(side_effect=_dgi_respond)
+
+    async with (
+        httpx.AsyncClient(base_url=SUPABASE_URL) as supabase_client,
+        httpx.AsyncClient(base_url=SPORTSDATAIO_URL) as sdio_client,
+    ):
+        result = await run_master_refresh(
+            supabase_client=supabase_client, sportsdataio_client=sdio_client,
+            sportsdataio_api_key="test-key", today=TODAY,
+        )
+
+    assert result.status == "partial"
+    assert result.daily_game_intelligence_written == 1
+    assert len(result.daily_game_intelligence_failures) == 1
+    assert "db-1" in result.daily_game_intelligence_failures[0]
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_season_opener_and_bye_week_rest_via_orchestration(monkeypatch):
+    _headers_env(monkeypatch)
+    _mock_season()
+    respx.get(f"{SPORTSDATAIO_URL}/v3/nfl/scores/json/Schedules/2026REG").mock(
+        return_value=httpx.Response(200, json=[_game_row("g1", "SEA", "NE", "2026-09-10T00:20:00")])
+    )
+    _mock_game_provider_ids()
+    _mock_games_create()
+    _mock_games_read([{"id": "db-game-1", "home_team": "SEA", "away_team": "NE", "scheduled_start": "2026-09-10T00:20:00+00:00", "stadium": "Lumen Field", "status": "scheduled"}])
+    # SEA has a previous final game 14 days back (elevated rest); NE has none (opener).
+    _mock_previous_games = {
+        "SEA": {"id": "prev", "home_team": "X", "away_team": "SEA", "scheduled_start": "2026-08-27T00:20:00+00:00"},
+        "NE": None,
+    }
+    respx.get(f"{SUPABASE_URL}/rest/v1/games").mock(
+        side_effect=lambda request: (
+            httpx.Response(
+                200,
+                json=(
+                    [{"id": "db-game-1", "home_team": "SEA", "away_team": "NE", "scheduled_start": "2026-09-10T00:20:00+00:00", "stadium": "Lumen Field", "status": "scheduled"}]
+                    if request.url.params.get("status") != "eq.final"
+                    else (
+                        [_mock_previous_games["SEA"]] if "SEA" in request.url.params.get("or", "")
+                        else ([_mock_previous_games["NE"]] if _mock_previous_games["NE"] else [])
+                    )
+                ),
+            )
+        )
+    )
+    _mock_players_and_depth_charts(["SEA", "NE"])
+    _mock_empty_intelligence()
+    dgi_route = _mock_dgi_upsert()
+
+    async with (
+        httpx.AsyncClient(base_url=SUPABASE_URL) as supabase_client,
+        httpx.AsyncClient(base_url=SPORTSDATAIO_URL) as sdio_client,
+    ):
+        result = await run_master_refresh(
+            supabase_client=supabase_client, sportsdataio_client=sdio_client,
+            sportsdataio_api_key="test-key", today=TODAY,
+        )
+
+    assert result.status == "success"
+    body = _json.loads(dgi_route.calls.last.request.content)
+    assert body["rest"]["home"]["rest_days"] == 14
+    assert body["rest"]["home"]["season_opener"] is False
+    assert body["rest"]["away"]["season_opener"] is True
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_no_unauthorized_provider_urls_are_ever_contacted(monkeypatch):
+    """Only supabase + sportsdataio routes are registered -- if the code
+    path ever attempted the-odds-api.com/weatherapi.com/newsapi.org, respx
+    would raise on the unmatched request rather than the run silently
+    succeeding."""
+    _headers_env(monkeypatch)
+    _mock_season()
+    respx.get(f"{SPORTSDATAIO_URL}/v3/nfl/scores/json/Schedules/2026REG").mock(
+        return_value=httpx.Response(200, json=[_game_row("g1", "SEA", "NE", "2026-09-10T00:20:00")])
+    )
+    _mock_game_provider_ids()
+    _mock_games_create()
+    _mock_games_read([{"id": "db-game-1", "home_team": "SEA", "away_team": "NE", "scheduled_start": "2026-09-10T00:20:00+00:00", "stadium": "Lumen Field", "status": "scheduled"}])
+    _mock_players_and_depth_charts(["SEA", "NE"])
+    _mock_empty_intelligence()
+    _mock_dgi_upsert()
+
+    async with (
+        httpx.AsyncClient(base_url=SUPABASE_URL) as supabase_client,
+        httpx.AsyncClient(base_url=SPORTSDATAIO_URL) as sdio_client,
+    ):
+        result = await run_master_refresh(
+            supabase_client=supabase_client, sportsdataio_client=sdio_client,
+            sportsdataio_api_key="test-key", today=TODAY,
+        )
+
+    assert result.status == "success"
+    for call in respx.calls:
+        host = call.request.url.host
+        assert host in ("test-project.supabase.co", "api.sportsdata.io")

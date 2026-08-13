@@ -422,3 +422,47 @@ A one-line cross-reference was added to §7's `postgame_reviews` description (`o
 - MINOR, Volume-3-only bump: additive table, two new nullable columns, one constraint relaxation on a column already marked for eventual removal — no other volume's schema, agents, or product decisions change as a result.
 
 **Full technical detail:** This entry, plus the reasoning inline in Volume 3's v4.4 note, §4.0's `game_provider_ids`/`games` sections, and §4.1's `public_betting`/`sharp_money` deferred-status note. Also logged operationally in `PROGRESS.md`'s 2026-08-13 notes (Phase 3E-1).
+
+---
+
+## v4.3 — 2026-08-13 — MINOR
+
+**Volume affected:** Volume 2 (System Architecture) only.
+
+**Reason:** Building Master Refresh (Phase 3E-2) required resolving a real ambiguity in §8's cadence table, surfaced during the 3E-2 planning pass Mac requested: the Master Refresh row's original wording ("Full pull: games, odds, props, injuries, weather, news, rosters, schedule updates") predates the v4.2 revision that gave Odds/Player Props/Injury their own dedicated adaptive/window-aware cadences. Taken literally, that wording is an instruction for Master Refresh to independently re-fetch the same five categories those specialized workers already own — exactly the duplicate-provider-call problem the v4.2 adaptive-cadence work exists to prevent.
+
+**Decision:** Master Refresh's row is rewritten to state its actual scope precisely: it directly fetches/establishes Schedule refresh, game creation/update, season/week context, and the roster/depth-chart morning refresh, and assembles `daily_game_intelligence` from those plus whatever the Odds/Player Props/Injury/Weather/News workers have *already* persisted. It never calls those five adapters itself. If a specialized worker hasn't run yet — true for all five as of this entry, since none are built yet — the corresponding `daily_game_intelligence` field is left null/unavailable, not fabricated and not duplicated via a direct fetch.
+
+**Alternatives considered:**
+- Leaving the "full pull" wording as-is and treating it as informal/non-binding — rejected; Mac's own Phase 3E-2 planning process explicitly named this exact ambiguity ("do not let Master Refresh become a giant duplicate fetch of everything if specialized workers already own those categories") and required it resolved before implementation, not left informally understood.
+- Having Master Refresh call each specialized adapter once as a "morning snapshot" on the specialized workers' behalf — rejected; the Player Props Worker's own cadence definition already names "1 morning snapshot" as its own first tier, meaning that snapshot is that worker's responsibility already, not a gap Master Refresh needs to fill. Master Refresh calling the adapter first would just be the exact duplicate-fetch problem under a different name.
+
+**Expected impact:**
+- Phase 3E-2's actual implementation (`app/master_refresh/`) follows this resolved scope exactly — confirmed structurally, not just by convention: `run_master_refresh`'s own signature only accepts a Supabase client and a SportsDataIO client, so it has no way to call The Odds API/WeatherAPI/NewsAPI even if it tried.
+- `daily_game_intelligence.odds`/`.props`/`.injuries`/`.weather`/`.news` will read as null/unavailable in Phase 3E-2's own output until the corresponding worker (3E-4 through a later sub-step) is built and has run at least once — an expected, honest state, not a bug.
+- MINOR, Volume-2-only bump: clarifies an existing cadence-table row's scope, no new worker, no schema change.
+
+**Full technical detail:** This entry, plus the reasoning inline in Volume 2's v4.3 note and §8. Also logged operationally in `PROGRESS.md`'s 2026-08-13 notes (Phase 3E-2).
+
+---
+
+## v4.5 — 2026-08-13 — MINOR
+
+**Volume affected:** Volume 3 (Database Architecture) only.
+
+**Reason:** `daily_game_intelligence.rest`/`.travel` have existed as untyped jsonb columns since v3.0 with no documented semantics anywhere in any volume (confirmed by direct search before writing Phase 3E-2's Master Refresh implementation, which needed to compute real values for both). Mac's Phase 3E-2 Architecture Decision Checkpoint (Decisions 2 and 3) approved exact definitions for both rather than leaving them to be invented ad hoc at implementation time.
+
+**Decision:**
+- **`rest`:** days since a team's most recent `status='final'` game before the current game's `scheduled_start`, as a UTC calendar-date difference. Only a finalized game counts as "previous" — scheduled/canceled/never-finalized-postponed games are excluded. A season opener is `rest_days: null` + `season_opener: true` (never a fabricated 0), matching the null-not-neutral principle already established for `public_betting`/`sharp_money`. No separate bye-week flag was added — the elevated `rest_days` number itself is sufficient, per Mac's explicit instruction not to add speculative fields ahead of an actual downstream consumer needing one.
+- **`travel`:** distance from the venue of a team's previous final game to the venue of its current game (game-to-game travel burden) — explicitly not home-city-to-current-stadium distance. Defined, but deliberately left null/unavailable in Phase 3E-2's implementation: SportsDataIO's Schedule response does carry venue coordinates (`StadiumDetails.GeoLat`/`GeoLong`, CONFIRMED present in the already-captured live fixture), but neither the `ScheduleEntry` adapter model nor `games` currently persists them past the stadium name. Populating `travel` for real needs a widened `ScheduleEntry` plus durable coordinate storage (new `games` columns or a `stadiums` reference table) — a schema decision deliberately deferred out of 3E-2's scope and tracked as a follow-up architecture item (`engineering-roadmap-build-order.md`'s Technical Debt & Feature Backlog gained a companion entry for the related `team_provider_ids` gap the same day), not solved by fabricating coordinates.
+
+**Alternatives considered:**
+- Adding an `is_bye_week_return` boolean alongside `rest_days` now, since the shape was already being designed — rejected per Mac's explicit instruction; no existing consumer needs it yet, and Volume 3's own §1 principles already warn against building for hypothetical future requirements.
+- Building the `ScheduleEntry`/schema widening needed for real `travel` values as part of this same pass, since the coordinate data already exists at the provider level — rejected; Mac's explicit instruction was to keep this schema decision out of 3E-2's scope specifically because travel does not block Master Refresh, and a stadium/geo schema decision deserves the same explicit checkpoint treatment `game_provider_ids` got in 3E-1, not a decision folded silently into an unrelated worker's implementation pass.
+
+**Expected impact:**
+- Phase 3E-2's `app/master_refresh/rest.py` implements the `rest` definition exactly as documented here; `travel` is always written `null` by 3E-2, consistent with "defined but deliberately unavailable."
+- No schema change — both columns already existed as untyped jsonb since v3.0; this entry documents semantics only.
+- MINOR, Volume-3-only bump.
+
+**Full technical detail:** This entry, plus the reasoning inline in Volume 3's v4.5 note and §4.1's new `rest`/`travel` semantics paragraphs. Also logged operationally in `PROGRESS.md`'s 2026-08-13 notes (Phase 3E-2).
