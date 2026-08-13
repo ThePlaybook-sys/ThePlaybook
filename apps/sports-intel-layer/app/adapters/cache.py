@@ -1,10 +1,11 @@
 """The cache integration boundary (Volume 2 §8).
 
-`CacheBackend` is the interface Redis will implement in Phase 3D. Nothing
-here depends on Redis -- 3A/3B/3C can be built and tested against
-`InMemoryCacheBackend`, and 3D's only job is one Redis-backed implementation
-of this same interface, wired in behind `CachingAdapter` with zero change to
-anything that already calls it.
+`CacheBackend` is the interface Redis implements (Phase 3D). Nothing in
+`CacheBackend`/`CachingAdapter`/`cache_key` depends on Redis -- 3A/3B/3C
+were built and tested against `InMemoryCacheBackend`, and 3D's job was one
+Redis-backed implementation of this same interface, wired in behind
+`CachingAdapter` with zero change to anything that already calls it. That
+held: `RedisCacheBackend` below required no change to any of the three.
 
 `CachingAdapter` wraps any concrete `ProviderAdapter` and makes caching
 transparent to callers: they call the same interface method whether or not
@@ -12,14 +13,28 @@ a value is cached. This is also the boundary that makes the "swap the
 vendor behind an adapter" acceptance test possible -- callers only ever
 depend on the adapter's abstract interface, so swapping the wrapped
 instance is a one-line change with zero ripple effect elsewhere.
+
+**3D scope note (Mac, 2026-08-13):** this phase is the `RedisCacheBackend`
+*implementation and test* only -- no Railway Redis instance exists yet,
+by explicit decision, deferred until Phase 3E's worker services need to
+prove real cross-process cache sharing (an `InMemoryCacheBackend` cannot
+be shared between separate Railway services/processes, which is exactly
+what Volume 2 §8's "shared across all users" requirement needs). See
+`PROGRESS.md` for the full cost/architecture checkpoint this followed.
 """
 from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import time
 from abc import ABC, abstractmethod
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
+
+if TYPE_CHECKING:
+    import redis.asyncio as redis_asyncio
+
+_logger = logging.getLogger("sports-intel-layer.cache")
 
 
 class CacheBackend(ABC):
@@ -57,6 +72,104 @@ class InMemoryCacheBackend(CacheBackend):
 
     async def set(self, key: str, value: str, ttl_seconds: int) -> None:
         self._store[key] = (value, self._clock() + ttl_seconds)
+
+
+class RedisCacheBackend(CacheBackend):
+    """`CacheBackend` implemented against a real (or fake-for-testing)
+    Redis, via `redis.asyncio.Redis`'s async client interface -- injected
+    at construction time, exactly the same dependency-injection pattern
+    every provider adapter already uses for its `httpx.AsyncClient`
+    (see e.g. `WeatherAPIWeatherAdapter`). Tests inject
+    `fakeredis.aioredis.FakeRedis()` (implements the same interface, no
+    real Redis server); production would inject a real
+    `redis.asyncio.Redis.from_url(...)` client. This class never imports
+    `fakeredis` itself -- only test code does -- so `fakeredis` stays a
+    test-only dependency, never a production one.
+
+    No new serialization: `CacheBackend.get`/`set` already only deal in
+    `str` (`CachingAdapter` does the JSON encode/decode via each
+    `AdapterResponse` pydantic model before/after calling this backend).
+    Redis natively stores/returns `bytes` for a plain string SET/GET, so
+    the only translation this class does is `bytes.decode()` on read --
+    not a new serialization format, just honoring the existing str
+    contract against a client whose wire format is bytes.
+
+    TTL: `ttl_seconds` is passed straight through to Redis's native `EX`
+    expiry on `SET` -- Redis enforces expiry itself, this class does not
+    reimplement TTL logic. Because `ttl_seconds` is a per-call argument
+    (not a fixed value on this class), different categories already get
+    different TTLs simply by whoever constructs a `CachingAdapter` passing
+    a different `ttl_seconds` per category -- this class doesn't need
+    category awareness itself to support category-appropriate TTLs; it
+    already treats every `set()` call's TTL independently, by design of
+    the interface it implements. See `CATEGORY_TTL_SECONDS` below for a
+    starting-point mapping the eventual production wiring (3E) can use.
+
+    Error/failure behavior (a real decision, not left implicit): a Redis
+    connection/timeout/protocol failure on `get` is treated as a cache
+    MISS (returns `None`, logged as a warning) rather than raised --
+    "fail open," the standard pattern for a cache that's an optimization,
+    not a critical dependency. `CachingAdapter.call` already falls
+    through to the real adapter on any cache miss, so a struggling Redis
+    degrades the system to "as if nothing were cached" rather than taking
+    it down. A `set` failure is similarly swallowed (logged, not raised)
+    -- the provider fetch that produced the value to cache already
+    succeeded by the time `set` is called; a failed cache write must
+    never undo or fail that already-successful response. Only
+    `redis.exceptions.RedisError` (the library's own base exception) is
+    caught this way -- a bug in this class's own code is not silently
+    hidden.
+    """
+
+    def __init__(self, client: "redis_asyncio.Redis"):
+        self._client = client
+
+    async def get(self, key: str) -> str | None:
+        import redis.exceptions
+
+        try:
+            value = await self._client.get(key)
+        except redis.exceptions.RedisError as exc:
+            _logger.warning("RedisCacheBackend.get failed, treating as cache miss: %s", exc)
+            return None
+        if value is None:
+            return None
+        return value.decode() if isinstance(value, bytes) else value
+
+    async def set(self, key: str, value: str, ttl_seconds: int) -> None:
+        import redis.exceptions
+
+        try:
+            await self._client.set(key, value, ex=ttl_seconds)
+        except redis.exceptions.RedisError as exc:
+            _logger.warning("RedisCacheBackend.set failed, cache write skipped: %s", exc)
+
+
+#: Starting-point category -> cache TTL mapping (Volume 2 §8), for the
+#: eventual production wiring (3E) to construct each category's
+#: `CachingAdapter` with. ASSUMED, not definitively engineered: Volume 2
+#: §8's own cadence table describes several categories (Odds, Player
+#: Props, Injury) as adaptive/window-aware -- a real proximity-to-kickoff
+#: -aware TTL, not a single flat number. A flat number per category here
+#: is a reasonable, documented simplification bounding how stale a cached
+#: value can get, not an implementation of the actual adaptive cadence
+#: logic (that's a worker-scheduling concern, 3E's job, not this cache
+#: backend's). Rosters/Schedules/TeamStats/PlayerStats have no dedicated
+#: cadence row in Volume 2 §8's table at all -- they're covered by the
+#: daily Master Refresh (or, for stats, the event-triggered Postgame
+#: Ingestion Worker) -- so their TTL here is bounded by a day, not a
+#: shorter polling interval that doesn't exist for them.
+CATEGORY_TTL_SECONDS: dict[str, int] = {
+    "odds": 60,  # ASSUMED simplification of the adaptive/game-aware cadence
+    "player_props": 60,  # ASSUMED, same reasoning as odds
+    "injuries": 300,  # ASSUMED simplification of the window-aware cadence
+    "weather": 900,  # CONFIRMED FROM VOLUME 2 §8 -- flat 15-minute worker cadence
+    "news": 900,  # CONFIRMED FROM VOLUME 2 §8 -- flat 15-minute worker cadence
+    "rosters": 86400,  # ASSUMED -- bounded by daily Master Refresh, no dedicated cadence row
+    "schedules": 86400,  # ASSUMED, same reasoning as rosters
+    "team_stats": 86400,  # ASSUMED -- bounded by Master Refresh / event-triggered Postgame Ingestion
+    "player_stats": 86400,  # ASSUMED, same reasoning as team_stats
+}
 
 
 def cache_key(provider_name: str, method_name: str, *args: Any) -> str:
