@@ -155,6 +155,17 @@ class TheOddsApiOddsAdapter(OddsAdapter):
         regardless of event count -- a per-game filter would make that
         formula meaningless), so this filters the full-slate response down
         to the requested games after fetching.
+
+        **Discovery mode (Phase 3E-4B/C): an empty `game_external_ids`
+        returns every event in the response, unfiltered.** Since the bulk
+        endpoint always returns the full slate regardless of what's
+        requested (see above) and its cost doesn't scale with event count,
+        there is nothing to save by filtering when the caller doesn't yet
+        know which The Odds API event ids correspond to its internal
+        games -- exactly the situation the Odds Worker is in for a game
+        Master Refresh created but this provider hasn't been linked to yet
+        (`app.persistence.odds_game_linking`). Passing a non-empty list
+        keeps the original filtered behavior unchanged.
         """
         response = await _get(
             self._client,
@@ -174,13 +185,17 @@ class TheOddsApiOddsAdapter(OddsAdapter):
         latest_update: str | None = None
         try:
             for event in events:
-                if event["id"] not in wanted:
+                if wanted and event["id"] not in wanted:
                     continue
+                commence_time = _parse_timestamp(event["commence_time"])
                 for bookmaker in event.get("bookmakers", []):
                     for market in bookmaker.get("markets", []):
                         lines.append(
                             OddsLine(
                                 game_external_id=event["id"],
+                                home_team=event["home_team"],
+                                away_team=event["away_team"],
+                                commence_time=commence_time,
                                 sportsbook=bookmaker["key"],
                                 market_type=_BULK_MARKET_TYPE.get(market["key"], "prop"),
                                 line_data={"outcomes": market["outcomes"]},
@@ -189,7 +204,7 @@ class TheOddsApiOddsAdapter(OddsAdapter):
                         market_update = market.get("last_update")
                         if market_update and (latest_update is None or market_update > latest_update):
                             latest_update = market_update
-        except (KeyError, TypeError) as exc:
+        except (KeyError, TypeError, ValueError) as exc:
             raise ProviderDataError(f"malformed odds payload: {exc}", provider=self.provider_name) from exc
 
         return AdapterResponse(
@@ -232,6 +247,9 @@ class TheOddsApiPlayerPropsAdapter(PlayerPropsAdapter):
 
             grouped: dict[tuple[str, str, str, float | None], PlayerProp] = {}
             try:
+                event_home_team = event["home_team"]
+                event_away_team = event["away_team"]
+                event_commence_time = _parse_timestamp(event["commence_time"])
                 for bookmaker in event.get("bookmakers", []):
                     for market in bookmaker.get("markets", []):
                         market_update = market.get("last_update")
@@ -244,6 +262,9 @@ class TheOddsApiPlayerPropsAdapter(PlayerPropsAdapter):
                             if prop is None:
                                 prop = PlayerProp(
                                     game_external_id=event["id"],
+                                    home_team=event_home_team,
+                                    away_team=event_away_team,
+                                    commence_time=event_commence_time,
                                     sportsbook=bookmaker["key"],
                                     player_external_id=_slugify(player_name),
                                     player_name=player_name,
@@ -256,7 +277,7 @@ class TheOddsApiPlayerPropsAdapter(PlayerPropsAdapter):
                                 prop.over_odds = outcome["price"]
                             elif side == "Under":
                                 prop.under_odds = outcome["price"]
-            except (KeyError, TypeError) as exc:
+            except (KeyError, TypeError, ValueError) as exc:
                 raise ProviderDataError(
                     f"malformed player-prop payload for game {game_id}: {exc}", provider=self.provider_name
                 ) from exc

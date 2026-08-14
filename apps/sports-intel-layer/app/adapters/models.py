@@ -87,6 +87,26 @@ class AdapterResponse(BaseModel, Generic[T]):
 
 class OddsLine(BaseModel):
     game_external_id: str
+    #: Provider's own home/away team representation (e.g. The Odds API's
+    #: full team name), Phase 3E-4B. Required, not derived-later: the
+    #: deterministic game-linking module (app.persistence.odds_game_linking)
+    #: needs both identities -- plus this event's own scheduled kickoff --
+    #: to resolve a provider event to games.id the first time it's seen,
+    #: before any game_provider_ids mapping exists for it. Provider-neutral
+    #: by construction: these are plain team-name/abbreviation strings, the
+    #: same shape ScheduleEntry.home_team/away_team already carry -- no
+    #: provider-specific field name or structure leaks past this.
+    home_team: str
+    away_team: str
+    #: The event's own scheduled kickoff, as the provider reports it --
+    #: distinct from `AdapterResponse.provider_reported_at` (which is when
+    #: a *line* last moved, not when the game starts). Required for the
+    #: same reason as home_team/away_team: the deterministic game-linking
+    #: module's last step is scheduled-start validation against the
+    #: internal `games` row it's matched by team identity (Phase 3E-4B/C)
+    #: -- a real requirement surfaced by direct inspection while building
+    #: 3E-4C, beyond the two fields Mac named explicitly.
+    commence_time: datetime
     sportsbook: str
     market_type: str  # 'moneyline' | 'spread' | 'total' | 'prop' -- matches odds_snapshots.market_type
     line_data: dict
@@ -94,6 +114,11 @@ class OddsLine(BaseModel):
 
 class PlayerProp(BaseModel):
     game_external_id: str
+    #: See OddsLine.home_team/away_team/commence_time -- same game-identity
+    #: requirement, same reasoning (Phase 3E-4B).
+    home_team: str
+    away_team: str
+    commence_time: datetime
     sportsbook: str
     player_external_id: str
     player_name: str

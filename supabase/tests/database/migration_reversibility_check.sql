@@ -26,6 +26,29 @@
 -- 2026-08-13 addition (3E-3): 20260813210000_team_provider_ids and its backfill companion
 -- are purely additive (one new table, one column comment, backfill rows) -- same convention.
 -- Both DOWN blocks are prepended since they're the most recently applied.
+-- 2026-08-14 addition (3E-4A): 20260814050000_expand_nfl_teams_and_provider_ids is purely
+-- additive (26 new teams rows, 9 new team_provider_ids rows) -- no new tables or columns, same
+-- convention. Its DOWN block is prepended since it's the most recently applied. Deleting by
+-- team name (rather than id) matches how the UP migration itself identified rows, and is safe
+-- here since no other migration or seed data reuses these 26 team names.
+
+-- ============================================================================
+-- DOWN: 20260814050000_expand_nfl_teams_and_provider_ids
+-- ============================================================================
+delete from team_provider_ids where provider_name = 'sportsdataio' and provider_team_id in
+  ('ARI', 'ATL', 'CAR', 'CHI', 'LAR', 'NE', 'NO', 'SEA', 'TB');
+delete from teams where name in (
+  'Arizona Cardinals', 'Atlanta Falcons', 'Carolina Panthers', 'Chicago Bears',
+  'Cincinnati Bengals', 'Cleveland Browns', 'Denver Broncos', 'Detroit Lions',
+  'Green Bay Packers', 'Houston Texans', 'Indianapolis Colts', 'Jacksonville Jaguars',
+  'Las Vegas Raiders', 'Los Angeles Chargers', 'Los Angeles Rams', 'Miami Dolphins',
+  'Minnesota Vikings', 'New England Patriots', 'New Orleans Saints', 'New York Giants',
+  'New York Jets', 'Pittsburgh Steelers', 'Seattle Seahawks', 'Tampa Bay Buccaneers',
+  'Tennessee Titans', 'Washington Commanders'
+);
+-- expected table count after this block: 40 (no table count change, data only -- will FAIL if
+-- any of these 26 teams has since acquired a games/players/team_provider_ids foreign-key
+-- reference from other providers' data, same caveat as any other data-only DOWN block here)
 
 -- ============================================================================
 -- DOWN: 20260813210500_team_provider_ids_backfill
