@@ -23,6 +23,21 @@
 -- true immediately after this migration (no code writes null there yet), not guaranteed once
 -- Schedule ingestion has actually run, so this DOWN block is documented but not silently
 -- assumed always-safe to run.
+-- 2026-08-13 addition (3E-3): 20260813210000_team_provider_ids and its backfill companion
+-- are purely additive (one new table, one column comment, backfill rows) -- same convention.
+-- Both DOWN blocks are prepended since they're the most recently applied.
+
+-- ============================================================================
+-- DOWN: 20260813210500_team_provider_ids_backfill
+-- ============================================================================
+delete from team_provider_ids where provider_name in ('the_odds_api', 'sportsdataio');
+-- expected table count after this block: 40 (no table count change, data only)
+
+-- ============================================================================
+-- DOWN: 20260813210000_team_provider_ids
+-- ============================================================================
+drop table if exists team_provider_ids;
+-- expected table count after this block: 39 (back to the pre-3E-3 table count)
 
 -- ============================================================================
 -- DOWN: 20260813180500_games_external_provider_id_nullable

@@ -466,3 +466,48 @@ A one-line cross-reference was added to §7's `postgame_reviews` description (`o
 - MINOR, Volume-3-only bump.
 
 **Full technical detail:** This entry, plus the reasoning inline in Volume 3's v4.5 note and §4.1's new `rest`/`travel` semantics paragraphs. Also logged operationally in `PROGRESS.md`'s 2026-08-13 notes (Phase 3E-2).
+
+---
+
+## v4.4 — 2026-08-13 — MINOR
+
+**Volume affected:** Volume 2 (System Architecture) only.
+
+**Reason:** Phase 3E-2's Master Refresh implementation used a rolling 7-day slate window (`[today, today + 7 days)`) rather than a literal single calendar day, flagged at the time as an interpretive choice within already-approved scope rather than a Blueprint-specified behavior — a literal single-day filter would mean the worker's `daily_game_intelligence` assembly step does almost nothing most days, given NFL games cluster Thursday/Sunday/Monday. Mac reviewed and approved this behavior explicitly when accepting 3E-2, with an instruction to document it as the canonical, non-reinterpretable horizon before 3E-3 begins.
+
+**Decision:** §8 gains an explicit "Master Refresh operating horizon" statement — `[today, today + 7 days)` — directly beneath the cadence table. Scoped narrowly: this horizon governs only Master Refresh's own game-identity/`daily_game_intelligence`-assembly work. It explicitly does not change any specialized worker's own cadence — Odds/Player Props are not polled continuously for 7 days, nor are Injuries/Weather/News; each remains governed exactly by its own existing row in the cadence table.
+
+**Alternatives considered:**
+- Leaving the horizon as an implementation detail documented only in `app/master_refresh/slate.py`'s code comments — rejected; Mac's explicit instruction was to document it in the Blueprint precisely so it can't be silently reinterpreted in a future session working from documentation rather than code.
+- Redefining "today's slate" narrowly to a literal calendar day and rebuilding 3E-2's filtering to match — rejected; Mac's explicit review approved the rolling-window behavior as built, not a request to change it.
+
+**Expected impact:**
+- `app/master_refresh/slate.py`'s docstring updated to reference this note directly, replacing its prior "flagged for correction" framing now that the behavior is approved rather than provisional.
+- No schema or worker-cadence change — MINOR, Volume-2-only, documentation of an already-approved and already-implemented behavior.
+
+**Full technical detail:** This entry, plus the reasoning inline in Volume 2's v4.4 note and §8's new operating-horizon paragraph. Also logged operationally in `PROGRESS.md`'s 2026-08-13 notes (Phase 3E-3).
+
+---
+
+## v4.6 — 2026-08-13 — MINOR
+
+**Volume affected:** Volume 3 (Database Architecture) only.
+
+**Reason:** Auditing what the Odds/Player Props Worker (3E-4) will need, per Mac's explicit instruction before that worker is built, surfaced that `teams` has the same single-column identity limitation `games` had before `game_provider_ids` (Phase 3E-1, Decision 2): SportsDataIO identifies teams by abbreviation (`"KC"`), The Odds API by full name (`"Kansas City Chiefs"`) — confirmed directly from this project's own already-captured fixtures. Deterministic cross-provider game linking (matching an incoming Odds API event to an already-existing SportsDataIO-created game by team identity) is impossible without a general team-identity mechanism, and Mac's explicit instruction was not to solve this with ad hoc string normalization scattered through worker code.
+
+**Decision:**
+- **`team_provider_ids` (new table):** mirrors `game_provider_ids`'s exact shape and constraint design deliberately — `unique(provider_name, provider_team_id)` (a provider's team id resolves to exactly one team) and `unique(team_id, provider_name)` (a team has at most one id per provider), both proven live against dev via `begin`/`rollback` transactions. `provider_name` constrained to `the_odds_api`/`sportsdataio`, matching `game_provider_ids`'s own convention.
+- **`teams.external_provider_id` deprecated via column comment, but *not* made nullable** — unlike `games.external_provider_id` in 3E-1, no follow-up constraint-relaxation migration was needed: the column was already nullable in its original Phase 1 definition, and a direct grep confirmed no code anywhere reads it. This is a materially easier situation than `games` faced, not an oversight.
+- **Backfill:** the six teams already seeded in dev were linked to their genuinely correct provider representations — public, standard NFL naming facts (confirmed against this project's own SportsDataIO/The Odds API fixtures), not preserved from `teams.external_provider_id`'s synthetic seed values (`"seed-kc"` etc.), which were never real provider ids for any vendor and would have been a dishonest backfill source. The mapping itself lives in one explicit, documented, tested table (`app/persistence/team_backfill.py`'s `TEAM_BACKFILL`), not scattered across worker code, per Mac's explicit instruction.
+- **Odds/Player Props pre-implementation audit performed (code-only, fixture-only, no live calls):** confirmed The Odds API's event payload carries `home_team`/`away_team` as full names (though no current adapter model exposes these fields yet — a real gap for 3E-4 to close, not solved here). Confirmed `games.home_team`/`.away_team` hold SportsDataIO's abbreviation text (plain columns, not FKs to `teams.id`), so resolving a game by team requires a two-hop comparison through `team_provider_ids` (forward via `the_odds_api`, reverse via `sportsdataio`) rather than direct FK equality. Proved via a real fixture-driven test (`tests/test_odds_game_linking_audit.py`) that this two-hop comparison is fully deterministic with zero fuzzy matching in the normal case, and that an unrecognized team name correctly resolves to "unresolved," never a guess.
+
+**Alternatives considered:**
+- Deferring `team_provider_ids` until 3E-4 actually starts, since Master Refresh itself never needs cross-provider team matching (it only consumes SportsDataIO's own authoritative Schedule/Roster data) — considered, and explicitly the default per Mac's own instruction ("do not add `team_provider_ids` during 3E-2 unless Master Refresh itself genuinely cannot operate without it"), which is exactly why it stayed out of 3E-2 and became its own foundational checkpoint (3E-3) instead of either being skipped or built prematurely inside a worker that doesn't need it.
+- Adding `home_team_id`/`away_team_id` foreign keys to `games` now, replacing the free-text `home_team`/`away_team` columns and removing the need for the two-hop comparison — rejected for this pass; that's a real, larger schema change (touching every existing read/write of those columns across `schedule.py`, `master_refresh/run.py`, and the RLS/reversibility test suites) that Mac did not authorize in this checkpoint, flagged instead as a candidate future simplification once the two-hop pattern proves cumbersome in practice.
+
+**Expected impact:**
+- 3E-4 (the Odds/Player Props Worker, not yet started) has a proven, tested, deterministic linking mechanism to build against instead of inventing one under implementation pressure, plus a documented gap list (the missing `home_team`/`away_team` fields on `OddsLine`/`PlayerProp`) to close as part of that work.
+- No schema change beyond the additive `team_provider_ids` table and one column comment — MINOR, Volume-3-only bump.
+- No live provider calls, no hosted Redis, no Railway cron configured — proven entirely with fixtures plus direct read/write verification against live `dev` Supabase.
+
+**Full technical detail:** This entry, plus the reasoning inline in Volume 3's v4.6 note and §4.0's new `team_provider_ids` section. Also logged operationally in `PROGRESS.md`'s 2026-08-13 notes (Phase 3E-3).
