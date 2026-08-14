@@ -45,6 +45,40 @@ insert into teams (id, league_id, name, external_provider_id) values
   ('a3000000-0000-0000-0000-000000000005', 'a2000000-0000-0000-0000-000000000002', 'Dallas Cowboys', 'seed-dal'),
   ('a3000000-0000-0000-0000-000000000006', 'a2000000-0000-0000-0000-000000000002', 'Baltimore Ravens', 'seed-bal');
 
+-- Phase 3E-4A: remaining 26 current NFL teams, mirroring the
+-- 20260814050000_expand_nfl_teams_and_provider_ids.sql migration's expansion
+-- of `teams` to the full 32-team league so a fresh `supabase db reset` lands
+-- in the same state as dev's migrated data. `external_provider_id` is left
+-- null here (as the migration leaves it) -- these teams are identified going
+-- forward via `team_provider_ids`, not the legacy column.
+insert into teams (id, league_id, name) values
+  ('a3000000-0000-0000-0000-000000000007', 'a2000000-0000-0000-0000-000000000002', 'Arizona Cardinals'),
+  ('a3000000-0000-0000-0000-000000000008', 'a2000000-0000-0000-0000-000000000002', 'Atlanta Falcons'),
+  ('a3000000-0000-0000-0000-000000000009', 'a2000000-0000-0000-0000-000000000002', 'Carolina Panthers'),
+  ('a3000000-0000-0000-0000-00000000000a', 'a2000000-0000-0000-0000-000000000002', 'Chicago Bears'),
+  ('a3000000-0000-0000-0000-00000000000b', 'a2000000-0000-0000-0000-000000000002', 'Cincinnati Bengals'),
+  ('a3000000-0000-0000-0000-00000000000c', 'a2000000-0000-0000-0000-000000000002', 'Cleveland Browns'),
+  ('a3000000-0000-0000-0000-00000000000d', 'a2000000-0000-0000-0000-000000000002', 'Denver Broncos'),
+  ('a3000000-0000-0000-0000-00000000000e', 'a2000000-0000-0000-0000-000000000002', 'Detroit Lions'),
+  ('a3000000-0000-0000-0000-00000000000f', 'a2000000-0000-0000-0000-000000000002', 'Green Bay Packers'),
+  ('a3000000-0000-0000-0000-000000000010', 'a2000000-0000-0000-0000-000000000002', 'Houston Texans'),
+  ('a3000000-0000-0000-0000-000000000011', 'a2000000-0000-0000-0000-000000000002', 'Indianapolis Colts'),
+  ('a3000000-0000-0000-0000-000000000012', 'a2000000-0000-0000-0000-000000000002', 'Jacksonville Jaguars'),
+  ('a3000000-0000-0000-0000-000000000013', 'a2000000-0000-0000-0000-000000000002', 'Las Vegas Raiders'),
+  ('a3000000-0000-0000-0000-000000000014', 'a2000000-0000-0000-0000-000000000002', 'Los Angeles Chargers'),
+  ('a3000000-0000-0000-0000-000000000015', 'a2000000-0000-0000-0000-000000000002', 'Los Angeles Rams'),
+  ('a3000000-0000-0000-0000-000000000016', 'a2000000-0000-0000-0000-000000000002', 'Miami Dolphins'),
+  ('a3000000-0000-0000-0000-000000000017', 'a2000000-0000-0000-0000-000000000002', 'Minnesota Vikings'),
+  ('a3000000-0000-0000-0000-000000000018', 'a2000000-0000-0000-0000-000000000002', 'New England Patriots'),
+  ('a3000000-0000-0000-0000-000000000019', 'a2000000-0000-0000-0000-000000000002', 'New Orleans Saints'),
+  ('a3000000-0000-0000-0000-00000000001a', 'a2000000-0000-0000-0000-000000000002', 'New York Giants'),
+  ('a3000000-0000-0000-0000-00000000001b', 'a2000000-0000-0000-0000-000000000002', 'New York Jets'),
+  ('a3000000-0000-0000-0000-00000000001c', 'a2000000-0000-0000-0000-000000000002', 'Pittsburgh Steelers'),
+  ('a3000000-0000-0000-0000-00000000001d', 'a2000000-0000-0000-0000-000000000002', 'Seattle Seahawks'),
+  ('a3000000-0000-0000-0000-00000000001e', 'a2000000-0000-0000-0000-000000000002', 'Tampa Bay Buccaneers'),
+  ('a3000000-0000-0000-0000-00000000001f', 'a2000000-0000-0000-0000-000000000002', 'Tennessee Titans'),
+  ('a3000000-0000-0000-0000-000000000020', 'a2000000-0000-0000-0000-000000000002', 'Washington Commanders');
+
 -- team_provider_ids: real (not synthetic) provider representations for each seed
 -- team, mirroring the 3E-3 migration's backfill -- so a fresh `supabase db reset`
 -- lands in the same state as dev's migrated data. See app/persistence/team_backfill.py
@@ -62,6 +96,22 @@ insert into team_provider_ids (team_id, provider_name, provider_team_id) values
   ('a3000000-0000-0000-0000-000000000005', 'sportsdataio', 'DAL'),
   ('a3000000-0000-0000-0000-000000000006', 'the_odds_api', 'Baltimore Ravens'),
   ('a3000000-0000-0000-0000-000000000006', 'sportsdataio', 'BAL');
+
+-- Phase 3E-4A: 9 additional fixture-confirmed sportsdataio mappings,
+-- mirroring the 20260814050000 migration's backfill exactly (see
+-- app/persistence/team_backfill.py for full provenance). The remaining 17
+-- teams above have no fixture-confirmed provider mapping and are
+-- deliberately left unmapped -- see that module's docstring.
+insert into team_provider_ids (team_id, provider_name, provider_team_id) values
+  ('a3000000-0000-0000-0000-000000000007', 'sportsdataio', 'ARI'),
+  ('a3000000-0000-0000-0000-000000000008', 'sportsdataio', 'ATL'),
+  ('a3000000-0000-0000-0000-000000000009', 'sportsdataio', 'CAR'),
+  ('a3000000-0000-0000-0000-00000000000a', 'sportsdataio', 'CHI'),
+  ('a3000000-0000-0000-0000-000000000015', 'sportsdataio', 'LAR'),
+  ('a3000000-0000-0000-0000-000000000018', 'sportsdataio', 'NE'),
+  ('a3000000-0000-0000-0000-000000000019', 'sportsdataio', 'NO'),
+  ('a3000000-0000-0000-0000-00000000001d', 'sportsdataio', 'SEA'),
+  ('a3000000-0000-0000-0000-00000000001e', 'sportsdataio', 'TB');
 
 insert into players (id, team_id, name, position, external_provider_id) values
   ('a4000000-0000-0000-0000-000000000001', 'a3000000-0000-0000-0000-000000000001', 'Seed QB Chiefs', 'QB', 'seed-p1'),

@@ -129,7 +129,26 @@ async def test_backfill_known_teams_links_every_matched_team():
     assert link_route.call_count == 2
 
 
-def test_team_backfill_table_covers_every_seeded_team_with_both_providers():
-    assert len(TEAM_BACKFILL) == 6
+def test_team_backfill_table_entries_have_at_least_one_known_provider():
+    # Phase 3E-4A: TEAM_BACKFILL now covers every fixture-confirmed team,
+    # not just teams with both providers. Every entry must still map to a
+    # real, recognized provider name, and every entry must map to at least
+    # one provider (no empty mappings).
+    assert len(TEAM_BACKFILL) == 15
     for team, providers in TEAM_BACKFILL.items():
-        assert set(providers) == {"sportsdataio", "the_odds_api"}
+        assert providers, f"{team} has no provider mapping"
+        assert set(providers) <= {"sportsdataio", "the_odds_api"}
+
+
+def test_team_backfill_table_provider_coverage_matches_fixture_audit():
+    # Exactly 4 teams (BAL, BUF, KC, SF) are confirmed by both providers'
+    # fixtures; 13 teams have a confirmed sportsdataio mapping; 6 teams have
+    # a confirmed the_odds_api mapping (see module docstring for the audit).
+    both = [team for team, providers in TEAM_BACKFILL.items() if set(providers) == {"sportsdataio", "the_odds_api"}]
+    sportsdataio_only = [team for team, providers in TEAM_BACKFILL.items() if set(providers) == {"sportsdataio"}]
+    odds_api_only = [team for team, providers in TEAM_BACKFILL.items() if set(providers) == {"the_odds_api"}]
+
+    assert set(both) == {"Kansas City Chiefs", "Buffalo Bills", "San Francisco 49ers", "Baltimore Ravens"}
+    assert set(odds_api_only) == {"Dallas Cowboys", "Philadelphia Eagles"}
+    assert len(sportsdataio_only) == 9
+    assert len(both) + len(sportsdataio_only) + len(odds_api_only) == len(TEAM_BACKFILL)

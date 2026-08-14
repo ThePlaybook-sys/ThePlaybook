@@ -96,6 +96,42 @@ async def test_multi_game_multi_sportsbook_normalization():
 
 @pytest.mark.asyncio
 @respx.mock
+async def test_home_away_team_and_commence_time_populated_from_event():
+    """Phase 3E-4B: OddsLine carries the event's own home_team/away_team/
+    commence_time -- the game-identity information the deterministic
+    game-linking module (3E-4C) needs, previously discarded during parsing."""
+    respx.get(ODDS_URL).mock(
+        return_value=httpx.Response(200, json=load("bulk_odds_multi_game.json"))
+    )
+    adapter = _odds_adapter()
+    response = await adapter.fetch_odds([GAME_CHIEFS_RAVENS])
+
+    line = response.value[0]
+    assert line.home_team == "Kansas City Chiefs"
+    assert line.away_team == "Baltimore Ravens"
+    assert line.commence_time.isoformat() == "2026-09-14T17:00:00+00:00"
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_empty_game_external_ids_returns_every_event_unfiltered():
+    """Phase 3E-4B/C discovery mode: a caller that doesn't yet know any
+    The Odds API event ids (e.g. before the first deterministic-linking
+    pass for newly Master-Refresh-created games) gets the full slate back,
+    since the bulk endpoint always returns everything regardless of filter
+    and costs the same either way."""
+    respx.get(ODDS_URL).mock(
+        return_value=httpx.Response(200, json=load("bulk_odds_multi_game.json"))
+    )
+    adapter = _odds_adapter()
+    response = await adapter.fetch_odds([])
+
+    games_seen = {line.game_external_id for line in response.value}
+    assert games_seen == {GAME_CHIEFS_RAVENS, GAME_COWBOYS_EAGLES, GAME_49ERS_BILLS}
+
+
+@pytest.mark.asyncio
+@respx.mock
 async def test_only_requested_games_are_returned():
     respx.get(ODDS_URL).mock(
         return_value=httpx.Response(200, json=load("bulk_odds_multi_game.json"))
@@ -283,6 +319,12 @@ async def test_player_props_multi_sportsbook_grouping():
         p for p in response.value if p.player_name == "Travis Kelce"
     )
     assert fd_kelce_receptions.over_odds == -110
+
+    # Phase 3E-4B: every prop from this event carries the same game-identity
+    # fields the deterministic game-linking module needs.
+    assert dk_mahomes_tds.home_team == "Kansas City Chiefs"
+    assert dk_mahomes_tds.away_team == "Baltimore Ravens"
+    assert dk_mahomes_tds.commence_time.isoformat() == "2026-09-14T17:00:00+00:00"
     assert fd_kelce_receptions.under_odds == -110
 
 

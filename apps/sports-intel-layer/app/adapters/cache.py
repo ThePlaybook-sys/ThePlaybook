@@ -145,24 +145,37 @@ class RedisCacheBackend(CacheBackend):
             _logger.warning("RedisCacheBackend.set failed, cache write skipped: %s", exc)
 
 
-#: Starting-point category -> cache TTL mapping (Volume 2 §8), for the
-#: eventual production wiring (3E) to construct each category's
-#: `CachingAdapter` with. ASSUMED, not definitively engineered: Volume 2
-#: §8's own cadence table describes several categories (Odds, Player
-#: Props, Injury) as adaptive/window-aware -- a real proximity-to-kickoff
-#: -aware TTL, not a single flat number. A flat number per category here
-#: is a reasonable, documented simplification bounding how stale a cached
-#: value can get, not an implementation of the actual adaptive cadence
-#: logic (that's a worker-scheduling concern, 3E's job, not this cache
-#: backend's). Rosters/Schedules/TeamStats/PlayerStats have no dedicated
-#: cadence row in Volume 2 §8's table at all -- they're covered by the
-#: daily Master Refresh (or, for stats, the event-triggered Postgame
-#: Ingestion Worker) -- so their TTL here is bounded by a day, not a
-#: shorter polling interval that doesn't exist for them.
+#: Starting-point category -> cache TTL mapping (Volume 2 §8), for
+#: categories that don't (yet) have a real dynamic TTL wired in.
+#:
+#: **Superseded for odds/player_props as of Phase 3E-4F (Decision 4):**
+#: `app.workers.odds_worker`/`app.workers.player_props_worker` no longer
+#: use these two flat numbers -- they construct each `CachingAdapter` with
+#: a per-call TTL from `app.workers.windows.ttl_seconds`, derived from the
+#: exact same kickoff-proximity classification that drives their polling
+#: cadence (one authoritative policy, not two independent ones). The
+#: `"odds"`/`"player_props"` entries below are kept only for any other
+#: caller still constructing a flat-TTL `CachingAdapter` directly (there
+#: is none in-tree today) -- they are dead weight for the two worker
+#: modules themselves, not a second, competing TTL source.
+#:
+#: `injuries` remains an ASSUMED flat simplification of the window-aware
+#: cadence -- Injury Worker's own dynamic TTL is explicitly Phase 3E-5
+#: scope, not this phase's (per Mac's 3E-4F instruction: "Injury dynamic
+#: TTL remains for 3E-5 unless a shared generic timing utility naturally
+#: belongs in 3E-4" -- `app.workers.windows` is written generically enough
+#: to be reusable there, but wiring Injury Worker itself to it is
+#: deliberately left to 3E-5, not done here).
+#:
+#: Rosters/Schedules/TeamStats/PlayerStats have no dedicated cadence row
+#: in Volume 2 §8's table at all -- they're covered by the daily Master
+#: Refresh (or, for stats, the event-triggered Postgame Ingestion Worker)
+#: -- so their TTL here is bounded by a day, not a shorter polling
+#: interval that doesn't exist for them.
 CATEGORY_TTL_SECONDS: dict[str, int] = {
-    "odds": 60,  # ASSUMED simplification of the adaptive/game-aware cadence
-    "player_props": 60,  # ASSUMED, same reasoning as odds
-    "injuries": 300,  # ASSUMED simplification of the window-aware cadence
+    "odds": 60,  # superseded for the real worker -- see docstring above
+    "player_props": 60,  # superseded for the real worker -- see docstring above
+    "injuries": 300,  # ASSUMED simplification of the window-aware cadence -- Injury dynamic TTL is 3E-5
     "weather": 900,  # CONFIRMED FROM VOLUME 2 §8 -- flat 15-minute worker cadence
     "news": 900,  # CONFIRMED FROM VOLUME 2 §8 -- flat 15-minute worker cadence
     "rosters": 86400,  # ASSUMED -- bounded by daily Master Refresh, no dedicated cadence row

@@ -6,7 +6,7 @@ implementing the interface" until a real one does.
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 from app.adapters.base import (
     InjuryAdapter,
@@ -49,6 +49,9 @@ class FakeOddsAdapterV1(OddsAdapter):
         lines = [
             OddsLine(
                 game_external_id=game_id,
+                home_team="Fake Home",
+                away_team="Fake Away",
+                commence_time=datetime(2026, 9, 1, 17, 0, tzinfo=timezone.utc),
                 sportsbook="fakebook",
                 market_type="moneyline",
                 line_data={"home": -110, "away": -110},
@@ -74,6 +77,9 @@ class FakeOddsAdapterV2(OddsAdapter):
         lines = [
             OddsLine(
                 game_external_id=game_id,
+                home_team="Fake Home",
+                away_team="Fake Away",
+                commence_time=datetime(2026, 9, 1, 17, 0, tzinfo=timezone.utc),
                 sportsbook="anotherbook",
                 market_type="moneyline",
                 line_data={"home": -105, "away": -115},

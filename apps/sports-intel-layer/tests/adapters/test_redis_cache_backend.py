@@ -16,6 +16,7 @@ malformed-value passthrough).
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timezone
 
 import fakeredis.aioredis
 import httpx
@@ -78,7 +79,9 @@ async def test_serialization_round_trip_preserves_json_content():
     not just a plain short string."""
     backend = RedisCacheBackend(_fake_redis())
     response = AdapterResponse(value=[OddsLine(
-        game_external_id="g1", sportsbook="fakebook", market_type="moneyline",
+        game_external_id="g1", home_team="Fake Home", away_team="Fake Away",
+        commence_time=datetime(2026, 9, 1, 17, 0, tzinfo=timezone.utc),
+        sportsbook="fakebook", market_type="moneyline",
         line_data={"home": -110, "away": -110, "nested": {"a": [1, 2, 3]}},
     )], source="the_odds_api")
     payload = response.model_dump_json()
