@@ -1,19 +1,14 @@
-"""Slate-window filtering (Phase 3E-2).
+"""Slate-window filtering (Phase 3E-2/3E-3).
 
-**Interpretive choice, flagged explicitly rather than silently decided:**
-Mac's approved scope calls for "today's-slate filtering," but NFL games
-cluster on Thursday/Sunday/Monday -- a literal single-calendar-day filter
-would mean Master Refresh's `daily_game_intelligence` assembly step does
-nothing at all on most days of the week, which doesn't match how the
-Blueprint describes the table being used (agents reading current-week
-intelligence, not only literally-today's). This module instead filters to
-a rolling window: every game with `scheduled_start` in
-[today, today + WINDOW_DAYS) UTC, refreshed on every run. This means a
-Thursday game is refreshed by Tuesday's run onward, not only on the
-Thursday itself. WINDOW_DAYS=7 covers a full NFL week between runs.
-
-This is a judgment call within already-approved scope, reported back for
-correction if a literal single-day filter was actually intended.
+**MASTER REFRESH OPERATING HORIZON, approved by Mac 2026-08-13 (Volume 2
+§8 v4.4):** `[today, today + 7 days)` UTC. Every game with `scheduled_start`
+in that window is refreshed on every run -- a Thursday game is already
+prepared by the preceding Tuesday's run, not only on the Thursday itself.
+This is the canonical statement of the horizon; do not silently
+reinterpret it elsewhere. It governs Master Refresh's own game-identity/
+`daily_game_intelligence`-assembly work only -- it does not change any
+specialized worker's own cadence (Odds/Player Props/Injuries/Weather/News
+are not polled continuously for 7 days; see Volume 2 §8's cadence table).
 """
 from __future__ import annotations
 

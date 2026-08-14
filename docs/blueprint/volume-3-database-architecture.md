@@ -1,7 +1,7 @@
 # The Playbook — Volume 3
 ## Database Architecture: Tables, Relationships, Indexes, Triggers, Migrations, RLS
 
-**Version:** v4.5
+**Version:** v4.6
 **Last updated:** 2026-08-13
 **Depends on:** Volume 1 (v3.0 — tiers, personas, principles) and Volume 2 (v4.2 — service shape, routing table reference, RLS placeholder, scoped event system, Redis cache layer, Postgame Ingestion Worker)
 **v4.0 note:** Normalized multi-sport core added (§4.0) — `sports`/`leagues`/`seasons`/`teams`/`players`/`player_stats`/`team_stats` plus the `player_stats_nfl` extension pattern. `games` gains `sport_id`/`league_id`/`season_id` while the legacy `sport` text field is kept, deprecated, for Phase 0/1 backward compatibility. Data quality metadata convention added to `daily_game_intelligence` (§4.1). See `CHANGELOG.md` v4.0 entry for full reasoning.
@@ -10,6 +10,7 @@
 **v4.3 note (MINOR):** §6 gains the Stat Correction ↔ Bet Settlement Policy — Phase 5 grading/outcome policy, documented now so Phase 3's postgame architecture doesn't foreclose it later. No schema changed; one real gap (`verified_bets` has no settlement-history/versioning pattern) identified and explicitly deferred to Phase 5. See `CHANGELOG.md` v4.3 entry for full reasoning.
 **v4.4 note (MINOR):** §4.0 gains `game_provider_ids` — the authoritative multi-provider game identity mechanism (Phase 3E-1, Decision 2), replacing `games.external_provider_id`'s hidden single-vendor assumption. `games` gains nullable `season_type`/`week` (Decision 1) and `external_provider_id` becomes nullable/deprecated rather than dropped. See `CHANGELOG.md` v4.4 entry for full reasoning.
 **v4.5 note (MINOR):** §4.1 gains documented semantics for `daily_game_intelligence.rest`/`.travel` (Phase 3E-2, Decisions 2/3) — `rest` is buildable and implemented now; `travel` is defined but deliberately left null/unavailable pending a venue-coordinate schema decision, tracked as a follow-up rather than solved by fabricating data. No schema changed. See `CHANGELOG.md` v4.5 entry for full reasoning.
+**v4.6 note (MINOR):** §4.0 gains `team_provider_ids` — the authoritative multi-provider team identity mechanism (Phase 3E-3), mirroring `game_provider_ids`. Backfilled for the six seeded dev teams via an explicit, documented mapping table; `teams.external_provider_id` deprecated (no NOT NULL relaxation needed, unlike `games`, since nothing read it and it was already nullable). See `CHANGELOG.md` v4.6 entry for full reasoning.
 **Read next:** Volume 4 (AI Intelligence) — the agent, consensus, and orchestration tables defined here are the tables Volume 4's logic reads and writes
 
 ---
@@ -247,6 +248,28 @@ create table game_provider_ids (
 **Constraint design:** the two unique constraints are the actual proof, at the database level and not just in application code, of the two properties Mac's architecture checkpoint required: a SportsDataIO id and a The Odds API id can both resolve to the same `games.id` without creating a duplicate game (they're independent rows sharing one `game_id`), and a provider id cannot silently map to two different games (`unique(provider_name, provider_game_id)` rejects it). `provider_name` is constrained to the providers this codebase actually integrates with today; adding a new vendor is a small follow-up migration, matching the existing convention for `games.status`'s own check-in list. Both unique constraints create their own covering index, which is exactly the pair of lookup paths this table needs — no separate index required. RLS: public-read, service-role-only writes, same as every other sports data table in this section.
 
 **Do not add further provider-specific columns to `games`.** New vendor identity goes into `game_provider_ids`, not a new column.
+
+### `team_provider_ids` (new, v4.6 — Phase 3E-3, 2026-08-13)
+
+The team-identity equivalent of `game_provider_ids`, built for the same reason and mirroring its exact shape deliberately rather than re-deriving one. SportsDataIO identifies teams by abbreviation (`"KC"`, `"SEA"`); The Odds API identifies them by full name (`"Kansas City Chiefs"`, `"Seattle Seahawks"`) — confirmed directly from this project's own already-captured fixtures, surfaced while auditing what the Odds/Player Props Worker (3E-4) will need. `teams.external_provider_id` had the same single-column limitation `games.external_provider_id` had before 3E-1, but with one difference: no code anywhere in this codebase ever read `teams.external_provider_id` (confirmed before writing this migration), and the column was already nullable from its original Phase 1 definition — so unlike `games`, no follow-up NOT NULL relaxation was needed here.
+
+```sql
+create table team_provider_ids (
+  id uuid primary key default gen_random_uuid(),
+  team_id uuid not null references teams(id) on delete cascade,
+  provider_name text not null check (provider_name in ('the_odds_api', 'sportsdataio')),
+  provider_team_id text not null,
+  created_at timestamptz not null default now(),
+  unique (provider_name, provider_team_id),  -- a provider's team id resolves to exactly one team
+  unique (team_id, provider_name)            -- a team has at most one id per provider
+);
+```
+
+**Constraint design and RLS:** identical reasoning to `game_provider_ids` — both unique constraints proven live against dev via `begin`/`rollback` transactions (a SportsDataIO abbreviation and a The Odds API full name both resolve to the same `teams.id`; a provider team id rejected from mapping to a second team; a team rejected from getting a second id from the same provider). Public-read, service-role-only writes.
+
+**Backfill:** the six teams already seeded in dev were backfilled with genuinely correct provider representations (public, standard NFL naming — not fabricated, and not preserved from `teams.external_provider_id`'s synthetic seed values like `"seed-kc"`, which were never real provider ids for any actual vendor). The mapping is the single explicit, documented, tested table `app/persistence/team_backfill.py`'s `TEAM_BACKFILL` — not scattered string normalization across worker code. Extending it to all 32 NFL teams is a mechanical follow-up once Phase 3 onboards the full league, not needed yet.
+
+**Do not add further provider-specific columns to `teams`.** New vendor identity goes into `team_provider_ids`, not a new column.
 
 ### `odds_snapshots`
 ```sql

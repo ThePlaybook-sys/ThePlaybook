@@ -45,6 +45,24 @@ insert into teams (id, league_id, name, external_provider_id) values
   ('a3000000-0000-0000-0000-000000000005', 'a2000000-0000-0000-0000-000000000002', 'Dallas Cowboys', 'seed-dal'),
   ('a3000000-0000-0000-0000-000000000006', 'a2000000-0000-0000-0000-000000000002', 'Baltimore Ravens', 'seed-bal');
 
+-- team_provider_ids: real (not synthetic) provider representations for each seed
+-- team, mirroring the 3E-3 migration's backfill -- so a fresh `supabase db reset`
+-- lands in the same state as dev's migrated data. See app/persistence/team_backfill.py
+-- (the single source of truth for this mapping) for full provenance.
+insert into team_provider_ids (team_id, provider_name, provider_team_id) values
+  ('a3000000-0000-0000-0000-000000000001', 'the_odds_api', 'Kansas City Chiefs'),
+  ('a3000000-0000-0000-0000-000000000001', 'sportsdataio', 'KC'),
+  ('a3000000-0000-0000-0000-000000000002', 'the_odds_api', 'Buffalo Bills'),
+  ('a3000000-0000-0000-0000-000000000002', 'sportsdataio', 'BUF'),
+  ('a3000000-0000-0000-0000-000000000003', 'the_odds_api', 'San Francisco 49ers'),
+  ('a3000000-0000-0000-0000-000000000003', 'sportsdataio', 'SF'),
+  ('a3000000-0000-0000-0000-000000000004', 'the_odds_api', 'Philadelphia Eagles'),
+  ('a3000000-0000-0000-0000-000000000004', 'sportsdataio', 'PHI'),
+  ('a3000000-0000-0000-0000-000000000005', 'the_odds_api', 'Dallas Cowboys'),
+  ('a3000000-0000-0000-0000-000000000005', 'sportsdataio', 'DAL'),
+  ('a3000000-0000-0000-0000-000000000006', 'the_odds_api', 'Baltimore Ravens'),
+  ('a3000000-0000-0000-0000-000000000006', 'sportsdataio', 'BAL');
+
 insert into players (id, team_id, name, position, external_provider_id) values
   ('a4000000-0000-0000-0000-000000000001', 'a3000000-0000-0000-0000-000000000001', 'Seed QB Chiefs', 'QB', 'seed-p1'),
   ('a4000000-0000-0000-0000-000000000002', 'a3000000-0000-0000-0000-000000000001', 'Seed WR Chiefs', 'WR', 'seed-p2'),
