@@ -174,18 +174,30 @@ FROM PROVIDER DOCUMENTATION** — no live call was needed or spent to make
 this determination; documentation review is a separate, valid provenance
 tier from a live capture, and Mac's own review satisfies it here.
 
-**`_SCHEDULE_STATUS_MAP` (`app/adapters/providers/sportsdataio.py`) only
-maps 2 of these 9 values** (`Scheduled`, `Final`) — confirmed by direct
-inspection, not assumed. This is now a known, reported architectural gap,
-not silently left unmapped: `F/OT` (a completed overtime game) is not
-recognized as final at all, and any of the other 7 unmapped values
-appearing anywhere in a live Schedule response would raise
-`ProviderDataError`, which is **not row-isolated** — it aborts the entire
-`fetch_schedule` call (a full-season fetch, not just the requested week),
-cascading to fail the entire Master Refresh or Postgame Worker run for
-that cycle. See `PROGRESS.md`'s 2026-08-18 entry for the full finding and
-Mac's pending decision on the fix — **not implemented yet, by explicit
-instruction.**
+**FIXED (2026-08-18, same day, Mac's explicit approval).** `_SCHEDULE_STATUS_MAP`
+(`app/adapters/providers/sportsdataio.py`) now maps all 9 documented
+values to this project's existing 5-value internal vocabulary
+(`games.status`, confirmed sufficient by inspection, not widened):
+`Scheduled`→`scheduled`, `InProgress`→`live`, `Final`→`final`,
+`F/OT`→`final` (a completed overtime game — the same terminal state as
+Final, this is what makes Postgame Worker's game-final detection trigger
+for an overtime game at all), `Postponed`→`postponed`,
+`Canceled`→`canceled`, `Delayed`→`scheduled` (hasn't started, still
+expected to be played), `Suspended`→`live` (play began, temporarily
+halted), `Forfeit`→`final` (a completed result).
+
+**Row isolation, the deliberate resilience fix for the availability gap
+the map's earlier incompleteness caused.** `fetch_schedule` no longer
+lets one row's normalization failure (an unrecognized status, or any
+other per-row malformation) abort the entire batch — each row is
+normalized inside its own try/except, a failing row is logged
+(`_logger.warning`, includes the raw `GameKey`/`Status`) and skipped,
+every other valid row in the same response still becomes a
+`ScheduleEntry`. HTTP failure, invalid top-level JSON, or a non-array
+payload still fail the whole call, unchanged. Live-regression-tested:
+`Final`/`F/OT` both reach Postgame Ingestion identically; a mixed batch
+(valid + `InProgress` + a genuinely unrecognized status) no longer fails
+Master Refresh or Postgame Worker.
 
 ## NFL rescheduling behavior — CONFIRMED FROM PROVIDER DOCUMENTATION (2026-08-18)
 

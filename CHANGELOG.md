@@ -809,3 +809,28 @@ A one-line cross-reference was added to §7's `postgame_reviews` description (`o
 - MINOR, Volume-3-only bump: one purely additive trigger pair (no column change, no existing data touched) and one documented jsonb shape addition to an already-existing column.
 
 **Full technical detail:** This entry, plus the new trigger comment block and `stadium` shape paragraph in Volume 3 §4.0/§4.1, `app/master_refresh/game_refresh.py`'s own `_build_stadium` docstring, the migration's own inline comments, and the completion report delivered to Mac. Also logged operationally in `PROGRESS.md`'s 2026-08-18 notes (Phase 3F-3).
+
+---
+
+## v4.10 — 2026-08-18 — MINOR
+
+**Volume affected:** Volume 2 (System Architecture) only.
+
+**Reason:** Mac's review of new SportsDataIO provider documentation confirmed the full 9-value game status vocabulary and upgraded `"Final"` from ASSUMED to CONFIRMED (logged separately, no CHANGELOG bump needed for that alone). That review's own required inspection step (Postgame Worker + status normalization, before any change) surfaced a real, then-unfixed architectural gap: `_SCHEDULE_STATUS_MAP` recognized only 2 of the 9 documented statuses. `"F/OT"` (completed overtime) never reached `"final"` at all — Postgame Worker would never detect an overtime game as final. More severely, any of the other 7 unmapped values — most critically `"InProgress"`, which every live game passes through — raised `ProviderDataError` from `fetch_schedule` in a way that was not row-isolated, aborting the *entire* full-season Schedule fetch and cascading to fail the whole Master Refresh or Postgame Worker run. Reported and stopped on in a prior turn; Mac reviewed the finding and approved the fix this turn.
+
+**Decision:**
+- **`_SCHEDULE_STATUS_MAP` expanded to all 9 documented values**, each mapped to this project's existing 5-value internal vocabulary (`scheduled`/`live`/`final`/`postponed`/`canceled` — the `games.status` check constraint, confirmed sufficient by direct inspection, not widened): `Scheduled`→`scheduled`, `InProgress`→`live`, `Final`→`final`, `F/OT`→`final`, `Postponed`→`postponed`, `Canceled`→`canceled`, `Delayed`→`scheduled` (Mac's reasoning: hasn't started, still expected to be played — closest existing state), `Suspended`→`live` (play began, temporarily halted — closest existing state), `Forfeit`→`final` (a completed result).
+- **Row isolation in `SportsDataIOScheduleAdapter.fetch_schedule`**: a single row's normalization failure (unrecognized status/season_type/venue_type, or a structurally malformed row) is now logged (`_logger.warning`, includes the raw `GameKey`/`Status` for debugging) and skipped, rather than raising for the whole batch. Every other valid row in the same response still becomes a `ScheduleEntry`. HTTP failure, invalid top-level JSON, or a non-array payload still fail the whole call, unchanged — those happen before the per-row loop starts. This is a deliberate, tested resilience behavior, not silently swallowed data loss: skipped rows are always observable via logs and covered by tests proving the isolation.
+- **`app.master_refresh.run`'s own failure-isolation documentation corrected** to match: Schedule row-level malformation moved from the BLOCKING list to the NON-BLOCKING list, since the adapter itself now absorbs it before this worker ever sees it.
+
+**Alternatives considered:**
+- Mapping `Suspended`/`Delayed`/`Forfeit` to new, dedicated internal status values (widening the `games.status` check constraint) — rejected; direct inspection confirmed the existing 5-value vocabulary already has a semantically correct closest state for each (`live`/`scheduled`/`final` respectively), so widening the constraint would have been an unnecessary schema change for no functional gain.
+- Leaving `fetch_schedule` batch-fatal on any per-row failure and only fixing the map — rejected; the map alone doesn't fix the underlying availability risk (a single future unrecognized value, or any genuinely malformed row, would still take down the whole fetch), which was found to be the more severe half of the original report.
+
+**Expected impact:**
+- `app/adapters/providers/sportsdataio.py` (map + row isolation), `app/master_refresh/run.py` (docstring correction), and the tests in `tests/adapters/test_sportsdataio_adapters.py`, `tests/test_master_refresh.py`, and `tests/test_postgame_worker.py` are the real, tested implementation.
+- `"F/OT"` and `"Final"` are now regression-tested to both reach Postgame Ingestion identically. A mixed-status Schedule batch (valid games alongside `InProgress`/unrecognized rows) no longer fails Master Refresh or Postgame Worker — also regression-tested.
+- No live SportsDataIO/The Odds API/WeatherAPI/NewsAPI/GNews calls anywhere in this phase's build or tests (SportsDataIO budget unchanged at 11 of 12); no hosted Redis provisioned; no Railway scheduler configured.
+- MINOR, Volume-2-only bump: corrects worker-behavior documentation and closes a real availability/correctness gap; no schema change (Volume 3 unaffected).
+
+**Full technical detail:** This entry, plus the new "Status-map correction and row isolation" paragraph in Volume 2 §8, `app/adapters/providers/sportsdataio.py`'s own module docstring and `_SCHEDULE_STATUS_MAP` comment, `PROVENANCE.md`'s updated status-vocabulary section, and the completion report delivered to Mac. Also logged operationally in `PROGRESS.md`'s 2026-08-18 notes.

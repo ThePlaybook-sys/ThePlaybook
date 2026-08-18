@@ -126,6 +126,31 @@ def _mock_schedule_final():
     )
 
 
+def _mock_schedule_final_overtime():
+    """Same as _mock_schedule_final, but the provider's raw status is
+    'F/OT' (completed overtime), not 'Final' -- CONFIRMED FROM PROVIDER
+    DOCUMENTATION (2026-08-18) as SportsDataIO's distinct completed-
+    overtime status string, now mapped to the same internal 'final' as
+    'Final' itself."""
+    return respx.get(f"{SPORTSDATAIO_URL}/v3/nfl/scores/json/Schedules/{SEASON}").mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                {
+                    "GameKey": GAME_KEY,
+                    "HomeTeam": "KC",
+                    "AwayTeam": "BAL",
+                    "DateTimeUTC": "2026-09-14T17:00:00",
+                    "Status": "F/OT",
+                    "SeasonType": 1,
+                    "Week": WEEK,
+                    "StadiumDetails": {"Name": "Arrowhead Stadium"},
+                }
+            ],
+        )
+    )
+
+
 def _mock_schedule_still_scheduled():
     return respx.get(f"{SPORTSDATAIO_URL}/v3/nfl/scores/json/Schedules/{SEASON}").mock(
         return_value=httpx.Response(
@@ -261,6 +286,38 @@ async def test_detects_transition_to_final_and_stamps_finalized_at(monkeypatch):
     assert result.newly_finalized == [GAME_ID]
     assert store.by_id[GAME_ID]["status"] == "final"
     assert store.by_id[GAME_ID]["finalized_at"] is not None
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_overtime_game_reaches_final_and_triggers_postgame_ingestion(monkeypatch):
+    """CONFIRMED FROM PROVIDER DOCUMENTATION (2026-08-18): 'F/OT' and
+    'Final' both normalize to the same internal 'final' status -- an
+    overtime game is detected as newly-final, finalized_at is stamped,
+    and its team/player stats are ingested exactly like a regulation
+    completion. Before the 2026-08-18 status-map fix, 'F/OT' was
+    unmapped entirely and this game would never have been detected as
+    final at all."""
+    _headers_env(monkeypatch)
+    store = _mock_games_store(status="scheduled")
+    _mock_game_provider_ids()
+    _mock_season()
+    _mock_schedule_final_overtime()
+    _mock_team_provider_ids()
+    _mock_player_provider_ids()
+    _mock_team_stats()
+    _mock_player_stats()
+    team_stats_store = _mock_team_stats_table()
+    player_stats_store = _mock_player_stats_table()
+
+    result = await _run(now=NOW)
+
+    assert result.newly_finalized == [GAME_ID]
+    assert store.by_id[GAME_ID]["status"] == "final"
+    assert store.by_id[GAME_ID]["finalized_at"] is not None
+    assert result.games_reconciled == [GAME_ID]
+    assert len(team_stats_store.rows) == 2  # KC + BAL, same as a regulation Final
+    assert len(player_stats_store.rows) == 1
 
 
 @pytest.mark.asyncio
@@ -498,6 +555,71 @@ async def test_stat_correction_inserts_new_row_not_overwrite(monkeypatch):
     assert len(team_stats_store.rows) == 3  # original 2 preserved + 1 correction
     assert team_stats_store.rows[0]["stats"]["Score"] == 27  # original untouched
     assert team_stats_store.rows[-1]["stats"]["Score"] == 24  # correction appended
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_postgame_worker_functional_with_mixed_statuses_in_same_repoll(monkeypatch):
+    """Row isolation proof at the Postgame Worker level: the same Schedule
+    re-poll returns a Final game, a still-live InProgress game, and a row
+    with a genuinely unrecognized status -- before the 2026-08-18 fix,
+    'InProgress' alone would have raised ProviderDataError and failed
+    this entire worker run (status='failed', zero games reconciled).
+    Now: the Final game is still detected and ingested, the InProgress
+    game is left alone (not finalized), and the bad row is simply
+    dropped -- the run succeeds."""
+    _headers_env(monkeypatch)
+    game_live_id = "g-live-2"
+    game_live_key = "202599102"
+    store = _GamesStore(
+        [
+            _game_row(status="scheduled"),
+            {**_game_row(status="scheduled"), "id": game_live_id, "home_team": "DAL", "away_team": "PHI"},
+        ]
+    )
+    respx.get(f"{SUPABASE_URL}/rest/v1/games").mock(side_effect=store.get)
+    respx.patch(f"{SUPABASE_URL}/rest/v1/games").mock(side_effect=store.patch)
+
+    linked = {GAME_ID: GAME_KEY, game_live_id: game_live_key}
+
+    def _game_provider_respond(request: httpx.Request) -> httpx.Response:
+        game_id_param = request.url.params.get("game_id", "")
+        provider_id_param = request.url.params.get("provider_game_id", "")
+        if game_id_param:
+            rows = [{"game_id": gid, "provider_game_id": pid} for gid, pid in linked.items() if gid in game_id_param]
+        else:
+            rows = [{"game_id": gid, "provider_game_id": pid} for gid, pid in linked.items() if pid in provider_id_param]
+        return httpx.Response(200, json=rows)
+
+    respx.get(f"{SUPABASE_URL}/rest/v1/game_provider_ids").mock(side_effect=_game_provider_respond)
+    _mock_season()
+    respx.get(f"{SPORTSDATAIO_URL}/v3/nfl/scores/json/Schedules/{SEASON}").mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                {"GameKey": GAME_KEY, "HomeTeam": "KC", "AwayTeam": "BAL", "DateTimeUTC": "2026-09-14T17:00:00", "Status": "Final", "SeasonType": 1, "Week": WEEK, "StadiumDetails": {"Name": "Arrowhead Stadium"}},
+                {"GameKey": game_live_key, "HomeTeam": "DAL", "AwayTeam": "PHI", "DateTimeUTC": "2026-09-14T17:00:00", "Status": "InProgress", "SeasonType": 1, "Week": WEEK, "StadiumDetails": {"Name": "AT&T Stadium"}},
+                {"GameKey": "g-unrecognized", "HomeTeam": "SEA", "AwayTeam": "NE", "DateTimeUTC": "2026-09-14T17:00:00", "Status": "TBD", "SeasonType": 1, "Week": WEEK},
+            ],
+        )
+    )
+    _mock_team_provider_ids()
+    _mock_player_provider_ids()
+    _mock_team_stats()
+    _mock_player_stats()
+    team_stats_store = _mock_team_stats_table()
+    player_stats_store = _mock_player_stats_table()
+
+    result = await _run(now=NOW)
+
+    assert result.status in ("success", "partial")
+    assert result.newly_finalized == [GAME_ID]
+    assert store.by_id[GAME_ID]["status"] == "final"
+    assert store.by_id[game_live_id]["status"] == "live"  # updated, not finalized
+    assert store.by_id[game_live_id]["finalized_at"] is None
+    assert result.games_reconciled == [GAME_ID]
+    assert len(team_stats_store.rows) == 2
+    assert len(player_stats_store.rows) == 1
 
 
 # ============================================================================
