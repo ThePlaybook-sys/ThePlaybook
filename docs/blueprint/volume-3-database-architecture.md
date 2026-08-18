@@ -1,7 +1,7 @@
 # The Playbook — Volume 3
 ## Database Architecture: Tables, Relationships, Indexes, Triggers, Migrations, RLS
 
-**Version:** v4.10
+**Version:** v4.11
 **Last updated:** 2026-08-18
 **Depends on:** Volume 1 (v3.0 — tiers, personas, principles) and Volume 2 (v4.2 — service shape, routing table reference, RLS placeholder, scoped event system, Redis cache layer, Postgame Ingestion Worker)
 **v4.0 note:** Normalized multi-sport core added (§4.0) — `sports`/`leagues`/`seasons`/`teams`/`players`/`player_stats`/`team_stats` plus the `player_stats_nfl` extension pattern. `games` gains `sport_id`/`league_id`/`season_id` while the legacy `sport` text field is kept, deprecated, for Phase 0/1 backward compatibility. Data quality metadata convention added to `daily_game_intelligence` (§4.1). See `CHANGELOG.md` v4.0 entry for full reasoning.
@@ -15,6 +15,7 @@
 **v4.8 note (MINOR):** §4.0's `team_provider_ids` `sportsdataio` coverage taken to 32/32 (from 13/32) via a single-purpose live capture of `/v3/nfl/scores/json/Teams` (11th of 12 Free Trial calls; the 12th/final call intentionally not spent) — deterministically reconciled against `teams.name` (exact match, zero fuzzy matching, zero conflicts). This also resolves v4.7's disclosed provenance gap: Dallas Cowboys/Philadelphia Eagles' `sportsdataio` rows (`DAL`/`PHI`) are now CONFIRMED CORRECT, not merely left in place. `the_odds_api` coverage is unchanged at 6/32. No schema change. See `CHANGELOG.md` v4.8 entry for full reasoning.
 **v4.9 note (MINOR):** §4.0's `games` gains three nullable columns — `venue_lat`, `venue_long`, `venue_type` (Phase 3E-6, Option A) — preserving SportsDataIO Schedule's `StadiumDetails.GeoLat`/`.GeoLong`/`.Type` instead of discarding them during normalization, closing the exact gap v4.5's travel-semantics note flagged and deferred. Built for Weather Worker's location resolution and dome/indoor optimization (Volume 2 §8); also the durable coordinate storage that note's deferred travel-distance computation can build on later, still not built here. See `CHANGELOG.md` v4.9 entry for full reasoning, including the alternative (a dedicated `stadiums` reference table) considered and why the smaller additive columns were chosen instead.
 **v4.10 note (MINOR):** §4.0 gains `player_provider_ids` — the authoritative multi-provider player identity mechanism (Phase 3E-8, Decision 1, Option B), mirroring `game_provider_ids`/`team_provider_ids` exactly. `players.external_provider_id` deprecated, same convention as the other two tables. `games` gains one nullable column, `finalized_at` — the stable anchor Postgame Worker's bounded reconciliation schedule (Volume 2 §8) measures elapsed time against. `players` itself is populated via a small, fixture-backed backfill (`app.persistence.player_backfill`, exactly four real captured players) rather than a live provider call — coverage gaps are real and reported, not hidden. See `CHANGELOG.md` v4.10 entry for full reasoning.
+**v4.11 note (MINOR):** §4.0 gains `roster_memberships` — the historical record of player-team membership over time (Phase 3F-1, Decision 1, Option B), separate from `players.team_id`'s fast current-team lookup. `depth_chart_snapshots` is corrected from its original `game_id`-keyed shape (never exercised by any code) to `team_id`-keyed (Decision 2), matching SportsDataIO's confirmed team-scoped DepthCharts payload. Both tables live-proven against real dev Supabase (append-only trigger rejection, full first-observation/team-change lifecycle) via controlled insert/verify/delete. See `CHANGELOG.md` v4.11 entry for full reasoning.
 **Read next:** Volume 4 (AI Intelligence) — the agent, consensus, and orchestration tables defined here are the tables Volume 4's logic reads and writes
 
 ---
@@ -167,11 +168,31 @@ create table teams (
 
 create table players (
   id uuid primary key default gen_random_uuid(),
-  team_id uuid references teams(id),
+  team_id uuid references teams(id),  -- current/latest team only; see roster_memberships for history
   name text not null,
   position text,
-  external_provider_id text
+  external_provider_id text  -- DEPRECATED, see player_provider_ids
 );
+
+-- roster_memberships (Phase 3F-1, v4.11): players.team_id is the fast
+-- current-team lookup; this table is the historical record of which team
+-- a player belonged to and when. Insert-on-change/latest-row convention
+-- (mirroring team_stats/player_stats, Phase 3E-8): a row is inserted only
+-- when the observed team differs from the player's latest known team --
+-- first observation, a team change, and a rejoin are all the same case at
+-- the persistence layer ("observed != latest"). Append-only at the DB
+-- level (block_snapshot_updates() trigger) from creation. Release/free-
+-- agent state is NOT representable: RosterAdapter.fetch_roster only ever
+-- returns players currently on a roster, never an explicit release event,
+-- and this schema does not infer one from absence in a later fetch.
+create table roster_memberships (
+  id uuid primary key default gen_random_uuid(),
+  player_id uuid not null references players(id) on delete cascade,
+  team_id uuid not null references teams(id),
+  observed_at timestamptz not null default now(),
+  created_at timestamptz not null default now()
+);
+create index idx_roster_memberships_player_time on roster_memberships(player_id, observed_at desc);
 
 create table player_stats (
   id uuid primary key default gen_random_uuid(),
@@ -323,7 +344,20 @@ create index idx_odds_game_time on odds_snapshots(game_id, captured_at desc);
 ```
 **Append-only by design.** We never update an odds row — every line movement is a new row. This is what makes Closing Line Value calculation and the Market Monitoring Engine's "did anything change since we recommended this" check possible without any extra tracking logic.
 
-Additional supporting tables follow the same append-only-snapshot pattern and are listed rather than fully specified here (each mirrors the shape of `odds_snapshots`, keyed to `game_id`, with a `captured_at` timestamp): `injury_reports`, `weather_snapshots`, `depth_chart_snapshots`, `referee_assignments`.
+Additional supporting tables follow the same append-only-snapshot pattern and are listed rather than fully specified here (each mirrors the shape of `odds_snapshots`, keyed to `game_id`, with a `captured_at` timestamp): `injury_reports`, `weather_snapshots`, `referee_assignments`.
+
+`depth_chart_snapshots` is the one exception to the `game_id`-keyed shape above (Phase 3F-1, v4.11, corrected from an original `game_id`-keyed design never exercised by any code): SportsDataIO's DepthCharts payload is genuinely team-scoped, with no game reference at all. It is `team_id`-keyed instead, with the same append-only trigger and `captured_at` timestamp, written unconditionally on every capture (same "every poll is a new row" convention as `odds_snapshots`/`injury_reports`/`weather_snapshots`, not `team_stats`/`player_stats`' insert-on-change one):
+
+```sql
+create table depth_chart_snapshots (
+  id uuid primary key default gen_random_uuid(),
+  team_id uuid not null references teams(id) on delete cascade,
+  depth_chart_data jsonb not null,
+  captured_at timestamptz not null default now()
+);
+```
+
+A future "depth chart as it existed for game X" need should be derived from the latest team snapshot at/before that game's kickoff, not a second, competing game-keyed history table.
 
 ### 4.1 `daily_game_intelligence` — Master Working Table (v3.0)
 

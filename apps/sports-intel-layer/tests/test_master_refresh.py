@@ -70,6 +70,31 @@ def _mock_players_and_depth_charts(teams):
                 ],
             )
         )
+    _mock_roster_ingestion_supabase(teams)
+
+
+def _mock_roster_ingestion_supabase(teams):
+    """Generic success mocks for Phase 3F-1's persist_roster writes (team
+    resolution, players create-or-confirm, player_provider_ids link,
+    roster_memberships read/insert, players.team_id sync,
+    depth_chart_snapshots insert). Master Refresh orchestration tests only
+    need this to not block the run -- dedicated roster/depth-chart
+    persistence behavior (team change, unresolved team, unchanged
+    membership, snapshot shape) is covered in test_roster_ingestion.py."""
+    respx.get(f"{SUPABASE_URL}/rest/v1/team_provider_ids").mock(
+        return_value=httpx.Response(
+            200, json=[{"team_id": f"team-{team}", "provider_team_id": team} for team in teams]
+        )
+    )
+    respx.get(f"{SUPABASE_URL}/rest/v1/player_provider_ids").mock(return_value=httpx.Response(200, json=[]))
+    respx.post(f"{SUPABASE_URL}/rest/v1/player_provider_ids").mock(return_value=httpx.Response(201))
+    respx.post(f"{SUPABASE_URL}/rest/v1/players").mock(
+        return_value=httpx.Response(201, json=[{"id": "roster-player-1"}])
+    )
+    respx.patch(f"{SUPABASE_URL}/rest/v1/players").mock(return_value=httpx.Response(204))
+    respx.get(f"{SUPABASE_URL}/rest/v1/roster_memberships").mock(return_value=httpx.Response(200, json=[]))
+    respx.post(f"{SUPABASE_URL}/rest/v1/roster_memberships").mock(return_value=httpx.Response(201))
+    respx.post(f"{SUPABASE_URL}/rest/v1/depth_chart_snapshots").mock(return_value=httpx.Response(201))
 
 
 def _mock_empty_intelligence():

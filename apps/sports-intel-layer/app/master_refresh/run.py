@@ -33,6 +33,7 @@ from app.master_refresh.game_refresh import refresh_daily_game_intelligence_for_
 from app.master_refresh.slate import filter_slate_window
 from app.persistence.daily_game_intelligence import DailyGameIntelligenceError
 from app.persistence.games import GamesQueryError, list_games_in_window
+from app.persistence.roster_ingestion import RosterIngestionError, persist_roster
 from app.persistence.schedule import PersistenceError, persist_schedule_entries
 from app.persistence.seasons import SeasonResolutionError, fetch_current_season_string
 
@@ -48,6 +49,7 @@ class MasterRefreshResult:
     games_created: int = 0
     games_updated: int = 0
     roster_failures: list[str] = field(default_factory=list)
+    roster_ingestion_failures: list[str] = field(default_factory=list)
     daily_game_intelligence_written: int = 0
     daily_game_intelligence_failures: list[str] = field(default_factory=list)
     error: str | None = None
@@ -142,6 +144,7 @@ async def run_master_refresh(
     roster_caching = CachingAdapter(roster_adapter, cache_backend, ttl_seconds=_ROSTER_TTL_SECONDS)
     rosters: dict[str, list[RosterEntry] | None] = {}
     roster_failures: list[str] = []
+    roster_ingestion_failures: list[str] = []
     for team in teams_in_slate:
         try:
             roster_response: AdapterResponse[list[RosterEntry]] = await roster_caching.call(
@@ -151,6 +154,17 @@ async def run_master_refresh(
         except ProviderError:
             roster_failures.append(team)
             rosters[team] = None
+            continue
+
+        # Phase 3F-1: durable roster ingestion (players/player_provider_ids/
+        # roster_memberships/depth_chart_snapshots), isolated per team like
+        # the fetch above -- one team's persistence failure never blocks
+        # another's, and never blocks daily_game_intelligence assembly
+        # below (which still reads `rosters` as fetched, unchanged).
+        try:
+            await persist_roster(roster_response)
+        except RosterIngestionError as exc:
+            roster_ingestion_failures.append(f"{team}: {exc}")
 
     # Steps 6-8: per-game daily_game_intelligence refresh, each isolated so
     # one game's failure never blocks another's. Delegates to
@@ -167,7 +181,7 @@ async def run_master_refresh(
         except (GamesQueryError, DailyGameIntelligenceError) as exc:
             dgi_failures.append(f"{game_id}: {exc}")
 
-    status = "partial" if (roster_failures or dgi_failures) else "success"
+    status = "partial" if (roster_failures or roster_ingestion_failures or dgi_failures) else "success"
 
     return MasterRefreshResult(
         status=status,
@@ -176,6 +190,7 @@ async def run_master_refresh(
         games_created=games_created,
         games_updated=games_updated,
         roster_failures=roster_failures,
+        roster_ingestion_failures=roster_ingestion_failures,
         daily_game_intelligence_written=dgi_written,
         daily_game_intelligence_failures=dgi_failures,
     )
