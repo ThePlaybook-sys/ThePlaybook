@@ -53,7 +53,7 @@ async def test_picks_the_forecast_hour_closest_to_kickoff():
     # 12:00 comes first in the fixture and both are equidistant, so the
     # first-seen minimum wins (documents actual tie-breaking behavior).
     assert response.value.temperature_f == 72.0
-    assert response.value.is_dome is False  # no vendor knows this -- see adapter docstring
+    assert response.value.is_dome is None  # no vendor knows this -- see adapter docstring (Phase 3E-6)
     assert response.provider_reported_at is not None
 
 

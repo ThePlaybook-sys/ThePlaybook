@@ -34,6 +34,18 @@
 -- 2026-08-18 addition: 20260818040000_team_provider_ids_sportsdataio_full_coverage is purely
 -- additive (17 new team_provider_ids rows, no new tables/columns) -- same convention. Its DOWN
 -- block is prepended since it's the most recently applied.
+-- 2026-08-18 addition (3E-6, Option A): 20260818050000_games_venue_fields is purely additive
+-- (three new nullable columns + three column comments on games) -- no new table, no column
+-- removal or type change, same convention. Its DOWN block is prepended since it's the most
+-- recently applied.
+
+-- ============================================================================
+-- DOWN: 20260818050000_games_venue_fields
+-- ============================================================================
+alter table games drop column if exists venue_lat;
+alter table games drop column if exists venue_long;
+alter table games drop column if exists venue_type;
+-- expected table count after this block: 40 (no table count change, columns only)
 
 -- ============================================================================
 -- DOWN: 20260818040000_team_provider_ids_sportsdataio_full_coverage

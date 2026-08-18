@@ -72,7 +72,10 @@ async def list_games_in_window(
         "/rest/v1/games",
         params={
             "scheduled_start": [f"gte.{start.isoformat()}", f"lt.{end.isoformat()}"],
-            "select": "id,external_provider_id,home_team,away_team,scheduled_start,stadium,status,season_type,week",
+            "select": (
+                "id,external_provider_id,home_team,away_team,scheduled_start,stadium,status,"
+                "season_type,week,venue_lat,venue_long,venue_type"
+            ),
             "order": "scheduled_start.asc",
         },
         headers=headers,

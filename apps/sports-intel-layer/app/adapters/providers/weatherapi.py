@@ -19,8 +19,10 @@ str]` resolver at construction time. In production that resolver would be
 backed by `games.stadium` (Milestone F concern, not built here); in tests
 it's a plain dict lookup. Similarly, `WeatherConditions.is_dome` is
 information no weather vendor has either (it's about our stadium, not
-their forecast) -- this adapter always returns `is_dome=False` and leaves
-the real value to whichever layer merges in our own stadium data later.
+their forecast) -- this adapter always returns `is_dome=None` (Phase
+3E-6, Option A: unknown from the vendor's own perspective, never
+defaulted to False) and leaves the real value to whichever layer merges
+in our own stadium data later (`app.workers.weather_worker`).
 """
 from __future__ import annotations
 
@@ -165,7 +167,7 @@ class WeatherAPIWeatherAdapter(WeatherAdapter):
                 wind_mph=chosen["wind_mph"],
                 precipitation_pct=chosen.get("chance_of_rain"),
                 conditions=chosen["condition"]["text"],
-                is_dome=False,
+                is_dome=None,
             )
             return conditions, chosen_dt
 
