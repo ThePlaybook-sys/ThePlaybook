@@ -563,3 +563,31 @@ A one-line cross-reference was added to §7's `postgame_reviews` description (`o
 - MINOR, Volume-2-only bump: implements and clarifies already-planned cadence rows and an already-approved Decision 4, no cross-volume contradiction.
 
 **Full technical detail:** This entry, plus the reasoning inline in Volume 2's v4.5 note, the new "Odds/Player Props Worker implementation" paragraph in §8, and the 3E-4 completion report delivered to Mac. Also logged operationally in `PROGRESS.md`'s 2026-08-14 notes (Phase 3E-4).
+
+---
+
+## v4.8 — 2026-08-18 — MINOR
+
+**Volume affected:** Volume 3 (Database Architecture) only.
+
+**Reason:** v4.7 (3E-4A) closed with two open items: 19 teams had zero SportsDataIO fixture evidence, and Dallas Cowboys/Philadelphia Eagles' already-applied `sportsdataio` rows (`DAL`/`PHI`) were flagged as inferred, not fixture-confirmed. Mac authorized one additional live SportsDataIO call — the 11th of the 12-call Free Trial budget, the 12th/final call explicitly withheld — scoped to exactly one endpoint, `/v3/nfl/scores/json/Teams`, to resolve both items with real provider evidence rather than continuing to defer them.
+
+**Decision:**
+- **Single-purpose diagnostic capture, same pattern as 3C-ii's:** a temporary, dev-only, token-gated route (`/diagnostics/sportsdataio-capture`) hard-capped at one provider request per process lifetime, deployed, invoked exactly once (`200`, 32 teams returned), its full response captured to a GitHub Actions artifact (never logged), then removed in a follow-up commit — see `PROGRESS.md`'s 2026-08-18 notes for the full round-trip evidence, including the one real obstacle hit along the way: this session's network egress policy blocks GitHub's artifact-storage host directly, so the artifact was retrieved by having Mac download and paste it back rather than by fetching it through the sandboxed session.
+- **Deterministic reconciliation, zero fuzzy matching:** all 32 `teams.name` values were matched exactly against the capture's `FullName` field — 32/32 reconciled, zero conflicts, zero orphans on either side. The capture's `Key` field (e.g. `"KC"`) is the real `sportsdataio` team identifier, consistent with every other SportsDataIO category already in this codebase.
+- **All 13 previously-confirmed `sportsdataio` mappings matched the live `Key` exactly** — no drift found.
+- **Dallas Cowboys/Philadelphia Eagles resolved: CONFIRMED CORRECT.** The live `Key` for both teams (`DAL`, `PHI`) matches the already-applied 3E-3 database rows exactly. `TEAM_BACKFILL` (`app/persistence/team_backfill.py`) restores both entries with this citation, closing the v4.7-flagged discrepancy between the source-of-truth table and the live database.
+- **`team_provider_ids` `sportsdataio` coverage taken to 32/32** (from 13/32) via `20260818040000_team_provider_ids_sportsdataio_full_coverage.sql`, adding the 17 remaining teams (CIN, CLE, DEN, DET, GB, HOU, IND, JAX, LAC, LV, MIA, MIN, NYG, NYJ, PIT, TEN, WAS), each citing `tests/fixtures/sportsdataio/teams_active_normal.json` directly. `the_odds_api` coverage is unchanged at 6/32 — this round captured no Odds API evidence, and that gap remains real and unresolved.
+- **New fixture:** `tests/fixtures/sportsdataio/teams_active_normal.json` — all 32 teams, full (not a sample, unlike this project's other SportsDataIO fixtures), since full league coverage is the point of this capture. Only `UpcomingOpponent` is scrambled; every identity field is real.
+
+**Alternatives considered:**
+- Spending the 12th/final call to double-check the reconciliation — rejected; the capture already reconciled all 32 teams deterministically with zero conflicts, and Mac's instruction was explicit that the final call is not authorized. A budget's worth of margin is preserved rather than spent confirming an already-unambiguous result.
+- Retrieving the GitHub Actions artifact by disabling TLS verification or otherwise routing around the session's egress-policy block — rejected outright; the correct response to an org policy denial is to report it and find another path (here, asking Mac to relay the artifact), never to bypass it.
+
+**Expected impact:**
+- `team_provider_ids` `sportsdataio` coverage is now complete (32/32) and every entry is either fixture- or live-capture-confirmed — no inferred/general-knowledge entries remain anywhere in `TEAM_BACKFILL`. `the_odds_api` coverage (6/32) is the only remaining team-identity gap, unchanged by this round and tracked as before.
+- SportsDataIO Free Trial budget: 11 of 12 calls spent; 1 remains, intentionally unspent.
+- No schema change (same `team_provider_ids` table shape since v4.6) — MINOR, Volume-3-only, data-coverage and provenance-resolution bump only.
+- The temporary diagnostic route/token/workflow built for this round are removed in the same PR that lands this documentation, per the same cleanup discipline 3C-ii established.
+
+**Full technical detail:** This entry, plus `app/persistence/team_backfill.py`'s own module docstring, `tests/fixtures/sportsdataio/PROVENANCE.md`'s "Team identity verification" section, and the completion report delivered to Mac. Also logged operationally in `PROGRESS.md`'s 2026-08-18 notes.
