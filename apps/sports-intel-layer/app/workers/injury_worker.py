@@ -142,11 +142,22 @@ async def run_injury_worker(
     cache_backend: CacheBackend | None = None,
     now: datetime | None = None,
     last_polled_at: datetime | None = None,
+    target_game_ids: list[str] | None = None,
 ) -> InjuryWorkerResult:
     """Runs one Injury Worker cycle. Always returns an `InjuryWorkerResult`,
     never raises -- same finite-job shape as `run_master_refresh`/
     `run_odds_worker`/`run_player_props_worker`. `last_polled_at` is a
     single timestamp, not per-game -- see module docstring for why.
+
+    `target_game_ids` (Phase 3E-8, Decision 3): when provided and one of
+    the listed games is active (not yet kicked off), that game is forced
+    to be this cycle's driver game, bypassing `should_poll_injuries`'s own
+    cadence gating -- Pregame Worker's coordination hook, same spirit as
+    the identically-named parameter on the per-game workers. Every
+    resolvable row in the response is still persisted regardless (Decision
+    2's existing append-only/no-dedup design already makes this safe), not
+    only rows for the targeted game. `None` (the default) preserves normal
+    driver-selection/cadence behavior unchanged.
     """
     headers = _auth_headers()
     cache_backend = cache_backend or InMemoryCacheBackend()
@@ -172,10 +183,15 @@ async def run_injury_worker(
     if not active_games:
         return InjuryWorkerResult(status="success", games_considered=len(games), active_games=0)
 
-    driver_game = min(active_games, key=lambda g: _parse_datetime(g["scheduled_start"]))
+    target_set = set(target_game_ids) if target_game_ids is not None else None
+    forced_driver = next((g for g in active_games if g["id"] in target_set), None) if target_set else None
+
+    driver_game = forced_driver or min(active_games, key=lambda g: _parse_datetime(g["scheduled_start"]))
     driver_kickoff = _parse_datetime(driver_game["scheduled_start"])
 
-    if not should_poll_injuries(now=now, kickoff=driver_kickoff, last_polled_at=last_polled_at):
+    if forced_driver is None and not should_poll_injuries(
+        now=now, kickoff=driver_kickoff, last_polled_at=last_polled_at
+    ):
         return InjuryWorkerResult(
             status="success", games_considered=len(games), active_games=len(active_games), polled=False
         )
