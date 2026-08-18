@@ -160,6 +160,18 @@ _SCHEDULE_STATUS_MAP = {"Scheduled": "scheduled"}
 #: preseason/postseason Schedule call is required before this map can safely grow).
 _SEASON_TYPE_MAP = {1: "regular"}
 
+#: CONFIRMED FROM LIVE FREE TRIAL (Phase 3E-6, Option A): exactly three
+#: distinct StadiumDetails.Type values observed across this repo's own
+#: already-captured fixtures (schedules_normal.json, teams_active_normal.json)
+#: -- "Outdoor", "Dome", "RetractableDome". Same discipline as
+#: _SCHEDULE_STATUS_MAP/_SEASON_TYPE_MAP: an unrecognized value raises
+#: ProviderDataError rather than being silently passed through or guessed.
+_VENUE_TYPE_MAP = {
+    "Outdoor": "outdoor",
+    "Dome": "dome",
+    "RetractableDome": "retractable_dome",
+}
+
 _logger = logging.getLogger("sports-intel-layer.adapters.sportsdataio")
 
 #: CONFIRMED FROM PROVIDER DOCUMENTATION (Mac, 2026-08-12): SportsDataIO's
@@ -359,6 +371,9 @@ class SportsDataIOScheduleAdapter(ScheduleAdapter):
                         status=status,
                         season_type=season_type,
                         week=g.get("Week"),
+                        venue_lat=stadium_details.get("GeoLat"),
+                        venue_long=stadium_details.get("GeoLong"),
+                        venue_type=self._normalize_venue_type(stadium_details.get("Type")),
                     )
                 )
         except (KeyError, TypeError, ValueError) as exc:
@@ -385,6 +400,25 @@ class SportsDataIOScheduleAdapter(ScheduleAdapter):
                 provider=self.provider_name,
             )
         return _SEASON_TYPE_MAP[raw_season_type]
+
+    def _normalize_venue_type(self, raw_venue_type: object) -> str | None:
+        """None (missing StadiumDetails, or a StadiumDetails without a
+        Type) is expected, real-world behavior -- not every response
+        carries venue metadata, and Volume 3's null-not-neutral convention
+        treats that as a legitimate "unknown," never guessed. A *present
+        but unrecognized* value still raises, same discipline as
+        _normalize_status/_normalize_season_type -- an unmapped value is
+        never silently passed through."""
+        if raw_venue_type is None:
+            return None
+        if raw_venue_type not in _VENUE_TYPE_MAP:
+            raise ProviderDataError(
+                f"unrecognized StadiumDetails.Type {raw_venue_type!r} -- only "
+                f"{sorted(_VENUE_TYPE_MAP)} are CONFIRMED from live data, "
+                "not silently mapped",
+                provider=self.provider_name,
+            )
+        return _VENUE_TYPE_MAP[raw_venue_type]
 
 
 class SportsDataIOTeamStatsAdapter(TeamStatsAdapter, _WeeklyBulkCacheMixin):

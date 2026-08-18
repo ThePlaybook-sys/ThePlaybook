@@ -41,6 +41,9 @@ def _entry(game_external_id: str, **overrides) -> ScheduleEntry:
         status="scheduled",
         season_type="regular",
         week=1,
+        venue_lat=47.5952,
+        venue_long=-122.331625,
+        venue_type="outdoor",
     )
     fields.update(overrides)
     return ScheduleEntry(**fields)
@@ -68,6 +71,11 @@ async def test_new_provider_game_id_creates_game_and_links_mapping():
     assert inserted_body["season_type"] == "regular"
     assert inserted_body["week"] == 1
     assert inserted_body["sport"] == "nfl"
+    # Phase 3E-6, Option A: venue fields refreshed on every ingestion,
+    # same as every other mutable field above.
+    assert inserted_body["venue_lat"] == 47.5952
+    assert inserted_body["venue_long"] == -122.331625
+    assert inserted_body["venue_type"] == "outdoor"
 
     assert link_route.called
     link_body = json.loads(link_route.calls.last.request.content)
@@ -127,3 +135,27 @@ async def test_game_create_failure_raises_persistence_error():
 async def test_empty_entries_is_a_no_op():
     response = AdapterResponse(value=[], source="sportsdataio")
     assert await persist_schedule_entries(response) == (0, 0)
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_missing_venue_metadata_persists_as_null_not_fabricated():
+    """Phase 3E-6, Option A: an entry with no venue metadata at all (the
+    adapter's own legitimate 'unknown' case) writes null for all three
+    fields, never a guessed/defaulted value."""
+    respx.get(f"{SUPABASE_URL}/rest/v1/game_provider_ids").mock(
+        return_value=httpx.Response(200, json=[])
+    )
+    insert_route = respx.post(f"{SUPABASE_URL}/rest/v1/games").mock(
+        return_value=httpx.Response(201, json=[{"id": NEW_GAME_DB_ID}])
+    )
+    respx.post(f"{SUPABASE_URL}/rest/v1/game_provider_ids").mock(return_value=httpx.Response(201))
+
+    entry = _entry("202610130", venue_lat=None, venue_long=None, venue_type=None)
+    response = AdapterResponse(value=[entry], source="sportsdataio")
+    await persist_schedule_entries(response)
+
+    inserted_body = json.loads(insert_route.calls.last.request.content)
+    assert inserted_body["venue_lat"] is None
+    assert inserted_body["venue_long"] is None
+    assert inserted_body["venue_type"] is None

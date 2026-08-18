@@ -174,6 +174,58 @@ async def test_schedule_normalizes_datetime_utc_stadium_and_status():
     assert entry.status == "scheduled"
     assert entry.scheduled_start == datetime(2026, 9, 10, 0, 20, tzinfo=timezone.utc)
     assert entry.stadium  # StadiumDetails.Name, not just StadiumID
+    # Phase 3E-6, Option A: venue coordinates + normalized type preserved,
+    # not discarded -- CONFIRMED FROM LIVE FREE TRIAL fixture values.
+    assert entry.venue_lat == 47.5952
+    assert entry.venue_long == -122.331625
+    assert entry.venue_type == "outdoor"
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_schedule_missing_venue_metadata_stays_none_not_fabricated():
+    """A response with no StadiumDetails at all -- e.g. a provider entry
+    that never carried venue metadata -- is a legitimate, expected
+    "unknown," not malformed. venue_lat/venue_long/venue_type all stay
+    None rather than being guessed or defaulted."""
+    respx.get(f"{BASE_URL}/v3/nfl/scores/json/Schedules/2026REG").mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                {
+                    "GameKey": "202610999",
+                    "SeasonType": 1,
+                    "Week": 1,
+                    "HomeTeam": "SEA",
+                    "AwayTeam": "NE",
+                    "DateTimeUTC": "2026-09-10T00:20:00",
+                    "Status": "Scheduled",
+                }
+            ],
+        )
+    )
+    adapter = SportsDataIOScheduleAdapter(client=_client(), api_key=API_KEY)
+    response = await adapter.fetch_schedule("2026REG")
+
+    entry = response.value[0]
+    assert entry.stadium is None
+    assert entry.venue_lat is None
+    assert entry.venue_long is None
+    assert entry.venue_type is None
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_schedule_unrecognized_venue_type_raises_rather_than_guessing():
+    """Mac's explicit instruction, same discipline as status/season_type:
+    a present-but-unrecognized StadiumDetails.Type raises rather than
+    being silently passed through or guessed."""
+    respx.get(f"{BASE_URL}/v3/nfl/scores/json/Schedules/2026REG").mock(
+        return_value=httpx.Response(200, json=load("schedules_unrecognized_venue_type.json"))
+    )
+    adapter = SportsDataIOScheduleAdapter(client=_client(), api_key=API_KEY)
+    with pytest.raises(ProviderDataError):
+        await adapter.fetch_schedule("2026REG")
 
 
 @pytest.mark.asyncio

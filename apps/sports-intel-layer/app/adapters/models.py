@@ -143,7 +143,13 @@ class WeatherConditions(BaseModel):
     wind_mph: float | None = None
     precipitation_pct: float | None = None
     conditions: str | None = None
-    is_dome: bool = False
+    #: True = definitively indoor/dome, False = definitively outdoor,
+    #: None = unknown -- never defaulted to False (Phase 3E-6, Option A,
+    #: null-not-neutral convention). No weather vendor has this information
+    #: (it's about our own stadium, not their forecast) -- WeatherAPIWeatherAdapter
+    #: always returns None here; the worker layer, which knows the venue's
+    #: normalized type, overlays the real value before persisting.
+    is_dome: bool | None = None
 
 
 class RosterEntry(BaseModel):
@@ -168,6 +174,18 @@ class ScheduleEntry(BaseModel):
     #: NFL week number at launch (games.week, Phase 3E-1 Decision 1). Optional: not
     #: every sport/provider uses week numbering.
     week: int | None = None
+    #: Venue coordinates (games.venue_lat/.venue_long, Phase 3E-6, Option A) --
+    #: from the provider's own StadiumDetails.GeoLat/GeoLong. Optional: not every
+    #: provider response carries venue metadata; never fabricated when missing.
+    venue_lat: float | None = None
+    venue_long: float | None = None
+    #: Normalized internal vocabulary (games.venue_type check constraint, Phase
+    #: 3E-6 Option A) -- 'outdoor' | 'dome' | 'retractable_dome' | None, never a
+    #: provider's raw value (e.g. SportsDataIO's "RetractableDome"). Optional:
+    #: unknown is a real, distinct state, scoped to exactly what Weather Worker
+    #: needs -- no other StadiumDetails fields (capacity, playing surface, city,
+    #: state, country) are carried here, since nothing downstream needs them yet.
+    venue_type: str | None = None
 
 
 class NewsArticle(BaseModel):

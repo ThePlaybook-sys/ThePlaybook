@@ -7,7 +7,7 @@ For each ScheduleEntry it:
   - looks up an existing game_provider_ids mapping for
     (response.source, entry.game_external_id);
   - if found, updates that games row's mutable fields (status, stadium,
-    scheduled_start, season_type, week);
+    scheduled_start, season_type, week, venue_lat, venue_long, venue_type);
   - if not found, creates a new games row and links it via
     game_provider_ids -- this is how a provider's Schedule call establishes
     a game's existence in the first place.
@@ -82,6 +82,12 @@ async def persist_schedule_entries(
                 "status": entry.status,
                 "season_type": entry.season_type,
                 "week": entry.week,
+                # Phase 3E-6, Option A: refreshed on every Schedule ingestion,
+                # same as every other mutable field above -- never fabricated
+                # when the entry itself carries None.
+                "venue_lat": entry.venue_lat,
+                "venue_long": entry.venue_long,
+                "venue_type": entry.venue_type,
             }
 
             game_id = existing.get(entry.game_external_id)

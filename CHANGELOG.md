@@ -619,3 +619,56 @@ A one-line cross-reference was added to §7's `postgame_reviews` description (`o
 - MINOR, Volume-2-only bump: implements an already-planned cadence row and extends (never replaces) an already-approved shared policy module, no cross-volume contradiction. Volume 3 is unaffected — `injury_reports`' table shape and `daily_game_intelligence`'s read integration were both already fully specified and already correct before this phase.
 
 **Full technical detail:** This entry, plus the reasoning inline in Volume 2's v4.6 note, the new "Injury Worker implementation" and "Malformed-injury-row isolation" paragraphs in §8, `app/workers/windows.py`'s own extended module docstring, and the completion report delivered to Mac. Also logged operationally in `PROGRESS.md`'s 2026-08-18 notes (Phase 3E-5).
+
+---
+
+## v4.9 — 2026-08-18 — MINOR
+
+**Volume affected:** Volume 3 (Database Architecture) only.
+
+**Reason:** Phase 3E-6's Weather Worker needed two things Volume 3's v4.5 travel-semantics note already identified as missing and explicitly deferred: precise venue coordinates for WeatherAPI location resolution, and an authoritative indoor/outdoor signal for the previously-approved dome optimization. Direct inspection (not assumed) confirmed the exact same gap that note described: `StadiumDetails.GeoLat`/`.GeoLong`/`.Type` are genuinely present in SportsDataIO's live Schedule response (CONFIRMED in this project's own already-captured fixture), but `SportsDataIOScheduleAdapter` discards all three during normalization, and `games` has nowhere to hold them even if it didn't.
+
+**Decision:**
+- **`games` gains three nullable columns — `venue_lat`, `venue_long`, `venue_type`** (`20260818050000_games_venue_fields.sql`), populated from `StadiumDetails.GeoLat`/`.GeoLong`/`.Type` during the existing Schedule-ingestion write path. `ScheduleEntry` widened correspondingly, scoped to exactly these three fields — no other `StadiumDetails` fields (capacity, playing surface, city/state/country) carried, since nothing downstream needs them yet.
+- **Option A (direct nullable columns) chosen over Option B (a dedicated `stadiums` reference table),** both presented to Mac before implementation per his explicit "STOP before a schema decision" instruction. Option A matches the `season_type`/`week` precedent (3E-1: direct nullable columns on `games`, not a new table) more closely, and is smaller for a first cut; Option B is more normalized (NFL has ~30 unique venues, reused across many games) but adds a new table/FK/backfill for a real but modest win at this scale. Mac's explicit approval: Option A.
+- **`venue_type` is normalized internal vocabulary** (`outdoor`/`dome`/`retractable_dome`), never SportsDataIO's raw `StadiumDetails.Type` string directly in business logic — same discipline `season_type`'s `_SEASON_TYPE_MAP`/`games.status`'s check constraint already established. `_VENUE_TYPE_MAP` is CONFIRMED FROM LIVE FREE TRIAL: exactly three distinct raw values ("Outdoor", "Dome", "RetractableDome") observed across this repo's own already-captured fixtures (`schedules_normal.json`, `teams_active_normal.json`) — an unrecognized raw value raises rather than being silently passed through or guessed, same as an unrecognized `Status`/`SeasonType`.
+- **All three columns nullable, never fabricated when missing** — a response with no `StadiumDetails` at all is a legitimate "unknown," not malformed, and stays `null` all the way through persistence (proven by a dedicated test at both the adapter and persistence layers).
+
+**Alternatives considered:**
+- A `stadiums` reference table (Option B) — considered seriously (it's the more normalized design, and Volume 3's own v4.5 note already floated it), but not chosen for this first cut given the league's small venue count makes the denormalization cost of Option A genuinely small; may be reconsidered "when multi-sport scale actually justifies it" (Mac's own words, approving Option A).
+- Hardcoding a stadium-to-dome-status list as a workaround instead of a schema change — explicitly rejected per Mac's own instruction not to do this without his approval; the provider already supplies this information, so a manually maintained list would be redundant, error-prone, and exactly the kind of fabricated-certainty shortcut this project's data-quality convention exists to prevent.
+- Treating `RetractableDome` as either definitively indoor or definitively outdoor — rejected; SportsDataIO's Schedule/Teams responses report the stadium's *type*, not its roof state on any given game day, which a retractable roof can change. Modeling this as `is_dome: null` (unknown) rather than guessing either extreme is the correct application of this project's existing null-not-neutral convention (`public_betting`/`sharp_money`/`rest_days`), not a new principle invented for this case.
+
+**Expected impact:**
+- `app/workers/weather_worker.py`'s dome/indoor optimization and location resolution are now correctly grounded in real provider data, not a fabricated signal or a discarded one.
+- `WeatherConditions.is_dome` changed from a hard `bool = False` default to `bool | None = None` — closes a real, pre-existing null-not-neutral gap in the 3C-i model (it could never represent "unknown" before this phase).
+- The travel-distance computation Volume 3's v4.5 note deferred is not built by this entry — but the durable coordinate storage that note said travel would eventually need now exists, built for a different (weather) consumer first. `daily_game_intelligence.travel` remains `null`, unchanged.
+- MINOR, Volume-3-only, purely additive schema bump — no column removal, no type change, no existing data touched.
+
+**Full technical detail:** This entry, plus the reasoning inline in Volume 3's v4.9 note, the new `venue_lat`/`venue_long`/`venue_type` paragraph in §4.0, the updated `travel` semantics paragraph, Volume 2's own v4.7 note and §8 update (Weather Worker's consumption side), and the completion report delivered to Mac. Also logged operationally in `PROGRESS.md`'s 2026-08-18 notes (Phase 3E-6).
+
+---
+
+## v4.7 — 2026-08-18 — MINOR
+
+**Volume affected:** Volume 2 (System Architecture) only.
+
+**Reason:** Phase 3E-6's task: implement the Weather Worker (Volume 2 §8's cadence table already named "Every 15 minutes," but no real implementation existed before this phase), including the dome/indoor optimization Mac had previously approved in principle. Unlike Injury (3E-5), Weather's cadence is CONFIRMED flat — no day-of-week or kickoff-proximity ramp language exists anywhere in this section for this worker, so no extension of `app.workers.windows` was needed, only two DERIVED reuses of conventions already established by every other specialized worker.
+
+**Decision:**
+- **Flat 900-second cadence, no adaptive tiers invented** (`app.workers.weather_worker._POLL_INTERVAL_SECONDS = 900`) — CONFIRMED to already match `app.adapters.cache.CATEGORY_TTL_SECONDS["weather"]` exactly, verified by direct inspection before reusing it rather than assumed. Two boundaries this section never states explicitly are DERIVED, not invented: the 7-day candidate-game window (the same scoping decision Odds/Player Props/Injury each independently adopted, documented identically in each worker's own module) and stop-at-kickoff (reusing `app.workers.windows.classify_window`'s existing `Window.STOPPED` classification directly — never its ramp-tier intervals, which this worker never touches at all).
+- **Dome/indoor optimization implemented against real provider data** (Volume 3 v4.9's new `games.venue_type`): a `'dome'` venue is never polled (WeatherAPI call skipped entirely — outdoor weather is structurally irrelevant to a fixed roof); `'outdoor'` polls normally; `'retractable_dome'` or a missing `venue_type` polls *if* coordinates are available (regional weather is still useful context even with an unknown roof state) but the persisted `is_dome` stays `null`, never coerced to `false` just because polling happened.
+- **No `game_provider_ids` identity hop, a genuine architectural asymmetry with Odds/Player Props/Injury, checked before assuming symmetry:** WeatherAPI has no native game/event concept at all — `game_provider_ids.provider_name`'s own check constraint doesn't even permit `'weatherapi'`. `WeatherConditions.game_external_id` is this project's own internal `games.id`, supplied directly by the worker; `app.persistence.weather_snapshots` does not call `resolve_game_ids`, unlike its sibling snapshot-persistence modules.
+- **Per-game isolation** (mirroring `player_props_worker.py`'s exact reasoning, since WeatherAPI's endpoint is per-game like Player Props', not bulk like Injury's): one fetch call per due game, so one game's provider failure or malformed response can never take another's already-fetched weather down with it.
+
+**Alternatives considered:**
+- Building adaptive Weather polling tiers mirroring Odds/Player Props' ramp shape — rejected; Volume 2 §8 states no ramp language at all for Weather, and Mac's explicit instruction was not to invent tiers where the Blueprint specifies a flat cadence.
+- Reusing `app.workers.windows.should_poll` directly (which internally derives its interval from `classify_window`'s ramp tiers) — rejected; that would silently apply Odds/Player Props' ramping intervals (3600/900/300/120s) instead of Weather's flat 900s, so this worker reuses only `classify_window`'s STOPPED classification, with its own trivial flat-interval-elapsed check alongside it.
+- Treating a `retractable_dome`/missing venue type as `is_dome=False` (outdoor) to simplify the polling decision — rejected; would silently fabricate certainty this project's data-quality convention explicitly forbids (Mac's own instruction: "Do not treat unknown as false").
+
+**Expected impact:**
+- `app/workers/weather_worker.py` and `app/persistence/weather_snapshots.py` are the real, tested implementation of this volume's Weather Worker cadence row and the previously-approved dome optimization.
+- No live SportsDataIO or WeatherAPI calls anywhere in this phase's build or tests (SportsDataIO budget unchanged at 11 of 12; zero WeatherAPI calls made); no hosted Redis provisioned; no Railway scheduler configured.
+- MINOR, Volume-2-only bump: implements an already-planned cadence row and an already-approved optimization against newly-available real data (Volume 3 v4.9), no cross-volume contradiction beyond the schema dependency itself.
+
+**Full technical detail:** This entry, plus the reasoning inline in Volume 2's v4.7 note, the new "Weather Worker implementation" paragraph in §8, `app/workers/weather_worker.py`'s own module docstring, and the completion report delivered to Mac. Also logged operationally in `PROGRESS.md`'s 2026-08-18 notes (Phase 3E-6).
