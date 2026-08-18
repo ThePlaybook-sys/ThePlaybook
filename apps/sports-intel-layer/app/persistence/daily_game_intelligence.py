@@ -58,11 +58,24 @@ not a full multi-sportsbook board -- a known simplification (there is no
 Odds Worker yet to have written more than one), flagged rather than
 presented as complete.
 
-**`news`** has no snapshot table (see `app/persistence/snapshots.py`).
-The only existing source is whatever `daily_game_intelligence.news`
-already holds from a prior run -- this module reads it back and
-preserves it verbatim rather than overwriting with null, since Master
-Refresh has no fresher source to offer.
+**`news`** has no snapshot table (see `app/persistence/snapshots.py`;
+Phase 3E-7, Mac's approved Option A -- the smallest additive move,
+persistence history for News remains deferred, unaffected by this note).
+Master Refresh itself still has no fresher source to offer and still only
+ever reads back whatever `news` already holds (`read_existing_news`
+below, unchanged) -- but as of 3E-7 that value is no longer always
+whatever a prior run's placeholder was: `app.workers.news_worker` now
+writes current-state news directly into this same column via `write_news`
+below, on its own 15-minute cadence, entirely independent of Master
+Refresh's daily run. `write_news` PATCHes/upserts only the `game_id` and
+`news` columns (same `resolution=merge-duplicates`, columns-present-only
+semantics as `upsert_daily_game_intelligence`) -- it never touches odds/
+weather/injuries/etc., matching the same field-ownership discipline this
+whole module is built around. A News provider failure or an unresolved
+team for a given cycle means `write_news` is simply not called for that
+game this cycle -- whatever `news` already held stays exactly as it was,
+never overwritten with an empty/neutral value (see `news_worker.py`'s own
+docstring for the full failure/stale-data reasoning).
 
 **`travel`** is always written as `None` for 3E-2 (Decision 3) -- durable
 venue coordinates aren't modeled yet (flagged as a follow-up architecture
@@ -193,6 +206,60 @@ def build_payload(
         "last_updated": now.isoformat(),
     }
     return payload
+
+
+async def write_news(
+    client: httpx.AsyncClient,
+    headers: dict,
+    *,
+    game_id: str,
+    articles: list[dict],
+    source: str,
+    now: datetime,
+) -> None:
+    """Writes current-state news for one game (Phase 3E-7, News Worker's
+    own write path) -- scoped to exactly `game_id` and `news`, via the same
+    `on_conflict=game_id` / `resolution=merge-duplicates` upsert idiom
+    `upsert_daily_game_intelligence` below uses, so a fresh row (no Master
+    Refresh assembly has run for this game yet) is created with every
+    other column left at its SQL default, and an existing row's other
+    columns are left completely untouched -- never clobbered by this
+    narrower, News-only write. `articles` is already the
+    already-JSON-serializable article list (callers pass
+    `NewsArticle.model_dump(mode="json")` output); this function doesn't
+    know or care about the `NewsArticle` model itself, keeping it
+    consistent with this module's existing pattern of taking already-shaped
+    dicts (`odds_row`, `weather_row`, etc. above) rather than importing
+    adapter models.
+
+    `status` is always written as `"fresh"` -- correct at the instant of
+    writing (age zero, matching `CATEGORY_TTL_SECONDS["news"]`'s definition
+    of freshness), and, same as the metadata objects `build_payload`
+    assembles above, is never recomputed on read. This is not a new gap:
+    it's the identical characteristic `existing_news`'s pass-through
+    already had before this function existed, just now applied to a value
+    this module itself produces instead of one it merely forwards.
+    """
+    payload = {
+        "game_id": game_id,
+        "news": {
+            "value": articles,
+            "source": source,
+            "last_updated": now.isoformat(),
+            "status": "fresh",
+        },
+    }
+    response = await client.post(
+        "/rest/v1/daily_game_intelligence",
+        params={"on_conflict": "game_id"},
+        json=payload,
+        headers={**headers, "Prefer": "resolution=merge-duplicates"},
+    )
+    if response.status_code not in (200, 201, 204):
+        raise DailyGameIntelligenceError(
+            f"failed to write news for game {game_id}: "
+            f"{response.status_code} {response.text}"
+        )
 
 
 async def upsert_daily_game_intelligence(client: httpx.AsyncClient, headers: dict, payload: dict) -> None:
