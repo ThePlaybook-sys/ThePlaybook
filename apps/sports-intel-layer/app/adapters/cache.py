@@ -159,13 +159,13 @@ class RedisCacheBackend(CacheBackend):
 #: is none in-tree today) -- they are dead weight for the two worker
 #: modules themselves, not a second, competing TTL source.
 #:
-#: `injuries` remains an ASSUMED flat simplification of the window-aware
-#: cadence -- Injury Worker's own dynamic TTL is explicitly Phase 3E-5
-#: scope, not this phase's (per Mac's 3E-4F instruction: "Injury dynamic
-#: TTL remains for 3E-5 unless a shared generic timing utility naturally
-#: belongs in 3E-4" -- `app.workers.windows` is written generically enough
-#: to be reusable there, but wiring Injury Worker itself to it is
-#: deliberately left to 3E-5, not done here).
+#: `injuries` is now superseded for the real worker too (Phase 3E-5,
+#: 2026-08-18): `app.workers.injury_worker` constructs its own
+#: `CachingAdapter` with `app.workers.windows.injury_ttl_seconds` (the
+#: extended, day-of-week-aware policy -- see that module's own docstring),
+#: exactly the same "superseded, kept only for a hypothetical other flat-
+#: TTL caller" relationship `odds`/`player_props` already have above -- the
+#: value below is no longer this category's real TTL source.
 #:
 #: Rosters/Schedules/TeamStats/PlayerStats have no dedicated cadence row
 #: in Volume 2 §8's table at all -- they're covered by the daily Master
@@ -175,7 +175,7 @@ class RedisCacheBackend(CacheBackend):
 CATEGORY_TTL_SECONDS: dict[str, int] = {
     "odds": 60,  # superseded for the real worker -- see docstring above
     "player_props": 60,  # superseded for the real worker -- see docstring above
-    "injuries": 300,  # ASSUMED simplification of the window-aware cadence -- Injury dynamic TTL is 3E-5
+    "injuries": 300,  # superseded for the real worker -- see docstring above
     "weather": 900,  # CONFIRMED FROM VOLUME 2 §8 -- flat 15-minute worker cadence
     "news": 900,  # CONFIRMED FROM VOLUME 2 §8 -- flat 15-minute worker cadence
     "rosters": 86400,  # ASSUMED -- bounded by daily Master Refresh, no dedicated cadence row

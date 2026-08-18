@@ -531,19 +531,95 @@ async def test_injuries_skips_records_with_no_resolvable_game_bye_week_case():
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_malformed_injuries_raises_provider_data_error():
+async def test_malformed_injuries_row_is_isolated_valid_rows_survive(caplog):
+    """Phase 3E-5, Mac's Decision 3: a single malformed row (here, ATL's
+    row is missing PlayerID) must not invalidate the whole week's
+    response -- ARI's and BAL's otherwise-valid rows must still come back.
+    This replaces the pre-3E-5 whole-call-raises behavior, approved
+    explicitly as part of 3E-5."""
+    respx.get(f"{BASE_URL}/v3/nfl/stats/json/Injuries/2025REG/1").mock(
+        return_value=httpx.Response(200, json=load("injuries_mixed_with_malformed_row.json"))
+    )
+    adapter = SportsDataIOInjuryAdapter(
+        client=_client(), api_key=API_KEY,
+        current_season_week=lambda: ("2025REG", 1),
+        game_key_for=_game_key_lookup(
+            {
+                ("ARI", "NO", "2025REG", 1): "202510122",
+                ("ATL", "TB", "2025REG", 1): "202510102",
+                ("BAL", "BUF", "2025REG", 1): "202510104",
+            }
+        ),
+    )
+    with caplog.at_level("WARNING"):
+        response = await adapter.fetch_injuries()
+
+    by_team = {r.team: r for r in response.value}
+    assert set(by_team) == {"ARI", "BAL"}  # ATL's malformed row is absent, not a crash
+    assert len(response.value) == 2
+
+    # Logged, not silently dropped -- diagnosable per Mac's explicit
+    # requirement.
+    assert any("malformed row skipped" in record.message for record in caplog.records)
+    assert any("ATL" in record.message for record in caplog.records)
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_all_rows_malformed_returns_empty_not_raised():
+    """The degenerate case of the isolation above: if every row in the
+    week's response is malformed, fetch_injuries succeeds with an empty
+    list rather than raising -- the response as a whole is still a valid
+    JSON array (the provider/response-level contract `_parse_json_array`
+    enforces), it's just that none of its rows normalized."""
     respx.get(f"{BASE_URL}/v3/nfl/stats/json/Injuries/2025REG/1").mock(
         return_value=httpx.Response(200, json=load("injuries_malformed.json"))
     )
     adapter = SportsDataIOInjuryAdapter(
         client=_client(), api_key=API_KEY,
         current_season_week=lambda: ("2025REG", 1),
-        # Must actually resolve (unlike the bye-week test above) so the
-        # code reaches the malformed PlayerID access instead of skipping
-        # the row for an unrelated reason.
         game_key_for=_game_key_lookup({("ARI", "NO", "2025REG", 1): "202510122"}),
     )
+    response = await adapter.fetch_injuries()
+    assert response.value == []
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_injuries_non_array_top_level_still_raises_provider_data_error():
+    """The boundary Mac's Decision 3 explicitly preserves: a genuine
+    response-level failure (here, a top-level object instead of the
+    expected array) still fails the whole fetch -- per-row isolation only
+    applies to malformed rows *within* an otherwise-valid array, never to
+    a fundamentally wrong top-level shape."""
+    respx.get(f"{BASE_URL}/v3/nfl/stats/json/Injuries/2025REG/1").mock(
+        return_value=httpx.Response(200, json={"error": "not an array"})
+    )
+    adapter = SportsDataIOInjuryAdapter(
+        client=_client(), api_key=API_KEY,
+        current_season_week=lambda: ("2025REG", 1),
+        game_key_for=_game_key_lookup({}),
+    )
     with pytest.raises(ProviderDataError):
+        await adapter.fetch_injuries()
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_injuries_provider_unavailable_still_raises_whole_fetch():
+    """The other boundary Decision 3 preserves: a transport/HTTP-level
+    failure still fails the whole fetch -- untouched by per-row isolation,
+    which only ever operates on rows already inside a successfully
+    parsed, well-shaped response."""
+    respx.get(f"{BASE_URL}/v3/nfl/stats/json/Injuries/2025REG/1").mock(
+        return_value=httpx.Response(500)
+    )
+    adapter = SportsDataIOInjuryAdapter(
+        client=_client(), api_key=API_KEY,
+        current_season_week=lambda: ("2025REG", 1),
+        game_key_for=_game_key_lookup({}),
+    )
+    with pytest.raises(ProviderUnavailableError):
         await adapter.fetch_injuries()
 
 

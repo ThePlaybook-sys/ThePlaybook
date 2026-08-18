@@ -1,0 +1,48 @@
+[
+  {
+    "InjuryID": 335356,
+    "SeasonType": 1,
+    "Season": 2025,
+    "Week": 1,
+    "PlayerID": 19930,
+    "Name": "Bilal Nichols",
+    "Position": "DT",
+    "Number": 92,
+    "Team": "ARI",
+    "Opponent": "NO",
+    "BodyPart": "Scrambled",
+    "Status": "Scrambled",
+    "Practice": "Scrambled",
+    "PracticeDescription": "Scrambled",
+    "Updated": "2025-09-07T12:56:08",
+    "DeclaredInactive": true,
+    "TeamID": 1,
+    "OpponentID": 22
+  },
+  {
+    "Team": "ATL",
+    "Opponent": "TB",
+    "Name": "Nobody",
+    "Status": "Scrambled"
+  },
+  {
+    "InjuryID": 335391,
+    "SeasonType": 1,
+    "Season": 2025,
+    "Week": 1,
+    "PlayerID": 22760,
+    "Name": "Ar'Darius Washington",
+    "Position": "S",
+    "Number": 29,
+    "Team": "BAL",
+    "Opponent": "BUF",
+    "BodyPart": "Scrambled",
+    "Status": "Scrambled",
+    "Practice": "Scrambled",
+    "PracticeDescription": "Scrambled",
+    "Updated": "2025-09-07T20:16:16",
+    "DeclaredInactive": true,
+    "TeamID": 3,
+    "OpponentID": 4
+  }
+]
