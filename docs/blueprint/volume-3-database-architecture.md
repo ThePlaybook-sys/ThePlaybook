@@ -1,7 +1,7 @@
 # The Playbook — Volume 3
 ## Database Architecture: Tables, Relationships, Indexes, Triggers, Migrations, RLS
 
-**Version:** v4.9
+**Version:** v4.10
 **Last updated:** 2026-08-18
 **Depends on:** Volume 1 (v3.0 — tiers, personas, principles) and Volume 2 (v4.2 — service shape, routing table reference, RLS placeholder, scoped event system, Redis cache layer, Postgame Ingestion Worker)
 **v4.0 note:** Normalized multi-sport core added (§4.0) — `sports`/`leagues`/`seasons`/`teams`/`players`/`player_stats`/`team_stats` plus the `player_stats_nfl` extension pattern. `games` gains `sport_id`/`league_id`/`season_id` while the legacy `sport` text field is kept, deprecated, for Phase 0/1 backward compatibility. Data quality metadata convention added to `daily_game_intelligence` (§4.1). See `CHANGELOG.md` v4.0 entry for full reasoning.
@@ -14,6 +14,7 @@
 **v4.7 note (MINOR):** §4.0's `teams` expanded from the original 6 seed teams to all 32 current NFL teams (Phase 3E-4A); `team_provider_ids` sportsdataio coverage expanded from 4 to 13 of 32, each new mapping confirmed against this repository's own fixtures. A retroactive provenance correction is disclosed: two of 3E-3's original six `team_provider_ids` entries (Dallas Cowboys/Philadelphia Eagles, `sportsdataio`) were not actually fixture-confirmed at the time, only caught under 3E-4A's stricter audit — see `CHANGELOG.md` v4.7 entry for the full finding and why those two rows were left in place rather than unilaterally dropped. No schema change.
 **v4.8 note (MINOR):** §4.0's `team_provider_ids` `sportsdataio` coverage taken to 32/32 (from 13/32) via a single-purpose live capture of `/v3/nfl/scores/json/Teams` (11th of 12 Free Trial calls; the 12th/final call intentionally not spent) — deterministically reconciled against `teams.name` (exact match, zero fuzzy matching, zero conflicts). This also resolves v4.7's disclosed provenance gap: Dallas Cowboys/Philadelphia Eagles' `sportsdataio` rows (`DAL`/`PHI`) are now CONFIRMED CORRECT, not merely left in place. `the_odds_api` coverage is unchanged at 6/32. No schema change. See `CHANGELOG.md` v4.8 entry for full reasoning.
 **v4.9 note (MINOR):** §4.0's `games` gains three nullable columns — `venue_lat`, `venue_long`, `venue_type` (Phase 3E-6, Option A) — preserving SportsDataIO Schedule's `StadiumDetails.GeoLat`/`.GeoLong`/`.Type` instead of discarding them during normalization, closing the exact gap v4.5's travel-semantics note flagged and deferred. Built for Weather Worker's location resolution and dome/indoor optimization (Volume 2 §8); also the durable coordinate storage that note's deferred travel-distance computation can build on later, still not built here. See `CHANGELOG.md` v4.9 entry for full reasoning, including the alternative (a dedicated `stadiums` reference table) considered and why the smaller additive columns were chosen instead.
+**v4.10 note (MINOR):** §4.0 gains `player_provider_ids` — the authoritative multi-provider player identity mechanism (Phase 3E-8, Decision 1, Option B), mirroring `game_provider_ids`/`team_provider_ids` exactly. `players.external_provider_id` deprecated, same convention as the other two tables. `games` gains one nullable column, `finalized_at` — the stable anchor Postgame Worker's bounded reconciliation schedule (Volume 2 §8) measures elapsed time against. `players` itself is populated via a small, fixture-backed backfill (`app.persistence.player_backfill`, exactly four real captured players) rather than a live provider call — coverage gaps are real and reported, not hidden. See `CHANGELOG.md` v4.10 entry for full reasoning.
 **Read next:** Volume 4 (AI Intelligence) — the agent, consensus, and orchestration tables defined here are the tables Volume 4's logic reads and writes
 
 ---
@@ -223,6 +224,7 @@ create table games (
   venue_lat double precision,               -- v4.9, nullable — see below
   venue_long double precision,              -- v4.9, nullable
   venue_type text check (venue_type in ('outdoor','dome','retractable_dome')),  -- v4.9, nullable
+  finalized_at timestamptz,                 -- v4.10, nullable — see below
   final_score jsonb,
   created_at timestamptz default now(),
   updated_at timestamptz default now()
@@ -282,6 +284,30 @@ create table team_provider_ids (
 **`sportsdataio` coverage taken to 32/32, provenance gap resolved (v4.8, 2026-08-18):** a single-purpose, single-endpoint live capture of `/v3/nfl/scores/json/Teams` (the 11th of the 12-call Free Trial budget; the 12th/final call intentionally not spent) allowed a deterministic reconciliation of all 32 `teams` rows against the live response — exact `FullName`-to-`teams.name` match, zero fuzzy matching, zero conflicts (`tests/fixtures/sportsdataio/teams_active_normal.json` and `PROVENANCE.md`). All 13 previously-confirmed mappings matched exactly; Dallas Cowboys/Philadelphia Eagles' `DAL`/`PHI` rows are now **CONFIRMED CORRECT** rather than merely left in place; the remaining 17 teams gained a live-confirmed mapping (`20260818040000_team_provider_ids_sportsdataio_full_coverage.sql`). `the_odds_api` coverage is unchanged at 6/32 — this round captured no Odds API evidence, and `resolve_team_ids` still correctly returns "absent" for the 26 teams with no `the_odds_api` mapping.
 
 **Do not add further provider-specific columns to `teams`.** New vendor identity goes into `team_provider_ids`, not a new column.
+
+### `player_provider_ids` (new, v4.10 — Phase 3E-8, Decision 1/Option B, 2026-08-18)
+
+The player-identity equivalent of `game_provider_ids`/`team_provider_ids`, built for the same reason and mirroring their exact shape. Unlike `teams`, `players` had never been populated by any existing code before this phase — Roster data only ever landed in `daily_game_intelligence.players` (a jsonb working field), never as normalized rows — so `player_provider_ids` is the *first* mechanism that gives `players` real, identifiable rows at all, not just a fix to an existing population's identity scheme.
+
+```sql
+create table player_provider_ids (
+  id uuid primary key default gen_random_uuid(),
+  player_id uuid not null references players(id) on delete cascade,
+  provider_name text not null check (provider_name in ('the_odds_api', 'sportsdataio')),
+  provider_player_id text not null,
+  created_at timestamptz not null default now(),
+  unique (provider_name, provider_player_id),  -- a provider's player id resolves to exactly one player
+  unique (player_id, provider_name)            -- a player has at most one id per provider
+);
+```
+
+**Constraint design and RLS:** identical to `game_provider_ids`/`team_provider_ids` — public-read, service-role-only writes.
+
+**Population — fixture-backed, not fabricated, coverage explicitly incomplete.** `app/persistence/player_backfill.py`'s `PLAYER_BACKFILL` contains exactly four real players — the entire universe of player identity evidence (`PlayerID`/`Name`/`Team`/`Position`) this project has ever captured, across two fixtures (`rosters_normal.json`'s 2 rows, `player_stats_week_bulk_normal.json`'s 2 rows). No live provider call was made or authorized to expand this. A `PlayerGameStatsByWeek` row whose player has no `player_provider_ids` mapping is a real, reported gap (`unresolved_players`) — `app/persistence/player_stats.py` never guesses by name-matching and never auto-creates a player opportunistically from live response data (considered and rejected — see `CHANGELOG.md` v4.10 entry).
+
+**Do not add further provider-specific columns to `players`.** New vendor identity goes into `player_provider_ids`, not a new column.
+
+**`games.finalized_at` (new nullable column, v4.10 — Phase 3E-8, Decision 2).** Set once, the first time a game's `status` is observed to transition to `'final'` — the stable anchor Postgame Ingestion Worker's bounded reconciliation schedule (Volume 2 §8, `app.workers.reconciliation`) measures elapsed time against. Deliberately not derived from `games.updated_at`, since a later Schedule re-poll can legitimately re-PATCH an already-final game's other fields, which would silently drift `updated_at` away from the true finalization moment.
 
 ### `odds_snapshots`
 ```sql

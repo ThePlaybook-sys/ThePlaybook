@@ -110,6 +110,7 @@ async def run_odds_worker(
     cache_backend: CacheBackend | None = None,
     now: datetime | None = None,
     last_polled_at: dict[str, datetime] | None = None,
+    target_game_ids: list[str] | None = None,
 ) -> OddsWorkerResult:
     """Runs one Odds Worker cycle. Always returns an `OddsWorkerResult`,
     never raises -- same finite-job shape as `run_master_refresh`.
@@ -122,6 +123,15 @@ async def run_odds_worker(
     tracks and passes this in. Passing `None` (the default) means "treat
     every due game as never-polled," which is always safe -- it can only
     cause an extra poll, never a missed one.
+
+    `target_game_ids` (Phase 3E-8, Decision 3): when provided, restricts
+    this run to exactly these candidate games, treated as due
+    unconditionally -- bypassing `classify_window`/`should_poll` entirely
+    for them. This is Pregame Worker's own coordination hook: it forces
+    this existing worker's own fetch/persistence path for one game right
+    at T-minus-5-minutes, rather than duplicating any of this worker's
+    logic. `None` (the default) preserves this worker's normal
+    cadence-driven behavior unchanged for every other caller.
     """
     headers = _auth_headers()
     cache_backend = cache_backend or InMemoryCacheBackend()
@@ -139,9 +149,16 @@ async def run_odds_worker(
     if not games:
         return OddsWorkerResult(status="success", games_considered=0)
 
+    target_set = set(target_game_ids) if target_game_ids is not None else None
     due_games: list[dict] = []
     skipped = 0
     for game in games:
+        if target_set is not None:
+            if game["id"] in target_set:
+                due_games.append(game)
+            else:
+                skipped += 1
+            continue
         kickoff = _parse_datetime(game["scheduled_start"])
         window = classify_window(now=now, kickoff=kickoff)
         if window is Window.STOPPED:

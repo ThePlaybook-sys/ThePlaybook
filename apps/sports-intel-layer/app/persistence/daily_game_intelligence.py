@@ -144,6 +144,29 @@ async def read_existing_news(client: httpx.AsyncClient, headers: dict, *, game_i
     return rows[0]["news"] if rows else None
 
 
+async def read_existing_players(client: httpx.AsyncClient, headers: dict, *, game_id: str) -> object:
+    """Preserves whatever `players` already holds -- Phase 3E-8's targeted
+    Pregame refresh (`app.master_refresh.game_refresh.
+    refresh_daily_game_intelligence_for_game`) doesn't re-fetch rosters
+    (out of scope for a T-minus-5-minute odds/props/injury/weather refresh
+    -- roster composition doesn't change in the final 5 minutes before
+    kickoff), so it reads this back and passes it through verbatim, exactly
+    mirroring `read_existing_news`'s identical reasoning for a field this
+    call doesn't own refreshing."""
+    response = await client.get(
+        "/rest/v1/daily_game_intelligence",
+        params={"game_id": f"eq.{game_id}", "select": "players"},
+        headers=headers,
+    )
+    if response.status_code != 200:
+        raise DailyGameIntelligenceError(
+            f"failed to read existing players for game {game_id}: "
+            f"{response.status_code} {response.text}"
+        )
+    rows = response.json()
+    return rows[0]["players"] if rows else None
+
+
 def build_payload(
     *,
     game_id: str,

@@ -38,6 +38,17 @@
 -- (three new nullable columns + three column comments on games) -- no new table, no column
 -- removal or type change, same convention. Its DOWN block is prepended since it's the most
 -- recently applied.
+-- 2026-08-18 addition (3E-8, Decision 1/2): 20260818060000_player_provider_ids_and_games_finalized_at
+-- is purely additive (one new table + RLS policy, one column comment, one new nullable column on
+-- games) -- no column removal or type change, same convention. Its DOWN block is prepended since
+-- it's the most recently applied.
+
+-- ============================================================================
+-- DOWN: 20260818060000_player_provider_ids_and_games_finalized_at
+-- ============================================================================
+alter table games drop column if exists finalized_at;
+drop table if exists player_provider_ids;
+-- expected table count after this block: 40 (back to the pre-3E-8 table count)
 
 -- ============================================================================
 -- DOWN: 20260818050000_games_venue_fields

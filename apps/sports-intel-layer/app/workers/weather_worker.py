@@ -153,11 +153,19 @@ async def run_weather_worker(
     cache_backend: CacheBackend | None = None,
     now: datetime | None = None,
     last_polled_at: dict[str, datetime] | None = None,
+    target_game_ids: list[str] | None = None,
 ) -> WeatherWorkerResult:
     """Runs one Weather Worker cycle. Always returns a `WeatherWorkerResult`,
     never raises -- same finite-job shape as every other specialized
     worker. `last_polled_at` is per-game (matching Odds/Player Props, since
     WeatherAPI's endpoint is per-game like theirs, not bulk like Injury's).
+
+    `target_game_ids` (Phase 3E-8, Decision 3): when provided, restricts
+    this run to exactly these candidate games, treated as due
+    unconditionally (bypassing `_should_poll`'s own cadence/STOPPED gating)
+    -- Pregame Worker's coordination hook, identical in spirit to
+    `run_odds_worker`'s parameter of the same name. `None` (the default)
+    preserves normal behavior unchanged.
     """
     headers = _auth_headers()
     cache_backend = cache_backend or InMemoryCacheBackend()
@@ -175,9 +183,16 @@ async def run_weather_worker(
     if not games:
         return WeatherWorkerResult(status="success", games_considered=0)
 
+    target_set = set(target_game_ids) if target_game_ids is not None else None
     due_games: list[dict] = []
     skipped_not_due = 0
     for game in games:
+        if target_set is not None:
+            if game["id"] in target_set:
+                due_games.append(game)
+            else:
+                skipped_not_due += 1
+            continue
         kickoff = _parse_datetime(game["scheduled_start"])
         if _should_poll(now=now, kickoff=kickoff, last_polled_at=last_polled_at.get(game["id"])):
             due_games.append(game)

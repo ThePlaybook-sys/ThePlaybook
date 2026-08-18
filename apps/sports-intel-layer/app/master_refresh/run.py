@@ -29,18 +29,12 @@ from app.adapters.cache import CacheBackend, CachingAdapter, InMemoryCacheBacken
 from app.adapters.errors import ProviderError
 from app.adapters.models import AdapterResponse, RosterEntry, ScheduleEntry
 from app.adapters.providers.sportsdataio import SportsDataIORosterAdapter, SportsDataIOScheduleAdapter
-from app.master_refresh.rest import compute_rest
+from app.master_refresh.game_refresh import refresh_daily_game_intelligence_for_game
 from app.master_refresh.slate import filter_slate_window
-from app.persistence.daily_game_intelligence import (
-    DailyGameIntelligenceError,
-    build_payload,
-    read_existing_news,
-    upsert_daily_game_intelligence,
-)
-from app.persistence.games import GamesQueryError, find_previous_final_game, list_games_in_window
+from app.persistence.daily_game_intelligence import DailyGameIntelligenceError
+from app.persistence.games import GamesQueryError, list_games_in_window
 from app.persistence.schedule import PersistenceError, persist_schedule_entries
 from app.persistence.seasons import SeasonResolutionError, fetch_current_season_string
-from app.persistence.snapshots import latest_injury_report, latest_odds_line, latest_prop_line, latest_weather_snapshot
 
 _SCHEDULE_TTL_SECONDS = 86400
 _ROSTER_TTL_SECONDS = 86400
@@ -66,12 +60,6 @@ def _auth_headers() -> dict:
         "apikey": service_role_key,
         "Content-Type": "application/json",
     }
-
-
-def _parse_datetime(value: str | datetime) -> datetime:
-    if isinstance(value, str):
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
-    return value
 
 
 async def run_master_refresh(
@@ -164,55 +152,17 @@ async def run_master_refresh(
             roster_failures.append(team)
             rosters[team] = None
 
-    # Steps 6-8: per-game rest computation, currently-available
-    # intelligence read, and daily_game_intelligence assembly/upsert --
-    # each isolated so one game's failure never blocks another's.
+    # Steps 6-8: per-game daily_game_intelligence refresh, each isolated so
+    # one game's failure never blocks another's. Delegates to
+    # app.master_refresh.game_refresh (extracted Phase 3E-8 so Pregame
+    # Worker can reuse the identical assembly behavior for a single
+    # targeted game -- see that module's docstring).
     dgi_written = 0
     dgi_failures: list[str] = []
     for game in games:
         game_id = game["id"]
         try:
-            scheduled_start = _parse_datetime(game["scheduled_start"])
-
-            home_previous = await find_previous_final_game(
-                supabase_client, headers, team=game["home_team"], before=scheduled_start
-            )
-            away_previous = await find_previous_final_game(
-                supabase_client, headers, team=game["away_team"], before=scheduled_start
-            )
-            rest = {
-                "home": compute_rest(current_scheduled_start=scheduled_start, previous_game=home_previous),
-                "away": compute_rest(current_scheduled_start=scheduled_start, previous_game=away_previous),
-            }
-
-            odds_row = await latest_odds_line(supabase_client, headers, game_id=game_id)
-            props_row = await latest_prop_line(supabase_client, headers, game_id=game_id)
-            injury_row = await latest_injury_report(supabase_client, headers, game_id=game_id)
-            weather_row = await latest_weather_snapshot(supabase_client, headers, game_id=game_id)
-            existing_news = await read_existing_news(supabase_client, headers, game_id=game_id)
-
-            home_roster = rosters.get(game["home_team"])
-            away_roster = rosters.get(game["away_team"])
-            players = None
-            if home_roster is not None or away_roster is not None:
-                players = {
-                    "home": [r.model_dump(mode="json") for r in home_roster] if home_roster is not None else None,
-                    "away": [r.model_dump(mode="json") for r in away_roster] if away_roster is not None else None,
-                }
-
-            payload = build_payload(
-                game_id=game_id,
-                teams={"home": game["home_team"], "away": game["away_team"]},
-                players=players,
-                odds_row=odds_row,
-                props_row=props_row,
-                injury_row=injury_row,
-                weather_row=weather_row,
-                existing_news=existing_news,
-                rest=rest,
-                stadium={"name": game["stadium"]} if game.get("stadium") else None,
-            )
-            await upsert_daily_game_intelligence(supabase_client, headers, payload)
+            await refresh_daily_game_intelligence_for_game(supabase_client, headers, game, rosters=rosters)
             dgi_written += 1
         except (GamesQueryError, DailyGameIntelligenceError) as exc:
             dgi_failures.append(f"{game_id}: {exc}")

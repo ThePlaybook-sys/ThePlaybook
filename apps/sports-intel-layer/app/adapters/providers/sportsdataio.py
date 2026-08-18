@@ -96,12 +96,18 @@ that specific decision and report the alternatives rather than inventing
 one"), this stays `None` until he picks one -- reported as an open
 question, not resolved by guessing here.
 
-**Schedule status: only what's actually been observed.** All 304 games
-captured in the live Schedules response were `"Scheduled"` or `null`
-(2026REG hasn't started). `_SCHEDULE_STATUS_MAP` therefore has exactly one
-entry. Any other value -- including `null` -- raises `ProviderDataError`
-rather than being silently mapped to a guess, per Mac's explicit
-instruction not to invent the rest of the vocabulary from assumption.
+**Schedule status: only what's actually been observed, plus one explicitly
+flagged exception.** All 304 games captured in the live Schedules response
+were `"Scheduled"` or `null` (2026REG hasn't started) -- that entry is
+CONFIRMED FROM LIVE FREE TRIAL. `_SCHEDULE_STATUS_MAP` also carries a second
+entry, `"Final": "final"`, added Phase 3E-8 (Decision 2) to make game-final
+detection possible at all -- but this one is ASSUMED / DEFERRED LIVE
+VERIFICATION, not observed, since no game had finished as of any live
+capture this project has made. See `_SCHEDULE_STATUS_MAP`'s own comment for
+the full reasoning. Any other value -- including `null` or `"InProgress"`
+-- still raises `ProviderDataError` rather than being silently mapped to a
+guess, per Mac's explicit instruction not to invent the rest of the
+vocabulary from assumption.
 
 **Trial numeric values are structurally real but semantically untrusted.**
 Cross-checked, not just asserted: in the live `team_stats` capture, `Score`
@@ -144,10 +150,25 @@ from app.adapters.models import (
     TeamStatLine,
 )
 
-#: CONFIRMED FROM LIVE FREE TRIAL -- the only schedule status value ever
-#: observed (all 304 captured 2026REG games; season hadn't started). Any
-#: other value, including a JSON null, raises rather than being guessed.
-_SCHEDULE_STATUS_MAP = {"Scheduled": "scheduled"}
+#: CONFIRMED FROM LIVE FREE TRIAL: "Scheduled" (all 304 captured 2026REG
+#: games; season hadn't started at capture time).
+#:
+#: ASSUMED / DEFERRED LIVE VERIFICATION (Phase 3E-8, Decision 2, 2026-08-18):
+#: "Final" has never been observed live -- this project has no evidence of
+#: SportsDataIO's actual raw string for a completed game. "Final" is the
+#: most common public convention for this vendor's API family, but it is
+#: explicitly NOT live-confirmed and must not be presented as such anywhere
+#: (docs, tests, or code comments). The remaining SportsDataIO Free Trial
+#: call (11/12 used, 1 remaining) is deliberately NOT being spent to verify
+#: this now: the 2026 season had not started as of the last live capture, so
+#: spending it today would very likely still only observe "Scheduled" and
+#: resolve nothing. The correct time to verify is after a real NFL game has
+#: actually finished -- costs no additional call, only calendar time. Any
+#: OTHER unrecognized value (including "InProgress", also never observed
+#: live -- see the synthetic schedules_unrecognized_status.json fixture)
+#: still raises rather than being guessed, same discipline as every other
+#: entry in this map.
+_SCHEDULE_STATUS_MAP = {"Scheduled": "scheduled", "Final": "final"}
 
 #: CONFIRMED FROM LIVE FREE TRIAL, same discipline as _SCHEDULE_STATUS_MAP above:
 #: every one of the 304 captured Schedules rows -- fetched by requesting the

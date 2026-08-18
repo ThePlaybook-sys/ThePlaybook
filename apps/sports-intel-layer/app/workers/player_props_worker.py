@@ -104,12 +104,14 @@ async def run_player_props_worker(
     cache_backend: CacheBackend | None = None,
     now: datetime | None = None,
     last_polled_at: dict[str, datetime] | None = None,
+    target_game_ids: list[str] | None = None,
 ) -> PlayerPropsWorkerResult:
     """Runs one Player Props Worker cycle. Always returns a
     `PlayerPropsWorkerResult`, never raises -- same finite-job shape as
     `run_master_refresh`/`run_odds_worker`. See this module's own
     docstring for `last_polled_at`'s meaning (identical to the Odds
-    Worker's).
+    Worker's). `target_game_ids` (Phase 3E-8, Decision 3) is also
+    identical to `run_odds_worker`'s -- see that function's docstring.
     """
     headers = _auth_headers()
     cache_backend = cache_backend or InMemoryCacheBackend()
@@ -127,9 +129,16 @@ async def run_player_props_worker(
     if not games:
         return PlayerPropsWorkerResult(status="success", games_considered=0)
 
+    target_set = set(target_game_ids) if target_game_ids is not None else None
     due_games: list[dict] = []
     skipped = 0
     for game in games:
+        if target_set is not None:
+            if game["id"] in target_set:
+                due_games.append(game)
+            else:
+                skipped += 1
+            continue
         kickoff = _parse_datetime(game["scheduled_start"])
         window = classify_window(now=now, kickoff=kickoff)
         if window is Window.STOPPED:
