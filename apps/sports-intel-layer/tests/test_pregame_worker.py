@@ -130,6 +130,14 @@ async def test_triggers_at_t_minus_5_and_coordinates_existing_workers(monkeypatc
     assert routes["forecast"].call_count == 1  # Weather Worker's own per-game call, reused not duplicated
     assert routes["dgi_upsert"].call_count == 1  # Decision 4: targeted daily_game_intelligence refresh
 
+    # Phase 3F-3: the targeted refresh goes through the same shared
+    # app.master_refresh.game_refresh._build_stadium as Master Refresh --
+    # _game_row()'s real venue_lat/venue_long/venue_type surface here too.
+    body = _json.loads(routes["dgi_upsert"].calls.last.request.content)
+    assert body["stadium"] == {
+        "name": "Arrowhead Stadium", "latitude": 39.0489, "longitude": -94.4839, "venue_type": "outdoor",
+    }
+
 
 @pytest.mark.asyncio
 @respx.mock
