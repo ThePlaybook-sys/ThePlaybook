@@ -185,3 +185,167 @@ def should_poll(*, now: datetime, kickoff: datetime, last_polled_at: datetime | 
     # docstring's "real subtlety" note.
     elapsed = now.astimezone(timezone.utc) - last_polled_at.astimezone(timezone.utc)
     return elapsed >= timedelta(seconds=interval)
+
+
+# ============================================================================
+# Injury Worker cadence (Phase 3E-5, 2026-08-18) -- an EXTENSION of the
+# module above, not a second competing implementation. Reuses
+# `_require_aware` and the identical UTC-normalization-before-subtracting
+# discipline from `classify_window`/`should_poll` verbatim; the only new
+# concept introduced is day-of-week gating, which `classify_window` has no
+# way to express (it only ever measures time-until-kickoff).
+#
+# **Why a plain reuse of `classify_window` doesn't work here (Mac's
+# Decision 1, confirmed before writing this):** Volume 2 §8's Injury
+# Worker row is CONFIRMED to read differently from the Odds/Player Props
+# rows this module was originally built for -- it names real-world
+# calendar days ("practice-report updates land roughly once daily
+# Wednesday-Friday... stays infrequent the rest of the week"), not a pure
+# kickoff-proximity ramp. `classify_window`'s own FAR tier collapses every
+# day from 2h+ out into one flat 24h interval, which cannot represent
+# "more frequent on Wed/Thu/Fri than on Mon/Tue/Sat" -- a day-of-week
+# concept `classify_window` has no field to hold.
+#
+# **CONFIRMED FROM VOLUME 2 §8:** injury polling stops at kickoff (same
+# "not continuous" language, same STOPPED convention, directly reused);
+# "roughly once daily Wednesday-Friday" is an explicit stated cadence
+# (operationalized below as a literal 24h interval, the same
+# boundary-as-interval convention `classify_window`'s own FAR tier already
+# established for "1 morning snapshot"/"infrequent... days out"); "inactive
+# lists post ~90 minutes before kickoff" is an explicit stated boundary
+# (operationalized as a dedicated tier boundary at 90 minutes, given equal
+# precision to the four exact ramp boundaries `classify_window` itself
+# already treats as CONFIRMED numbers).
+#
+# **ASSUMED/DERIVED (ASSUMED where no existing convention applies, DERIVED
+# where an existing convention was extended rather than invented from
+# nothing) -- flagged explicitly per Mac's "inspect existing convention
+# before choosing unspecified intervals" instruction, not silently
+# decided:**
+# - **Which "Wednesday" a given `now` falls on** is read as
+#   `now`'s UTC weekday -- DERIVED directly from this module's own
+#   pre-existing, stated discipline of never reading local/server time and
+#   always normalizing through UTC before any date/time comparison (see
+#   `classify_window`'s own docstring and Mac's original "do not base
+#   polling policy on the Railway server's local timezone" instruction,
+#   Phase 3E-4G). Not a fresh invention -- the one and only timezone
+#   convention already established here, applied to a new axis (day-of-
+#   week instead of duration).
+# - **INFREQUENT tier interval (48h)** -- no Blueprint number exists for
+#   "stays infrequent the rest of the week" at all, unlike ACTIVE_WEEK's
+#   explicit "once daily." A conservative choice, deliberately looser than
+#   ACTIVE_WEEK's daily cadence (the whole point of "infrequent" is that
+#   it's less frequent than the active-window rate) without being so loose
+#   real injury-status changes would go unnoticed for the bulk of a week.
+# - **FINAL_RAMP interval (30min)** and **INACTIVE_LIST interval (15min)**
+#   -- no Blueprint numbers exist for either. Chosen to bracket the one
+#   CONFIRMED number (the T-90-minute boundary) with monotonically
+#   increasing frequency approaching kickoff, mirroring the exact shape
+#   (frequency ramps up, never down, as kickoff nears) `classify_window`'s
+#   own four ramp tiers already established for Odds/Player Props --
+#   reusing that module's *shape*, not its specific numbers, which belong
+#   to a different data category's own volatility pattern.
+# - **The final ramp overrides day-of-week gating entirely, on any day.**
+#   The Blueprint's "increased polling approaching kickoff" and "T-90-
+#   minute inactive list" language names no day restriction -- a Thursday-
+#   or Monday-night game's own approach-to-kickoff behavior is not
+#   Blueprint-exempted just because it falls outside a literal
+#   Wednesday-Friday span, and no code here invents such an exemption.
+class InjuryWindow(str, Enum):
+    #: Not Wed/Thu/Fri (by `now`'s UTC weekday) and more than 2h from
+    #: kickoff -- "stays infrequent the rest of the week."
+    INFREQUENT = "infrequent"
+    #: Wed/Thu/Fri (by `now`'s UTC weekday) and more than 2h from kickoff
+    #: -- "roughly once daily Wednesday-Friday."
+    ACTIVE_WEEK = "active_week"
+    #: (90 min, 2h] before kickoff, any day -- "increased polling
+    #: approaching kickoff."
+    FINAL_RAMP = "final_ramp"
+    #: (0, 90 min] before kickoff, any day -- brackets the CONFIRMED
+    #: "~90 minutes before kickoff" inactive-list boundary.
+    INACTIVE_LIST = "inactive_list"
+    #: At or after kickoff -- polling stops (CONFIRMED, same convention as
+    #: `Window.STOPPED`).
+    STOPPED = "injury_stopped"
+
+
+_INJURY_POLL_INTERVAL_SECONDS: dict[InjuryWindow, int | None] = {
+    InjuryWindow.INFREQUENT: 172800,  # 48h -- ASSUMED, see module docstring
+    InjuryWindow.ACTIVE_WEEK: 86400,  # 24h -- "roughly once daily", CONFIRMED number
+    InjuryWindow.FINAL_RAMP: 1800,  # 30min -- ASSUMED
+    InjuryWindow.INACTIVE_LIST: 900,  # 15min -- ASSUMED
+    InjuryWindow.STOPPED: None,
+}
+
+#: Same "TTL == poll interval" convention as Decision 4 (`_TTL_SECONDS`
+#: above). STOPPED reuses INACTIVE_LIST's interval as its TTL, mirroring
+#: `Window.STOPPED`'s identical fallback rationale (the last pregame
+#: snapshot stays "fresh" for one more tight-window interval rather than
+#: being treated as either infinitely fresh or immediately stale).
+_INJURY_TTL_SECONDS: dict[InjuryWindow, int] = {
+    **{w: v for w, v in _INJURY_POLL_INTERVAL_SECONDS.items() if v is not None},
+    InjuryWindow.STOPPED: _INJURY_POLL_INTERVAL_SECONDS[InjuryWindow.INACTIVE_LIST],
+}
+
+_WEDNESDAY, _THURSDAY, _FRIDAY = 2, 3, 4  # datetime.weekday(): Monday == 0
+
+
+def classify_injury_window(*, now: datetime, kickoff: datetime) -> InjuryWindow:
+    """Classifies the injury-polling tier for `kickoff` relative to `now`.
+    Both arguments must be timezone-aware (same requirement, same
+    enforcement, as `classify_window`).
+
+    The final pre-kickoff ramp (FINAL_RAMP/INACTIVE_LIST/STOPPED) takes
+    precedence over day-of-week gating on any day -- see module docstring.
+    Otherwise, classification is driven by `now`'s UTC weekday.
+    """
+    _require_aware(now, "now")
+    _require_aware(kickoff, "kickoff")
+
+    # Same UTC-normalization-before-subtracting discipline as
+    # `classify_window` -- never subtract two aware datetimes directly.
+    now_utc = now.astimezone(timezone.utc)
+    time_to_kickoff = kickoff.astimezone(timezone.utc) - now_utc
+    if time_to_kickoff <= timedelta(0):
+        return InjuryWindow.STOPPED
+    if time_to_kickoff <= timedelta(minutes=90):
+        return InjuryWindow.INACTIVE_LIST
+    if time_to_kickoff <= timedelta(hours=2):
+        return InjuryWindow.FINAL_RAMP
+
+    if now_utc.weekday() in (_WEDNESDAY, _THURSDAY, _FRIDAY):
+        return InjuryWindow.ACTIVE_WEEK
+    return InjuryWindow.INFREQUENT
+
+
+def injury_poll_interval_seconds(window: InjuryWindow) -> int | None:
+    """Seconds between injury polls for `window`, or `None` if this window
+    should never be polled (STOPPED)."""
+    return _INJURY_POLL_INTERVAL_SECONDS[window]
+
+
+def injury_ttl_seconds(window: InjuryWindow) -> int:
+    """Cache TTL in seconds for injury data classified into `window`."""
+    return _INJURY_TTL_SECONDS[window]
+
+
+def should_poll_injuries(*, now: datetime, kickoff: datetime, last_polled_at: datetime | None) -> bool:
+    """Same shape/semantics as `should_poll`, against the injury tiers.
+    `last_polled_at` here is a single, worker-level timestamp (not
+    per-game) -- see `app.workers.injury_worker`'s module docstring for
+    why: SportsDataIO's Injuries endpoint is one bulk per-week call
+    covering every team at once, not a per-game call like Odds/Player
+    Props, so there is exactly one "last polled" moment per worker cycle,
+    not one per game.
+    """
+    if last_polled_at is not None:
+        _require_aware(last_polled_at, "last_polled_at")
+
+    window = classify_injury_window(now=now, kickoff=kickoff)
+    interval = injury_poll_interval_seconds(window)
+    if interval is None:
+        return False
+    if last_polled_at is None:
+        return True
+    elapsed = now.astimezone(timezone.utc) - last_polled_at.astimezone(timezone.utc)
+    return elapsed >= timedelta(seconds=interval)

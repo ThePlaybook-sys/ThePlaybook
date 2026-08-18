@@ -58,12 +58,16 @@ current roster and depth chart." `SportsDataIORosterAdapter` therefore
 calls *both* `/Players/{team}` and `/DepthCharts` (the latter cached
 league-wide, bulk, same pattern as the week-scoped stats above) and merges
 `DepthOrder` by `PlayerID` into `RosterEntry.depth_chart_rank`. If the
-DepthCharts call fails, the whole `fetch_roster` call raises -- there is no
-established "return partial/degraded data" pattern anywhere in this
-codebase (every adapter method here either fully succeeds or raises a
-`ProviderError`), so silently falling back to the Players endpoint's own
-unreliable depth fields would be inventing a new, undocumented behavior,
-not reusing an existing one.
+DepthCharts call fails, the whole `fetch_roster` call raises -- at the time
+this was written, no "return partial/degraded data" pattern existed
+anywhere in this codebase for a *transport-level* failure (every adapter
+method here either fully succeeds or raises a `ProviderError` for that),
+so silently falling back to the Players endpoint's own unreliable depth
+fields would have been inventing a new, undocumented behavior, not reusing
+an existing one. (This is about the DepthCharts *call* failing outright,
+not a malformed row within an otherwise-successful response -- see
+`SportsDataIOInjuryAdapter.fetch_injuries`'s own per-row isolation, added
+Phase 3E-5, for that distinct case.)
 
 **`InjuryReport.game_external_id` is derived, not provided.** The Injuries
 response has no `GameKey`/game identifier at all -- only `Season`/`Week`/
@@ -112,6 +116,7 @@ tests must not assert the scrambled numbers reconcile.
 from __future__ import annotations
 
 import json
+import logging
 from typing import Callable
 
 import httpx
@@ -154,6 +159,8 @@ _SCHEDULE_STATUS_MAP = {"Scheduled": "scheduled"}
 #: completion report's "assumptions remaining" -- production wiring against a real
 #: preseason/postseason Schedule call is required before this map can safely grow).
 _SEASON_TYPE_MAP = {1: "regular"}
+
+_logger = logging.getLogger("sports-intel-layer.adapters.sportsdataio")
 
 #: CONFIRMED FROM PROVIDER DOCUMENTATION (Mac, 2026-08-12): SportsDataIO's
 #: own docs state a 5-minute call interval for these categories -- used as
@@ -501,9 +508,22 @@ class SportsDataIOInjuryAdapter(InjuryAdapter):
         )
         rows = _parse_json_array(response, provider_name=self.provider_name)
 
+        # Phase 3E-5, per-row isolation (Mac's explicit Decision 3): a
+        # single malformed row (missing PlayerID, wrong type, etc.) must
+        # never invalidate the whole week's response for every other team.
+        # This is a deliberate change from this adapter's original 3C-ii
+        # contract, which wrapped the entire loop in one try/except and
+        # raised ProviderDataError for the whole call on any row's
+        # failure -- approved explicitly for 3E-5, not a silent behavior
+        # change. The boundary this preserves unchanged: a genuine
+        # provider/response-level failure (HTTP error, non-200, non-JSON
+        # body, non-array top-level shape) still fails the whole fetch, via
+        # `_get`/`_parse_json_array` above, neither of which this loop
+        # touches -- only a malformed *row within* an otherwise-valid array
+        # is isolated here.
         reports: list[InjuryReport] = []
-        try:
-            for row in rows:
+        for row in rows:
+            try:
                 if team is not None and row["Team"] != team:
                     continue
                 game_external_id = self._game_key_for(row["Team"], row["Opponent"], season, week)
@@ -525,8 +545,21 @@ class SportsDataIOInjuryAdapter(InjuryAdapter):
                         description=None,
                     )
                 )
-        except (KeyError, TypeError) as exc:
-            raise ProviderDataError(f"malformed injuries payload: {exc}", provider=self.provider_name) from exc
+            except (KeyError, TypeError) as exc:
+                # Logged, not fabricated/guessed: identifies the row by
+                # whatever fields it does carry (never invents a missing
+                # PlayerID/Team to make the log line prettier), then moves
+                # on to the next row.
+                _logger.warning(
+                    "SPORTSDATAIO_INJURIES: malformed row skipped "
+                    "team=%s opponent=%s name=%s player_id=%s error=%s",
+                    row.get("Team", "<missing>"),
+                    row.get("Opponent", "<missing>"),
+                    row.get("Name", "<missing>"),
+                    row.get("PlayerID", "<missing>"),
+                    exc,
+                )
+                continue
 
         return AdapterResponse(value=reports, source=self.provider_name)
 

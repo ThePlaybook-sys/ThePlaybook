@@ -16,7 +16,18 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from app.workers.windows import Window, classify_window, poll_interval_seconds, should_poll, ttl_seconds
+from app.workers.windows import (
+    InjuryWindow,
+    Window,
+    classify_injury_window,
+    classify_window,
+    injury_poll_interval_seconds,
+    injury_ttl_seconds,
+    poll_interval_seconds,
+    should_poll,
+    should_poll_injuries,
+    ttl_seconds,
+)
 
 EASTERN = ZoneInfo("America/New_York")
 CENTRAL = ZoneInfo("America/Chicago")
@@ -249,3 +260,165 @@ def test_all_four_continental_us_timezones_agree_when_the_instant_is_identical()
         for tz in (EASTERN, CENTRAL, MOUNTAIN, PACIFIC, timezone.utc)
     }
     assert classifications == {Window.RAMP_60M}
+
+
+# ============================================================================
+# Injury Worker cadence (Phase 3E-5) -- classify_injury_window/
+# should_poll_injuries/injury_poll_interval_seconds/injury_ttl_seconds.
+# Day-of-week reference: 2026-09-13 is a Sunday (matches the Sunday-kickoff
+# tests above), so 2026-09-16/17/18 are Wed/Thu/Fri and 2026-09-14/15/19
+# are Mon/Tue/Sat -- verified via `date(...).strftime("%A")` before writing
+# these, not assumed from a calendar lookup.
+# ============================================================================
+
+
+def test_injury_naive_now_is_rejected():
+    with pytest.raises(ValueError, match="timezone-aware"):
+        classify_injury_window(
+            now=datetime(2026, 9, 16, 12, 0), kickoff=datetime(2026, 9, 20, 17, 0, tzinfo=timezone.utc)
+        )
+
+
+def test_injury_naive_kickoff_is_rejected():
+    with pytest.raises(ValueError, match="timezone-aware"):
+        classify_injury_window(
+            now=datetime(2026, 9, 16, 12, 0, tzinfo=timezone.utc), kickoff=datetime(2026, 9, 20, 17, 0)
+        )
+
+
+def test_injury_naive_last_polled_at_is_rejected():
+    now = datetime(2026, 9, 16, 12, 0, tzinfo=timezone.utc)
+    kickoff = now + timedelta(days=4)
+    with pytest.raises(ValueError, match="timezone-aware"):
+        should_poll_injuries(now=now, kickoff=kickoff, last_polled_at=datetime(2026, 9, 15, 10, 0))
+
+
+@pytest.mark.parametrize(
+    "now_date,expected",
+    [
+        (datetime(2026, 9, 14, 12, 0, tzinfo=timezone.utc), InjuryWindow.INFREQUENT),  # Monday
+        (datetime(2026, 9, 15, 12, 0, tzinfo=timezone.utc), InjuryWindow.INFREQUENT),  # Tuesday
+        (datetime(2026, 9, 16, 12, 0, tzinfo=timezone.utc), InjuryWindow.ACTIVE_WEEK),  # Wednesday
+        (datetime(2026, 9, 17, 12, 0, tzinfo=timezone.utc), InjuryWindow.ACTIVE_WEEK),  # Thursday
+        (datetime(2026, 9, 18, 12, 0, tzinfo=timezone.utc), InjuryWindow.ACTIVE_WEEK),  # Friday
+        (datetime(2026, 9, 19, 12, 0, tzinfo=timezone.utc), InjuryWindow.INFREQUENT),  # Saturday
+    ],
+)
+def test_classify_injury_window_day_of_week_gating_far_from_kickoff(now_date, expected):
+    # Kickoff is Sunday 2026-09-20 17:00 UTC -- always well beyond the 2h
+    # final-ramp boundary for every `now` tested here, so day-of-week
+    # gating alone determines the tier.
+    kickoff = datetime(2026, 9, 20, 17, 0, tzinfo=timezone.utc)
+    assert classify_injury_window(now=now_date, kickoff=kickoff) == expected
+
+
+@pytest.mark.parametrize(
+    "time_to_kickoff,expected",
+    [
+        (timedelta(hours=2), InjuryWindow.FINAL_RAMP),
+        (timedelta(minutes=91), InjuryWindow.FINAL_RAMP),
+        (timedelta(minutes=90), InjuryWindow.INACTIVE_LIST),  # the CONFIRMED ~90-minute boundary
+        (timedelta(minutes=1), InjuryWindow.INACTIVE_LIST),
+        (timedelta(0), InjuryWindow.STOPPED),
+        (timedelta(minutes=-90), InjuryWindow.STOPPED),  # mid-game, well after kickoff
+    ],
+)
+def test_classify_injury_window_final_ramp_boundaries(time_to_kickoff, expected):
+    # `now` is a Sunday itself here -- proves these boundaries apply
+    # regardless of day-of-week, exactly like the override test below.
+    now = datetime(2026, 9, 20, 12, 0, tzinfo=timezone.utc)
+    kickoff = now + time_to_kickoff
+    assert classify_injury_window(now=now, kickoff=kickoff) == expected
+
+
+def test_classify_injury_window_just_beyond_final_ramp_falls_back_to_day_of_week():
+    # 2h + 1s out on a Sunday (not Wed/Thu/Fri) -- beyond the final ramp,
+    # so day-of-week gating resumes and this Sunday is INFREQUENT.
+    now = datetime(2026, 9, 20, 12, 0, tzinfo=timezone.utc)  # Sunday
+    kickoff = now + timedelta(hours=2, seconds=1)
+    assert classify_injury_window(now=now, kickoff=kickoff) == InjuryWindow.INFREQUENT
+
+
+def test_injury_final_ramp_overrides_day_of_week_on_any_day():
+    # Monday (would otherwise be INFREQUENT), but kickoff is 30 minutes
+    # away -- Mac's explicit requirement: "increased polling approaching
+    # kickoff" applies on any day, no Blueprint-stated day exemption.
+    now = datetime(2026, 9, 14, 19, 30, tzinfo=timezone.utc)  # Monday
+    kickoff = now + timedelta(minutes=30)
+    assert classify_injury_window(now=now, kickoff=kickoff) == InjuryWindow.INACTIVE_LIST
+
+
+def test_injury_stopped_window_has_no_poll_interval_and_never_polls():
+    assert injury_poll_interval_seconds(InjuryWindow.STOPPED) is None
+    now = datetime(2026, 9, 20, 20, 0, tzinfo=timezone.utc)
+    kickoff = now - timedelta(minutes=5)  # already kicked off
+    assert should_poll_injuries(now=now, kickoff=kickoff, last_polled_at=None) is False
+
+
+def test_injury_ttl_matches_poll_interval_for_every_actively_polled_window():
+    for window in InjuryWindow:
+        if window is InjuryWindow.STOPPED:
+            continue
+        assert injury_ttl_seconds(window) == injury_poll_interval_seconds(window)
+
+
+def test_injury_stopped_window_ttl_reuses_inactive_list_interval_not_infinite_or_zero():
+    assert injury_ttl_seconds(InjuryWindow.STOPPED) == injury_poll_interval_seconds(InjuryWindow.INACTIVE_LIST)
+
+
+def test_injury_active_week_interval_is_once_daily():
+    # The one CONFIRMED number in the whole injury cadence -- "roughly
+    # once daily Wednesday-Friday" -- is a literal 24h interval.
+    assert injury_poll_interval_seconds(InjuryWindow.ACTIVE_WEEK) == 86400
+
+
+def test_injury_infrequent_interval_is_looser_than_active_week():
+    # ASSUMED (no Blueprint number for "infrequent") but must be
+    # directionally correct: looser than the active-window cadence, since
+    # that asymmetry is the entire point of the Blueprint's own wording.
+    assert injury_poll_interval_seconds(InjuryWindow.INFREQUENT) > injury_poll_interval_seconds(
+        InjuryWindow.ACTIVE_WEEK
+    )
+
+
+def test_injury_final_ramp_intervals_monotonically_tighten_toward_kickoff():
+    assert (
+        injury_poll_interval_seconds(InjuryWindow.ACTIVE_WEEK)
+        > injury_poll_interval_seconds(InjuryWindow.FINAL_RAMP)
+        > injury_poll_interval_seconds(InjuryWindow.INACTIVE_LIST)
+    )
+
+
+def test_should_poll_injuries_true_when_never_polled_and_window_is_active():
+    now = datetime(2026, 9, 16, 12, 0, tzinfo=timezone.utc)  # Wednesday
+    kickoff = now + timedelta(days=4)
+    assert should_poll_injuries(now=now, kickoff=kickoff, last_polled_at=None) is True
+
+
+def test_should_poll_injuries_false_when_interval_has_not_elapsed():
+    now = datetime(2026, 9, 16, 12, 0, tzinfo=timezone.utc)  # Wednesday, ACTIVE_WEEK -- 86400s interval
+    kickoff = now + timedelta(days=4)
+    last_polled_at = now - timedelta(hours=1)
+    assert should_poll_injuries(now=now, kickoff=kickoff, last_polled_at=last_polled_at) is False
+
+
+def test_should_poll_injuries_true_once_interval_has_elapsed():
+    now = datetime(2026, 9, 16, 12, 0, tzinfo=timezone.utc)  # Wednesday, ACTIVE_WEEK -- 86400s interval
+    kickoff = now + timedelta(days=4)
+    last_polled_at = now - timedelta(seconds=86401)
+    assert should_poll_injuries(now=now, kickoff=kickoff, last_polled_at=last_polled_at) is True
+
+
+def test_injury_window_dst_safety_reuses_classify_window_utc_normalization():
+    # Same DST subtlety as test_dst_spring_forward_boundary_does_not_corrupt_elapsed_time
+    # above, proven directly against classify_injury_window rather than
+    # assumed inherited: two datetimes sharing the same ZoneInfo tzinfo
+    # object straddling spring-forward must not fall back to a naive
+    # wall-clock subtraction.
+    kickoff = datetime(2026, 3, 8, 3, 0, tzinfo=EASTERN)  # 3:00 AM EDT (just after spring-forward)
+    now = datetime(2026, 3, 8, 1, 0, tzinfo=EASTERN)  # 1:00 AM EST (just before spring-forward)
+    assert now.tzinfo is kickoff.tzinfo
+    # Naive (wrong) wall-clock gap: 2h0m -> FINAL_RAMP boundary exactly.
+    # Correct (UTC-normalized) real gap: 1h0m, one hour skipped by the
+    # spring-forward transition -> INACTIVE_LIST.
+    assert classify_injury_window(now=now, kickoff=kickoff) == InjuryWindow.INACTIVE_LIST
