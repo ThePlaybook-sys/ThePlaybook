@@ -157,9 +157,87 @@ module docstring and PROGRESS.md for the reported alternatives.
 
 ## Remaining gaps, not solved by these fixtures
 
-- Full status vocabularies for `InjuryReport.status` (entirely scrambled)
-  and `ScheduleEntry.status` (only `"Scheduled"`/`null` observed — season
-  hasn't started) remain ASSUMED beyond what's directly mapped.
-- `players.team_id` roster-history gap and the `depth_chart_snapshots`/
-  `game_id` structural mismatch are Milestone F schema questions, not
-  touched by this fixture suite or the adapters that consume it.
+- Full status vocabulary for `InjuryReport.status` (entirely scrambled)
+  remains ASSUMED beyond what's directly mapped.
+- `players.team_id` roster-history gap has been closed (Phase 3F-1,
+  `roster_memberships`); the `depth_chart_snapshots`/`game_id` structural
+  mismatch has also been closed (Phase 3F-1, corrected to `team_id`-keyed).
+
+## Game status vocabulary — CONFIRMED FROM PROVIDER DOCUMENTATION (2026-08-18)
+
+Mac reviewed SportsDataIO's own provider documentation (not inferred from
+a live capture) and confirmed the full `ScheduleEntry.status`/`Games.Status`
+vocabulary: `Scheduled`, `InProgress`, `Final`, `F/OT`, `Suspended`,
+`Postponed`, `Delayed`, `Canceled`, `Forfeit` — 9 values. This **upgrades**
+`"Final"` from ASSUMED/DEFERRED LIVE VERIFICATION (3E-8) to **CONFIRMED
+FROM PROVIDER DOCUMENTATION** — no live call was needed or spent to make
+this determination; documentation review is a separate, valid provenance
+tier from a live capture, and Mac's own review satisfies it here.
+
+**`_SCHEDULE_STATUS_MAP` (`app/adapters/providers/sportsdataio.py`) only
+maps 2 of these 9 values** (`Scheduled`, `Final`) — confirmed by direct
+inspection, not assumed. This is now a known, reported architectural gap,
+not silently left unmapped: `F/OT` (a completed overtime game) is not
+recognized as final at all, and any of the other 7 unmapped values
+appearing anywhere in a live Schedule response would raise
+`ProviderDataError`, which is **not row-isolated** — it aborts the entire
+`fetch_schedule` call (a full-season fetch, not just the requested week),
+cascading to fail the entire Master Refresh or Postgame Worker run for
+that cycle. See `PROGRESS.md`'s 2026-08-18 entry for the full finding and
+Mac's pending decision on the fix — **not implemented yet, by explicit
+instruction.**
+
+## NFL rescheduling behavior — CONFIRMED FROM PROVIDER DOCUMENTATION (2026-08-18)
+
+- Rescheduled within the same game week: SportsDataIO keeps the same
+  `GameID` and updates the existing game record in place.
+- Rescheduled into a different game week: the original game transitions to
+  `Postponed` (status) and a **new** game record with a **new** `GameID`
+  is created for the rescheduled game.
+
+Cross-checked against this project's own game-identity architecture
+(`game_provider_ids`, `app.persistence.schedule.persist_schedule_entries`):
+the same-week case is already correctly handled by the existing
+upsert-by-`provider_game_id` logic (any Schedule field change, including a
+time shift within the week, PATCHes the existing linked row — no special
+case needed). The different-week case is also architecturally correct
+by construction (a new `GameID` naturally resolves to no existing
+`game_provider_ids` mapping, so a new `games` row is created, exactly as
+SportsDataIO's own model intends) **provided `Postponed` is a recognized
+status** — which depends on the same `_SCHEDULE_STATUS_MAP` gap above, not
+a second, independent issue. No architecture change required beyond that
+one shared fix.
+
+## Timezone — CONFIRMED FROM PROVIDER DOCUMENTATION (2026-08-18)
+
+SportsDataIO's NFL API times are Eastern Time (EST/EDT), with DST
+transitions handled by SportsDataIO itself. **No conflict with this
+project's UTC-normalization architecture**, confirmed by direct
+inspection: `SportsDataIOScheduleAdapter.fetch_schedule` and
+`_parse_timestamp_utc` exclusively read the `DateTimeUTC` field (already
+provider-converted to UTC) — no code anywhere in this codebase reads the
+raw Eastern `DateTime` field. `_parse_timestamp_utc`'s own existing
+comment already flags that `DateTimeUTC` carries no explicit UTC offset
+marker in the payload despite being UTC by name, which is exactly why
+tzinfo is attached explicitly rather than trusted from the string. This
+confirmation explains *why* that convention is safe; it changes nothing.
+
+## Free Trial scrambling — reaffirmed (2026-08-18)
+
+SportsDataIO's own documentation confirms Free Trial responses may
+contain scrambled data, matching this project's own independent
+cross-checks (see "A note on scrambled values" above). Trial captures
+remain valid evidence for endpoint/schema **shape** — never for
+production-accurate **statistical values**. No change to this discipline.
+
+## NFL Timeframes endpoint + maintenance windows — recorded for future use, not integrated
+
+SportsDataIO documents an NFL Timeframes endpoint (season/week resolution
+metadata) and stated maintenance windows: first and third Wednesday of
+each month, 4 AM–10 AM Eastern. Recorded here as CONFIRMED FROM PROVIDER
+DOCUMENTATION for future operational use (e.g. Railway scheduling should
+eventually avoid these windows) — **not integrated into current scope**,
+per explicit instruction not to expand scope solely to wire this up. This
+project's own season resolution (`app.persistence.seasons.
+fetch_current_season_string`) remains the current mechanism; Timeframes is
+not consumed anywhere in this codebase.

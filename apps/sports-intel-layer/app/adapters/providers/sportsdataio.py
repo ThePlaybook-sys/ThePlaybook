@@ -96,18 +96,31 @@ that specific decision and report the alternatives rather than inventing
 one"), this stays `None` until he picks one -- reported as an open
 question, not resolved by guessing here.
 
-**Schedule status: only what's actually been observed, plus one explicitly
-flagged exception.** All 304 games captured in the live Schedules response
-were `"Scheduled"` or `null` (2026REG hasn't started) -- that entry is
-CONFIRMED FROM LIVE FREE TRIAL. `_SCHEDULE_STATUS_MAP` also carries a second
-entry, `"Final": "final"`, added Phase 3E-8 (Decision 2) to make game-final
-detection possible at all -- but this one is ASSUMED / DEFERRED LIVE
-VERIFICATION, not observed, since no game had finished as of any live
-capture this project has made. See `_SCHEDULE_STATUS_MAP`'s own comment for
-the full reasoning. Any other value -- including `null` or `"InProgress"`
--- still raises `ProviderDataError` rather than being silently mapped to a
-guess, per Mac's explicit instruction not to invent the rest of the
-vocabulary from assumption.
+**Schedule status: `"Scheduled"` CONFIRMED FROM LIVE FREE TRIAL; `"Final"`
+CONFIRMED FROM PROVIDER DOCUMENTATION (upgraded 2026-08-18, no longer
+ASSUMED).** All 304 games captured in the live Schedules response were
+`"Scheduled"` or `null` (2026REG hadn't started at capture time) -- that
+entry is CONFIRMED FROM LIVE FREE TRIAL. `_SCHEDULE_STATUS_MAP` also
+carries `"Final": "final"` (added Phase 3E-8, Decision 2) -- Mac's direct
+review of SportsDataIO's own provider documentation (2026-08-18) confirms
+`"Final"` is the real, documented completed-game status string, upgrading
+it from ASSUMED/DEFERRED LIVE VERIFICATION without spending a live call.
+
+**KNOWN, REPORTED, UNFIXED GAP (2026-08-18) -- do not treat
+`_SCHEDULE_STATUS_MAP` as covering SportsDataIO's real status vocabulary.**
+Provider documentation confirms the full vocabulary is 9 values:
+`Scheduled`, `InProgress`, `Final`, `F/OT`, `Suspended`, `Postponed`,
+`Delayed`, `Canceled`, `Forfeit`. This map recognizes only 2 of them.
+`F/OT` (a completed overtime game) is never recognized as final at all --
+Postgame Worker's game-final detection would never trigger for an
+overtime game. Any of the other 7 unmapped values appearing anywhere in a
+live Schedule response raises `ProviderDataError`, which is NOT row-
+isolated: it aborts the entire `fetch_schedule` call (a full-season fetch),
+cascading to fail the whole Master Refresh or Postgame Worker run for that
+cycle -- a severe availability risk on any real NFL Sunday, not just an
+F/OT-specific gap. Reported in full in `PROGRESS.md`'s 2026-08-18 entry
+and `PROVENANCE.md`; the fix is a pending decision, not yet implemented,
+per explicit instruction to stop and report before changing this.
 
 **Trial numeric values are structurally real but semantically untrusted.**
 Cross-checked, not just asserted: in the live `team_stats` capture, `Score`
@@ -153,21 +166,28 @@ from app.adapters.models import (
 #: CONFIRMED FROM LIVE FREE TRIAL: "Scheduled" (all 304 captured 2026REG
 #: games; season hadn't started at capture time).
 #:
-#: ASSUMED / DEFERRED LIVE VERIFICATION (Phase 3E-8, Decision 2, 2026-08-18):
-#: "Final" has never been observed live -- this project has no evidence of
-#: SportsDataIO's actual raw string for a completed game. "Final" is the
-#: most common public convention for this vendor's API family, but it is
-#: explicitly NOT live-confirmed and must not be presented as such anywhere
-#: (docs, tests, or code comments). The remaining SportsDataIO Free Trial
-#: call (11/12 used, 1 remaining) is deliberately NOT being spent to verify
-#: this now: the 2026 season had not started as of the last live capture, so
-#: spending it today would very likely still only observe "Scheduled" and
-#: resolve nothing. The correct time to verify is after a real NFL game has
-#: actually finished -- costs no additional call, only calendar time. Any
-#: OTHER unrecognized value (including "InProgress", also never observed
-#: live -- see the synthetic schedules_unrecognized_status.json fixture)
-#: still raises rather than being guessed, same discipline as every other
-#: entry in this map.
+#: CONFIRMED FROM PROVIDER DOCUMENTATION (upgraded 2026-08-18, was ASSUMED/
+#: DEFERRED LIVE VERIFICATION as of Phase 3E-8, Decision 2): "Final" is
+#: SportsDataIO's real, documented completed-game status string -- Mac's
+#: direct review of SportsDataIO's own provider documentation confirms
+#: this without spending a live call (the remaining 1/12 SportsDataIO Free
+#: Trial call stays protected, unspent).
+#:
+#: KNOWN, REPORTED, UNFIXED GAP (2026-08-18): provider documentation also
+#: confirms the FULL status vocabulary is 9 values -- "Scheduled",
+#: "InProgress", "Final", "F/OT", "Suspended", "Postponed", "Delayed",
+#: "Canceled", "Forfeit". This map still recognizes only 2 of them.
+#: "F/OT" (a completed overtime game) is never mapped to "final" --
+#: Postgame Worker would never detect an overtime game as final. Any of
+#: the other 7 unmapped values (including "InProgress", which every live
+#: game passes through) raises ProviderDataError from fetch_schedule,
+#: which is NOT row-isolated -- it aborts the entire full-season fetch,
+#: failing the whole Master Refresh or Postgame Worker run for that cycle.
+#: See PROGRESS.md's 2026-08-18 entry and PROVENANCE.md for the full
+#: finding -- the fix (expanding this map, and possibly changing
+#: fetch_schedule's all-or-nothing failure mode) is a pending decision,
+#: not implemented here, per explicit instruction to report before
+#: changing this.
 _SCHEDULE_STATUS_MAP = {"Scheduled": "scheduled", "Final": "final"}
 
 #: CONFIRMED FROM LIVE FREE TRIAL, same discipline as _SCHEDULE_STATUS_MAP above:
