@@ -216,36 +216,138 @@ async def test_schedule_missing_venue_metadata_stays_none_not_fabricated():
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_schedule_unrecognized_venue_type_raises_rather_than_guessing():
-    """Mac's explicit instruction, same discipline as status/season_type:
-    a present-but-unrecognized StadiumDetails.Type raises rather than
-    being silently passed through or guessed."""
+async def test_schedule_unrecognized_venue_type_is_isolated_and_skipped(caplog):
+    """Row isolation (2026-08-18): a present-but-unrecognized
+    StadiumDetails.Type is never silently passed through or guessed --
+    but as of the row-isolation fix, that one row is logged and skipped
+    rather than aborting the whole fetch. This fixture has exactly one
+    row, so the response comes back empty, not raised."""
     respx.get(f"{BASE_URL}/v3/nfl/scores/json/Schedules/2026REG").mock(
         return_value=httpx.Response(200, json=load("schedules_unrecognized_venue_type.json"))
     )
     adapter = SportsDataIOScheduleAdapter(client=_client(), api_key=API_KEY)
-    with pytest.raises(ProviderDataError):
-        await adapter.fetch_schedule("2026REG")
+    with caplog.at_level("WARNING"):
+        response = await adapter.fetch_schedule("2026REG")
+    assert response.value == []
+    assert "skipping malformed/unrecognized schedule row" in caplog.text
 
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_schedule_unrecognized_status_raises_rather_than_guessing():
-    """Mac's explicit instruction: do not invent the rest of the status
-    vocabulary. Only 'Scheduled' is CONFIRMED from live data."""
+async def test_schedule_unrecognized_status_is_isolated_and_skipped(caplog):
+    """The full 9-value SportsDataIO status vocabulary is CONFIRMED FROM
+    PROVIDER DOCUMENTATION (2026-08-18) -- a value outside it ("TBD" here,
+    never documented) still raises internally, but row isolation means
+    that raise is caught and logged per-row, not propagated to the
+    caller. This fixture has exactly one row, so the response comes back
+    empty, not raised."""
     respx.get(f"{BASE_URL}/v3/nfl/scores/json/Schedules/2026REG").mock(
         return_value=httpx.Response(200, json=load("schedules_unrecognized_status.json"))
     )
     adapter = SportsDataIOScheduleAdapter(client=_client(), api_key=API_KEY)
-    with pytest.raises(ProviderDataError):
+    with caplog.at_level("WARNING"):
+        response = await adapter.fetch_schedule("2026REG")
+    assert response.value == []
+    assert "skipping malformed/unrecognized schedule row" in caplog.text
+    assert "GameKey='202610130'" in caplog.text
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_malformed_schedule_row_is_isolated_and_skipped(caplog):
+    """A structurally malformed row (missing GameKey) is also row-isolated
+    -- logged and skipped, not batch-fatal, same discipline as an
+    unrecognized status/venue_type."""
+    respx.get(f"{BASE_URL}/v3/nfl/scores/json/Schedules/2026REG").mock(
+        return_value=httpx.Response(200, json=load("schedules_malformed.json"))
+    )
+    adapter = SportsDataIOScheduleAdapter(client=_client(), api_key=API_KEY)
+    with caplog.at_level("WARNING"):
+        response = await adapter.fetch_schedule("2026REG")
+    assert response.value == []
+    assert "skipping malformed/unrecognized schedule row" in caplog.text
+
+
+@pytest.mark.asyncio
+@respx.mock
+@pytest.mark.parametrize(
+    "raw_status,expected_internal",
+    [
+        ("Scheduled", "scheduled"),
+        ("InProgress", "live"),
+        ("Final", "final"),
+        ("F/OT", "final"),
+        ("Postponed", "postponed"),
+        ("Canceled", "canceled"),
+        ("Delayed", "scheduled"),
+        ("Suspended", "live"),
+        ("Forfeit", "final"),
+    ],
+)
+async def test_schedule_maps_every_documented_status(raw_status, expected_internal):
+    """CONFIRMED FROM PROVIDER DOCUMENTATION (2026-08-18): all 9 documented
+    SportsDataIO status values normalize to this project's existing
+    internal vocabulary -- no invented internal states."""
+    respx.get(f"{BASE_URL}/v3/nfl/scores/json/Schedules/2026REG").mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                {
+                    "GameKey": "202610130",
+                    "HomeTeam": "SEA",
+                    "AwayTeam": "NE",
+                    "DateTimeUTC": "2026-09-10T00:20:00",
+                    "SeasonType": 1,
+                    "Status": raw_status,
+                }
+            ],
+        )
+    )
+    adapter = SportsDataIOScheduleAdapter(client=_client(), api_key=API_KEY)
+    response = await adapter.fetch_schedule("2026REG")
+    assert response.value[0].status == expected_internal
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_schedule_one_bad_row_does_not_take_down_valid_rows_around_it():
+    """The core row-isolation proof: a batch with a genuinely unrecognized
+    status sandwiched between two valid games -- both valid games survive,
+    the bad one is simply absent from the result."""
+    respx.get(f"{BASE_URL}/v3/nfl/scores/json/Schedules/2026REG").mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                {"GameKey": "g1", "HomeTeam": "SEA", "AwayTeam": "NE", "DateTimeUTC": "2026-09-10T00:20:00", "SeasonType": 1, "Status": "Scheduled"},
+                {"GameKey": "g2", "HomeTeam": "KC", "AwayTeam": "BUF", "DateTimeUTC": "2026-09-10T17:00:00", "SeasonType": 1, "Status": "TBD"},
+                {"GameKey": "g3", "HomeTeam": "DAL", "AwayTeam": "PHI", "DateTimeUTC": "2026-09-10T20:00:00", "SeasonType": 1, "Status": "InProgress"},
+            ],
+        )
+    )
+    adapter = SportsDataIOScheduleAdapter(client=_client(), api_key=API_KEY)
+    response = await adapter.fetch_schedule("2026REG")
+    assert [e.game_external_id for e in response.value] == ["g1", "g3"]
+    assert response.value[1].status == "live"
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_schedule_top_level_provider_failure_still_raises():
+    """Row isolation only applies inside an already-successful response --
+    an HTTP-level failure still fails the whole call, unchanged."""
+    respx.get(f"{BASE_URL}/v3/nfl/scores/json/Schedules/2026REG").mock(return_value=httpx.Response(500))
+    adapter = SportsDataIOScheduleAdapter(client=_client(), api_key=API_KEY)
+    with pytest.raises(ProviderUnavailableError):
         await adapter.fetch_schedule("2026REG")
 
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_malformed_schedule_raises_provider_data_error():
+async def test_schedule_non_array_payload_still_raises():
+    """Row isolation only applies to individual rows within an array -- a
+    non-array top-level payload still fails the whole call, unchanged."""
     respx.get(f"{BASE_URL}/v3/nfl/scores/json/Schedules/2026REG").mock(
-        return_value=httpx.Response(200, json=load("schedules_malformed.json"))
+        return_value=httpx.Response(200, json={"not": "an array"})
     )
     adapter = SportsDataIOScheduleAdapter(client=_client(), api_key=API_KEY)
     with pytest.raises(ProviderDataError):

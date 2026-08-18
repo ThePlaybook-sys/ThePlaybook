@@ -346,11 +346,16 @@ async def test_schedule_provider_failure_blocks_the_run(monkeypatch):
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_malformed_schedule_row_blocks_the_run_strictly(monkeypatch):
+async def test_malformed_schedule_row_is_isolated_not_batch_fatal(monkeypatch):
+    """Row isolation (2026-08-18): a single malformed row (missing
+    GameKey here) no longer fails the whole Master Refresh run --
+    SportsDataIOScheduleAdapter.fetch_schedule logs and skips that row,
+    returning every other valid row. This fixture has only the one
+    malformed row, so the fetch succeeds with an empty slate (a
+    legitimately different outcome from the old batch-fatal behavior,
+    not a bug)."""
     _headers_env(monkeypatch)
     _mock_season()
-    # Missing GameKey -- SportsDataIOScheduleAdapter's existing strict
-    # behavior (no new code needed for Decision 5).
     respx.get(f"{SPORTSDATAIO_URL}/v3/nfl/scores/json/Schedules/2026REG").mock(
         return_value=httpx.Response(
             200,
@@ -369,10 +374,50 @@ async def test_malformed_schedule_row_blocks_the_run_strictly(monkeypatch):
             sportsdataio_api_key="test-key", today=TODAY,
         )
 
-    assert result.status == "failed"
-    assert "Schedule fetch failed" in result.error
-    assert not games_write_route.called  # nothing partially written
+    assert result.status == "success"
+    assert result.games_in_slate == 0
+    assert not games_write_route.called  # the one row was skipped, nothing to write
     assert not dgi_route.called
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_one_bad_schedule_row_does_not_block_other_games_in_slate(monkeypatch):
+    """The fuller row-isolation proof at the Master Refresh level: a
+    slate with one genuinely unrecognized-status game alongside a valid
+    one -- the valid game is still created and gets its
+    daily_game_intelligence row; the bad one is simply absent."""
+    _headers_env(monkeypatch)
+    _mock_season()
+    respx.get(f"{SPORTSDATAIO_URL}/v3/nfl/scores/json/Schedules/2026REG").mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                _game_row("g1", "SEA", "NE", "2026-09-10T00:20:00"),
+                {"GameKey": "g-bad", "HomeTeam": "KC", "AwayTeam": "BUF", "DateTimeUTC": "2026-09-10T17:00:00", "SeasonType": 1, "Status": "TBD"},
+            ],
+        )
+    )
+    _mock_game_provider_ids()
+    _mock_games_create()
+    _mock_games_read([{"id": "db-game-1", "home_team": "SEA", "away_team": "NE", "scheduled_start": "2026-09-10T00:20:00+00:00", "stadium": "Lumen Field", "status": "scheduled"}])
+    _mock_players_and_depth_charts(["SEA", "NE"])
+    _mock_empty_intelligence()
+    dgi_route = _mock_dgi_upsert()
+
+    async with (
+        httpx.AsyncClient(base_url=SUPABASE_URL) as supabase_client,
+        httpx.AsyncClient(base_url=SPORTSDATAIO_URL) as sdio_client,
+    ):
+        result = await run_master_refresh(
+            supabase_client=supabase_client, sportsdataio_client=sdio_client,
+            sportsdataio_api_key="test-key", today=TODAY,
+        )
+
+    assert result.status == "success"
+    assert result.games_in_slate == 1  # only the valid game -- the bad row never reached slate filtering
+    assert result.games_created == 1
+    assert dgi_route.called
 
 
 @pytest.mark.asyncio

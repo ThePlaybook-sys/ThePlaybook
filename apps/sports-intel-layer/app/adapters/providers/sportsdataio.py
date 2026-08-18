@@ -96,31 +96,42 @@ that specific decision and report the alternatives rather than inventing
 one"), this stays `None` until he picks one -- reported as an open
 question, not resolved by guessing here.
 
-**Schedule status: `"Scheduled"` CONFIRMED FROM LIVE FREE TRIAL; `"Final"`
-CONFIRMED FROM PROVIDER DOCUMENTATION (upgraded 2026-08-18, no longer
-ASSUMED).** All 304 games captured in the live Schedules response were
-`"Scheduled"` or `null` (2026REG hadn't started at capture time) -- that
-entry is CONFIRMED FROM LIVE FREE TRIAL. `_SCHEDULE_STATUS_MAP` also
-carries `"Final": "final"` (added Phase 3E-8, Decision 2) -- Mac's direct
-review of SportsDataIO's own provider documentation (2026-08-18) confirms
-`"Final"` is the real, documented completed-game status string, upgrading
-it from ASSUMED/DEFERRED LIVE VERIFICATION without spending a live call.
+**Schedule status: full 9-value vocabulary CONFIRMED FROM PROVIDER
+DOCUMENTATION (Mac, 2026-08-18; `"Scheduled"` additionally CONFIRMED FROM
+LIVE FREE TRIAL -- all 304 captured 2026REG games).** `_SCHEDULE_STATUS_MAP`
+maps every documented value to this project's existing 5-value internal
+vocabulary (`scheduled`/`live`/`final`/`postponed`/`canceled` -- the
+`games.status` check constraint, confirmed sufficient by inspection, not
+widened):
 
-**KNOWN, REPORTED, UNFIXED GAP (2026-08-18) -- do not treat
-`_SCHEDULE_STATUS_MAP` as covering SportsDataIO's real status vocabulary.**
-Provider documentation confirms the full vocabulary is 9 values:
-`Scheduled`, `InProgress`, `Final`, `F/OT`, `Suspended`, `Postponed`,
-`Delayed`, `Canceled`, `Forfeit`. This map recognizes only 2 of them.
-`F/OT` (a completed overtime game) is never recognized as final at all --
-Postgame Worker's game-final detection would never trigger for an
-overtime game. Any of the other 7 unmapped values appearing anywhere in a
-live Schedule response raises `ProviderDataError`, which is NOT row-
-isolated: it aborts the entire `fetch_schedule` call (a full-season fetch),
-cascading to fail the whole Master Refresh or Postgame Worker run for that
-cycle -- a severe availability risk on any real NFL Sunday, not just an
-F/OT-specific gap. Reported in full in `PROGRESS.md`'s 2026-08-18 entry
-and `PROVENANCE.md`; the fix is a pending decision, not yet implemented,
-per explicit instruction to stop and report before changing this.
+    Scheduled  -> scheduled
+    InProgress -> live
+    Final      -> final    (CONFIRMED FROM PROVIDER DOCUMENTATION)
+    F/OT       -> final    (a completed overtime game -- same terminal
+                             state as Final; this is what makes Postgame
+                             Worker's game-final detection trigger for an
+                             overtime game at all)
+    Postponed  -> postponed
+    Canceled   -> canceled
+    Delayed    -> scheduled (game hasn't started, still expected to be
+                              played -- closest existing state)
+    Suspended  -> live       (play began, temporarily halted -- closest
+                              existing state)
+    Forfeit    -> final      (a completed result)
+
+**Row isolation (2026-08-18), the deliberate resilience fix for the
+availability gap this map's earlier incompleteness caused.**
+`fetch_schedule` no longer lets one row's normalization failure (an
+unrecognized status/season_type/venue_type, or a structurally malformed
+row) abort the entire batch. Each row is normalized inside its own
+try/except; a failing row is logged (`_logger.warning`, includes the raw
+`GameKey`/`Status` for debugging) and skipped, every other valid row in
+the same response still becomes a `ScheduleEntry`. This is deliberate
+resilience, not silently swallowed data loss -- skipped rows are always
+observable via logs and covered by tests. HTTP failure, invalid top-level
+JSON, or a non-array payload still fail the whole call, unchanged --
+those happen before the per-row loop even starts, via `_get`/
+`_parse_json_array`.
 
 **Trial numeric values are structurally real but semantically untrusted.**
 Cross-checked, not just asserted: in the live `team_stats` capture, `Score`
@@ -163,32 +174,40 @@ from app.adapters.models import (
     TeamStatLine,
 )
 
-#: CONFIRMED FROM LIVE FREE TRIAL: "Scheduled" (all 304 captured 2026REG
-#: games; season hadn't started at capture time).
+#: CONFIRMED FROM PROVIDER DOCUMENTATION (2026-08-18): the full 9-value
+#: SportsDataIO status vocabulary, mapped to this project's existing
+#: 5-value internal vocabulary (games.status check constraint --
+#: confirmed sufficient by inspection, not widened). "Scheduled" is
+#: additionally CONFIRMED FROM LIVE FREE TRIAL (all 304 captured 2026REG
+#: games). "Final" was upgraded from ASSUMED/DEFERRED LIVE VERIFICATION
+#: (Phase 3E-8, Decision 2) to CONFIRMED FROM PROVIDER DOCUMENTATION the
+#: same day, without spending a live call.
 #:
-#: CONFIRMED FROM PROVIDER DOCUMENTATION (upgraded 2026-08-18, was ASSUMED/
-#: DEFERRED LIVE VERIFICATION as of Phase 3E-8, Decision 2): "Final" is
-#: SportsDataIO's real, documented completed-game status string -- Mac's
-#: direct review of SportsDataIO's own provider documentation confirms
-#: this without spending a live call (the remaining 1/12 SportsDataIO Free
-#: Trial call stays protected, unspent).
+#: "F/OT" (completed overtime) -> "final": the same terminal state as
+#: Final -- this is what makes Postgame Worker's game-final detection
+#: trigger for an overtime game at all.
+#: "Delayed" -> "scheduled": game hasn't started, still expected to be
+#: played -- closest existing internal state (Mac's explicit reasoning).
+#: "Suspended" -> "live": play began and was temporarily halted --
+#: closest existing internal state.
+#: "Forfeit" -> "final": a completed result.
 #:
-#: KNOWN, REPORTED, UNFIXED GAP (2026-08-18): provider documentation also
-#: confirms the FULL status vocabulary is 9 values -- "Scheduled",
-#: "InProgress", "Final", "F/OT", "Suspended", "Postponed", "Delayed",
-#: "Canceled", "Forfeit". This map still recognizes only 2 of them.
-#: "F/OT" (a completed overtime game) is never mapped to "final" --
-#: Postgame Worker would never detect an overtime game as final. Any of
-#: the other 7 unmapped values (including "InProgress", which every live
-#: game passes through) raises ProviderDataError from fetch_schedule,
-#: which is NOT row-isolated -- it aborts the entire full-season fetch,
-#: failing the whole Master Refresh or Postgame Worker run for that cycle.
-#: See PROGRESS.md's 2026-08-18 entry and PROVENANCE.md for the full
-#: finding -- the fix (expanding this map, and possibly changing
-#: fetch_schedule's all-or-nothing failure mode) is a pending decision,
-#: not implemented here, per explicit instruction to report before
-#: changing this.
-_SCHEDULE_STATUS_MAP = {"Scheduled": "scheduled", "Final": "final"}
+#: A raw value outside these 9 still raises ProviderDataError (never
+#: silently guessed) -- but as of 2026-08-18, that raise is row-isolated
+#: (see fetch_schedule below), not batch-fatal: one truly-unrecognized row
+#: is logged and skipped, every other valid row in the same response
+#: still becomes a ScheduleEntry.
+_SCHEDULE_STATUS_MAP = {
+    "Scheduled": "scheduled",
+    "InProgress": "live",
+    "Final": "final",
+    "F/OT": "final",
+    "Postponed": "postponed",
+    "Canceled": "canceled",
+    "Delayed": "scheduled",
+    "Suspended": "live",
+    "Forfeit": "final",
+}
 
 #: CONFIRMED FROM LIVE FREE TRIAL, same discipline as _SCHEDULE_STATUS_MAP above:
 #: every one of the 304 captured Schedules rows -- fetched by requesting the
@@ -396,9 +415,19 @@ class SportsDataIOScheduleAdapter(ScheduleAdapter):
         )
         games = _parse_json_array(response, provider_name=self.provider_name)
 
+        # Row isolation (2026-08-18): one row's normalization failure --
+        # an unrecognized status/season_type/venue_type, or a
+        # structurally malformed row (missing GameKey etc.) -- must not
+        # abort this entire full-season fetch. Each row gets its own
+        # try/except; a failing row is logged and skipped, every other
+        # valid row still becomes a ScheduleEntry. See this class's own
+        # module docstring / _SCHEDULE_STATUS_MAP's comment for the full
+        # reasoning. HTTP failure / invalid top-level JSON / non-array
+        # payload still fail the whole call -- those already happened
+        # above, before this loop starts.
         entries: list[ScheduleEntry] = []
-        try:
-            for g in games:
+        for g in games:
+            try:
                 status = self._normalize_status(g.get("Status"))
                 season_type = self._normalize_season_type(g.get("SeasonType"))
                 stadium_details = g.get("StadiumDetails") or {}
@@ -417,8 +446,12 @@ class SportsDataIOScheduleAdapter(ScheduleAdapter):
                         venue_type=self._normalize_venue_type(stadium_details.get("Type")),
                     )
                 )
-        except (KeyError, TypeError, ValueError) as exc:
-            raise ProviderDataError(f"malformed schedule payload: {exc}", provider=self.provider_name) from exc
+            except (KeyError, TypeError, ValueError, ProviderDataError) as exc:
+                _logger.warning(
+                    "skipping malformed/unrecognized schedule row (GameKey=%r, raw Status=%r): %s",
+                    g.get("GameKey"), g.get("Status"), exc,
+                )
+                continue
 
         return AdapterResponse(value=entries, source=self.provider_name)
 
@@ -426,8 +459,9 @@ class SportsDataIOScheduleAdapter(ScheduleAdapter):
         if raw_status not in _SCHEDULE_STATUS_MAP:
             raise ProviderDataError(
                 f"unrecognized schedule status {raw_status!r} -- only "
-                f"{sorted(_SCHEDULE_STATUS_MAP)} are CONFIRMED from live data, "
-                "not silently mapped",
+                f"{sorted(_SCHEDULE_STATUS_MAP)} are CONFIRMED FROM PROVIDER "
+                "DOCUMENTATION, not silently mapped (row isolated by the caller, "
+                "not fatal to the whole fetch)",
                 provider=self.provider_name,
             )
         return _SCHEDULE_STATUS_MAP[raw_status]

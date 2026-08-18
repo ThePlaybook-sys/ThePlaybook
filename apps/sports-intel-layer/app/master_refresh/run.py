@@ -9,13 +9,19 @@ needing its own try/except around this function. This is Decision 6's
 
 **Failure isolation (Decision 5 + the approved failure-isolation table):**
   BLOCKING (aborts the whole run, `status="failed"`): season resolution
-    failure, Schedule provider fetch failure, Schedule normalization
-    failure (a malformed row -- `SportsDataIOScheduleAdapter.fetch_schedule`
-    already raises on this, no new code needed), Schedule persistence
+    failure, Schedule provider fetch failure (HTTP/auth/rate-limit/
+    outage, or a non-array top-level payload), Schedule persistence
     failure. Nothing past this point runs; nothing already-persisted is
     touched, modified, or deleted.
   NON-BLOCKING (isolated, collected, run continues): a single team's
-    roster fetch failure, a single game's rest/assembly/upsert failure.
+    roster fetch failure, a single game's rest/assembly/upsert failure,
+    and -- since the 2026-08-18 row-isolation fix -- a single malformed
+    or unrecognized-status Schedule row. `SportsDataIOScheduleAdapter.
+    fetch_schedule` itself now logs and skips a bad row rather than
+    raising for the whole batch (see that adapter's own docstring), so
+    this worker never even sees the isolation happen -- it just receives
+    a slate with that one game absent, exactly as if that row were never
+    in the response at all.
 """
 from __future__ import annotations
 
