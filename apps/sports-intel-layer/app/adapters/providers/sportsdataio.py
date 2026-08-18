@@ -368,9 +368,17 @@ class SportsDataIORosterAdapter(RosterAdapter, _WeeklyBulkCacheMixin):
         # docstring for why no silent fallback exists.
         depth_by_player_id = await self._get_depth_chart_lookup()
 
+        # Row isolation (2026-08-18, same defensive philosophy as the
+        # Schedule/Odds/Stats fixes): one malformed player row must not
+        # take down the rest of this team's otherwise-valid roster. The
+        # DepthCharts *call* itself failing outright is a different,
+        # request-level failure and still propagates unchanged (see this
+        # class's own module docstring for why that boundary is
+        # deliberate) -- only a malformed row within an already-successful
+        # response is isolated here.
         entries: list[RosterEntry] = []
-        try:
-            for p in players:
+        for p in players:
+            try:
                 player_id = p["PlayerID"]
                 entries.append(
                     RosterEntry(
@@ -381,8 +389,12 @@ class SportsDataIORosterAdapter(RosterAdapter, _WeeklyBulkCacheMixin):
                         depth_chart_rank=depth_by_player_id.get(player_id),
                     )
                 )
-        except (KeyError, TypeError) as exc:
-            raise ProviderDataError(f"malformed roster payload: {exc}", provider=self.provider_name) from exc
+            except (KeyError, TypeError) as exc:
+                _logger.warning(
+                    "skipping malformed roster row (team=%r, PlayerID=%r): %s",
+                    team, p.get("PlayerID"), exc,
+                )
+                continue
 
         return AdapterResponse(value=entries, source=self.provider_name)
 
@@ -390,14 +402,22 @@ class SportsDataIORosterAdapter(RosterAdapter, _WeeklyBulkCacheMixin):
         teams = await self._get_bulk_array(
             "/v3/nfl/scores/json/DepthCharts", "depth_charts_bulk"
         )
+        # Row isolation: this lookup is built once and shared across every
+        # team's roster fetch this cycle (bulk-cached) -- one malformed
+        # depth-chart entry for one team must not blank out depth ranks
+        # for every other team's roster too.
         lookup: dict[int, int | None] = {}
-        try:
-            for team_entry in teams:
-                for group in ("Offense", "Defense", "SpecialTeams"):
-                    for entry in team_entry.get(group) or []:
+        for team_entry in teams:
+            for group in ("Offense", "Defense", "SpecialTeams"):
+                for entry in team_entry.get(group) or []:
+                    try:
                         lookup[entry["PlayerID"]] = entry.get("DepthOrder")
-        except (KeyError, TypeError) as exc:
-            raise ProviderDataError(f"malformed depth chart payload: {exc}", provider=self.provider_name) from exc
+                    except (KeyError, TypeError) as exc:
+                        _logger.warning(
+                            "skipping malformed depth chart entry (TeamID=%r, group=%r): %s",
+                            team_entry.get("TeamID"), group, exc,
+                        )
+                        continue
         return lookup
 
 
@@ -521,19 +541,37 @@ class SportsDataIOTeamStatsAdapter(TeamStatsAdapter, _WeeklyBulkCacheMixin):
             "team_stats_week_bulk", season, week,
         )
 
+        # Row isolation (2026-08-18, same defensive philosophy as the
+        # Schedule/Odds fixes). `rows` is the whole week's bulk payload,
+        # shared across every game in that week via `_WeeklyBulkCacheMixin`
+        # -- a malformed row belonging to a DIFFERENT game must not take
+        # down this game's own fetch, so filtering-by-GameKey and building
+        # each TeamStatLine are both isolated per row (logged, skipped),
+        # not one try/except around the whole thing.
+        matching: list[dict] = []
+        for row in rows:
+            try:
+                if row["GameKey"] == game_external_id:
+                    matching.append(row)
+            except (KeyError, TypeError) as exc:
+                _logger.warning(
+                    "skipping malformed team-stats row while filtering to game %r: %s",
+                    game_external_id, exc,
+                )
+                continue
+
         lines: list[TeamStatLine] = []
-        try:
-            # `row["GameKey"]`, not `.get()` -- a row missing GameKey
-            # entirely is a malformed payload, not just "a different game"
-            # that should be silently filtered out.
-            matching = [row for row in rows if row["GameKey"] == game_external_id]
-            for row in matching:
+        for row in matching:
+            try:
                 remaining = dict(row)
                 game_key = remaining.pop("GameKey")
                 team = remaining.pop("Team")
                 lines.append(TeamStatLine(game_external_id=game_key, team=team, stats=remaining))
-        except (KeyError, TypeError) as exc:
-            raise ProviderDataError(f"malformed team stats payload: {exc}", provider=self.provider_name) from exc
+            except (KeyError, TypeError) as exc:
+                _logger.warning(
+                    "skipping malformed team-stats row (GameKey=%r): %s", row.get("GameKey"), exc
+                )
+                continue
 
         return AdapterResponse(value=lines, source=self.provider_name)
 
@@ -563,12 +601,26 @@ class SportsDataIOPlayerStatsAdapter(PlayerStatsAdapter, _WeeklyBulkCacheMixin):
             "player_stats_week_bulk", season, week,
         )
 
+        # Row isolation (2026-08-18), same reasoning as fetch_team_stats
+        # above: `rows` is the whole week's bulk payload shared across
+        # every game via `_WeeklyBulkCacheMixin` -- a malformed row
+        # belonging to a different game (or a different player within
+        # this game) must not take down everyone else's stats.
+        matching: list[dict] = []
+        for row in rows:
+            try:
+                if row["GameKey"] == game_external_id:
+                    matching.append(row)
+            except (KeyError, TypeError) as exc:
+                _logger.warning(
+                    "skipping malformed player-stats row while filtering to game %r: %s",
+                    game_external_id, exc,
+                )
+                continue
+
         lines: list[PlayerStatLine] = []
-        try:
-            # `row["GameKey"]`, not `.get()` -- see fetch_team_stats' same
-            # fix: a row missing GameKey is malformed, not a non-match.
-            matching = [row for row in rows if row["GameKey"] == game_external_id]
-            for row in matching:
+        for row in matching:
+            try:
                 remaining = dict(row)
                 game_key = remaining.pop("GameKey")
                 player_id = remaining.pop("PlayerID")
@@ -587,8 +639,12 @@ class SportsDataIOPlayerStatsAdapter(PlayerStatsAdapter, _WeeklyBulkCacheMixin):
                         stats=remaining,
                     )
                 )
-        except (KeyError, TypeError) as exc:
-            raise ProviderDataError(f"malformed player stats payload: {exc}", provider=self.provider_name) from exc
+            except (KeyError, TypeError) as exc:
+                _logger.warning(
+                    "skipping malformed player-stats row (GameKey=%r, PlayerID=%r): %s",
+                    row.get("GameKey"), row.get("PlayerID"), exc,
+                )
+                continue
 
         return AdapterResponse(value=lines, source=self.provider_name)
 
