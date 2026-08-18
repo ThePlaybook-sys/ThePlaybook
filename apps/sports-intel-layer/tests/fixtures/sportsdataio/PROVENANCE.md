@@ -5,9 +5,13 @@ live key), SportsDataIO was **live-validated** during Phase 3C-ii's
 investigation: Mac's authenticated Free Trial account, 10 of a 12-call
 budget spent across two rounds (2026-08-11/12 — see `PROGRESS.md` for the
 full session history, including the stale-Railway-deployment incident and
-the endpoint-path corrections against SportsDataIO's own documentation).
-Four tiers apply here, one more than 3C-i's three, because live capture
-makes a genuine fourth tier possible:
+the endpoint-path corrections against SportsDataIO's own documentation). An
+11th call was spent 2026-08-18 on a single-purpose, single-endpoint capture
+of `/v3/nfl/scores/json/Teams` (12/12 budget: 11 used, 1 remaining, final
+call intentionally not authorized) — see this file's own section below and
+`PROGRESS.md` for that round's full evidence trail. Four tiers apply here,
+one more than 3C-i's three, because live capture makes a genuine fourth
+tier possible:
 
 - **CONFIRMED FROM LIVE FREE TRIAL — STRUCTURE** — the field names, types,
   and nesting below were directly observed in a real 200 response. The
@@ -58,6 +62,13 @@ inspection of the full captures, not assumed:
   teams) and all 304 Schedules rows carried plausible, internally
   consistent real values. This is the concrete evidence behind the
   source-of-truth decision below.
+- Teams (`/scores/json/Teams`, captured 2026-08-18 as its own single-purpose
+  round): only `UpcomingOpponent` is scrambled (literally `"Scrambled"` in
+  all 32 rows). Every identity/context field — `Key`, `TeamID`, `PlayerID`,
+  `City`, `Name`, `FullName`, `Conference`, `Division`, `GlobalTeamID`,
+  `StadiumDetails`, coaching staff names — is real and distinct across all
+  32 rows, cross-checked against this project's own `teams` table (see
+  below), not merely assumed real from shape alone.
 
 ## Source-of-truth decision (Mac, 2026-08-12), reflected in these fixtures
 
@@ -85,12 +96,39 @@ overlapping field into a competing source of truth.
 | `team_stats_malformed.json` | Synthetic — missing `GameKey` | N/A — synthetic defect-injection fixture |
 | `player_stats_malformed.json` | Synthetic — missing `PlayerID` | N/A — synthetic defect-injection fixture |
 | `injuries_malformed.json` | Synthetic — missing `PlayerID` | N/A — synthetic defect-injection fixture |
+| `teams_active_normal.json` | All 32 current NFL teams, real and complete (not a sample like the other fixtures above — the full universe is the point of this capture) | CONFIRMED FROM LIVE FREE TRIAL (identity fields only — `Key`/`FullName`/`TeamID`/etc.; `UpcomingOpponent` scrambled, see above) |
+
+## Team identity verification (2026-08-18, single-endpoint round)
+
+`teams_active_normal.json` was captured specifically to independently
+verify SportsDataIO's own team-identifier field (`Key`, e.g. `"KC"`) for
+all 32 current NFL teams before extending `team_provider_ids` coverage
+beyond the 13 teams 3E-4A had fixture-confirmed. Deterministic
+reconciliation (exact string match on `FullName` against this project's
+`teams.name`, zero fuzzy matching) against the live dev `teams` table:
+
+- **32/32 canonical teams reconciled, zero conflicts.** Every `teams.name`
+  value matched exactly one `FullName` in the capture; no orphans on either
+  side.
+- **All 13 previously-confirmed `sportsdataio` mappings (ARI, ATL, BAL,
+  BUF, CAR, CHI, KC, LAR, NE, NO, SF, SEA, TB) matched the live `Key`
+  exactly.** No drift.
+- **Dallas Cowboys / Philadelphia Eagles resolved:** the 3E-3 database rows
+  (`DAL`, `PHI`) flagged in 3E-4A as inferred-not-fixture-confirmed are now
+  **CONFIRMED CORRECT** — the live capture's `Key` for both teams matches
+  the already-applied rows exactly. `TEAM_BACKFILL` (the Python source of
+  truth) restores both entries with this citation.
+- **`team_provider_ids` sportsdataio coverage taken to 32/32** — the
+  remaining 17 teams (CIN, CLE, DEN, DET, GB, HOU, IND, JAX, LAC, LV, MIA,
+  MIN, NYG, NYJ, PIT, TEN, WAS) added, each citing this fixture directly.
+  `the_odds_api` coverage is unchanged at 6/32 — this round captured no
+  Odds API evidence.
 
 ## Endpoint paths and auth (CONFIRMED FROM LIVE FREE TRIAL + PROVIDER DOCUMENTATION)
 
-All six paths below were called live and returned 200 with the structures
-these fixtures reflect. The Injuries and PlayerGameStatsByWeek paths were
-corrected once during this project against SportsDataIO's own
+All seven paths below were called live and returned 200 with the
+structures these fixtures reflect. The Injuries and PlayerGameStatsByWeek
+paths were corrected once during this project against SportsDataIO's own
 documentation (Mac, 2026-08-12) — the original assumed paths 404'd for
 reasons unrelated to Free Trial access (wrong category segment, wrong
 endpoint name), not access restrictions:
@@ -102,6 +140,7 @@ GET /v3/nfl/scores/json/Schedules/{season}
 GET /v3/nfl/stats/json/Injuries/{season}/{week}
 GET /v3/nfl/scores/json/TeamGameStats/{season}/{week}
 GET /v3/nfl/stats/json/PlayerGameStatsByWeek/{season}/{week}
+GET /v3/nfl/scores/json/Teams
 ```
 
 Auth: `Ocp-Apim-Subscription-Key` request header — CONFIRMED, proven

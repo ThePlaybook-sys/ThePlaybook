@@ -99,9 +99,7 @@ insert into team_provider_ids (team_id, provider_name, provider_team_id) values
 
 -- Phase 3E-4A: 9 additional fixture-confirmed sportsdataio mappings,
 -- mirroring the 20260814050000 migration's backfill exactly (see
--- app/persistence/team_backfill.py for full provenance). The remaining 17
--- teams above have no fixture-confirmed provider mapping and are
--- deliberately left unmapped -- see that module's docstring.
+-- app/persistence/team_backfill.py for full provenance).
 insert into team_provider_ids (team_id, provider_name, provider_team_id) values
   ('a3000000-0000-0000-0000-000000000007', 'sportsdataio', 'ARI'),
   ('a3000000-0000-0000-0000-000000000008', 'sportsdataio', 'ATL'),
@@ -112,6 +110,30 @@ insert into team_provider_ids (team_id, provider_name, provider_team_id) values
   ('a3000000-0000-0000-0000-000000000019', 'sportsdataio', 'NO'),
   ('a3000000-0000-0000-0000-00000000001d', 'sportsdataio', 'SEA'),
   ('a3000000-0000-0000-0000-00000000001e', 'sportsdataio', 'TB');
+
+-- 2026-08-18: 17 additional sportsdataio mappings, confirmed via a live
+-- capture of /v3/nfl/scores/json/Teams (mirroring the 20260818040000
+-- migration exactly -- see app/persistence/team_backfill.py and
+-- tests/fixtures/sportsdataio/PROVENANCE.md for full provenance).
+-- sportsdataio coverage is now 32/32; the_odds_api remains at 6/32.
+insert into team_provider_ids (team_id, provider_name, provider_team_id) values
+  ('a3000000-0000-0000-0000-00000000000b', 'sportsdataio', 'CIN'),
+  ('a3000000-0000-0000-0000-00000000000c', 'sportsdataio', 'CLE'),
+  ('a3000000-0000-0000-0000-00000000000d', 'sportsdataio', 'DEN'),
+  ('a3000000-0000-0000-0000-00000000000e', 'sportsdataio', 'DET'),
+  ('a3000000-0000-0000-0000-00000000000f', 'sportsdataio', 'GB'),
+  ('a3000000-0000-0000-0000-000000000010', 'sportsdataio', 'HOU'),
+  ('a3000000-0000-0000-0000-000000000011', 'sportsdataio', 'IND'),
+  ('a3000000-0000-0000-0000-000000000012', 'sportsdataio', 'JAX'),
+  ('a3000000-0000-0000-0000-000000000013', 'sportsdataio', 'LV'),
+  ('a3000000-0000-0000-0000-000000000014', 'sportsdataio', 'LAC'),
+  ('a3000000-0000-0000-0000-000000000016', 'sportsdataio', 'MIA'),
+  ('a3000000-0000-0000-0000-000000000017', 'sportsdataio', 'MIN'),
+  ('a3000000-0000-0000-0000-00000000001a', 'sportsdataio', 'NYG'),
+  ('a3000000-0000-0000-0000-00000000001b', 'sportsdataio', 'NYJ'),
+  ('a3000000-0000-0000-0000-00000000001c', 'sportsdataio', 'PIT'),
+  ('a3000000-0000-0000-0000-00000000001f', 'sportsdataio', 'TEN'),
+  ('a3000000-0000-0000-0000-000000000020', 'sportsdataio', 'WAS');
 
 insert into players (id, team_id, name, position, external_provider_id) values
   ('a4000000-0000-0000-0000-000000000001', 'a3000000-0000-0000-0000-000000000001', 'Seed QB Chiefs', 'QB', 'seed-p1'),

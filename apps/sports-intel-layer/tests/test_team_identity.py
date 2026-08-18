@@ -9,6 +9,7 @@ that a provider id can't silently map to two different teams.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import httpx
 import pytest
@@ -130,25 +131,59 @@ async def test_backfill_known_teams_links_every_matched_team():
 
 
 def test_team_backfill_table_entries_have_at_least_one_known_provider():
-    # Phase 3E-4A: TEAM_BACKFILL now covers every fixture-confirmed team,
-    # not just teams with both providers. Every entry must still map to a
-    # real, recognized provider name, and every entry must map to at least
-    # one provider (no empty mappings).
-    assert len(TEAM_BACKFILL) == 15
+    # 2026-08-18: TEAM_BACKFILL now covers all 32 current NFL teams (full
+    # sportsdataio coverage, confirmed via the live Teams capture). Every
+    # entry must still map to a real, recognized provider name, and every
+    # entry must map to at least one provider (no empty mappings).
+    assert len(TEAM_BACKFILL) == 32
     for team, providers in TEAM_BACKFILL.items():
         assert providers, f"{team} has no provider mapping"
         assert set(providers) <= {"sportsdataio", "the_odds_api"}
 
 
 def test_team_backfill_table_provider_coverage_matches_fixture_audit():
-    # Exactly 4 teams (BAL, BUF, KC, SF) are confirmed by both providers'
-    # fixtures; 13 teams have a confirmed sportsdataio mapping; 6 teams have
-    # a confirmed the_odds_api mapping (see module docstring for the audit).
+    # 2026-08-18: Dallas Cowboys / Philadelphia Eagles are now confirmed on
+    # both providers (their sportsdataio abbreviations were verified via
+    # the live Teams capture, resolving the 3E-4A-flagged provenance gap).
+    # 6 teams total are confirmed by both providers' fixtures (BAL, BUF,
+    # DAL, KC, PHI, SF); all 32 teams have a confirmed sportsdataio
+    # mapping; 6 teams have a confirmed the_odds_api mapping.
     both = [team for team, providers in TEAM_BACKFILL.items() if set(providers) == {"sportsdataio", "the_odds_api"}]
     sportsdataio_only = [team for team, providers in TEAM_BACKFILL.items() if set(providers) == {"sportsdataio"}]
     odds_api_only = [team for team, providers in TEAM_BACKFILL.items() if set(providers) == {"the_odds_api"}]
 
-    assert set(both) == {"Kansas City Chiefs", "Buffalo Bills", "San Francisco 49ers", "Baltimore Ravens"}
-    assert set(odds_api_only) == {"Dallas Cowboys", "Philadelphia Eagles"}
-    assert len(sportsdataio_only) == 9
+    assert set(both) == {
+        "Kansas City Chiefs", "Buffalo Bills", "San Francisco 49ers",
+        "Baltimore Ravens", "Dallas Cowboys", "Philadelphia Eagles",
+    }
+    assert odds_api_only == []
+    assert len(sportsdataio_only) == 26
     assert len(both) + len(sportsdataio_only) + len(odds_api_only) == len(TEAM_BACKFILL)
+    assert sum(1 for p in TEAM_BACKFILL.values() if "sportsdataio" in p) == 32
+
+
+def test_team_backfill_sportsdataio_matches_live_teams_capture():
+    # Deterministic cross-check against the live 2026-08-18 Teams capture:
+    # every sportsdataio abbreviation in TEAM_BACKFILL must match the real
+    # provider's own Key for that team's FullName, exactly -- no fuzzy
+    # matching, no drift between the backfill table and the fixture that
+    # justifies it.
+    fixture_path = (
+        Path(__file__).parent / "fixtures" / "sportsdataio" / "teams_active_normal.json"
+    )
+    live_teams = json.loads(fixture_path.read_text())
+    key_by_full_name = {t["FullName"]: t["Key"] for t in live_teams}
+
+    assert len(live_teams) == 32
+    checked = 0
+    for team_name, providers in TEAM_BACKFILL.items():
+        sportsdataio_key = providers.get("sportsdataio")
+        if sportsdataio_key is None:
+            continue
+        assert team_name in key_by_full_name, f"{team_name} not found in live Teams capture"
+        assert key_by_full_name[team_name] == sportsdataio_key, (
+            f"{team_name}: TEAM_BACKFILL has {sportsdataio_key!r}, "
+            f"live capture has {key_by_full_name[team_name]!r}"
+        )
+        checked += 1
+    assert checked == 32  # every team now has a sportsdataio entry
