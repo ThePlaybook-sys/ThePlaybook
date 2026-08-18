@@ -1,7 +1,7 @@
 # The Playbook — Volume 3
 ## Database Architecture: Tables, Relationships, Indexes, Triggers, Migrations, RLS
 
-**Version:** v4.11
+**Version:** v4.12
 **Last updated:** 2026-08-18
 **Depends on:** Volume 1 (v3.0 — tiers, personas, principles) and Volume 2 (v4.2 — service shape, routing table reference, RLS placeholder, scoped event system, Redis cache layer, Postgame Ingestion Worker)
 **v4.0 note:** Normalized multi-sport core added (§4.0) — `sports`/`leagues`/`seasons`/`teams`/`players`/`player_stats`/`team_stats` plus the `player_stats_nfl` extension pattern. `games` gains `sport_id`/`league_id`/`season_id` while the legacy `sport` text field is kept, deprecated, for Phase 0/1 backward compatibility. Data quality metadata convention added to `daily_game_intelligence` (§4.1). See `CHANGELOG.md` v4.0 entry for full reasoning.
@@ -16,6 +16,7 @@
 **v4.9 note (MINOR):** §4.0's `games` gains three nullable columns — `venue_lat`, `venue_long`, `venue_type` (Phase 3E-6, Option A) — preserving SportsDataIO Schedule's `StadiumDetails.GeoLat`/`.GeoLong`/`.Type` instead of discarding them during normalization, closing the exact gap v4.5's travel-semantics note flagged and deferred. Built for Weather Worker's location resolution and dome/indoor optimization (Volume 2 §8); also the durable coordinate storage that note's deferred travel-distance computation can build on later, still not built here. See `CHANGELOG.md` v4.9 entry for full reasoning, including the alternative (a dedicated `stadiums` reference table) considered and why the smaller additive columns were chosen instead.
 **v4.10 note (MINOR):** §4.0 gains `player_provider_ids` — the authoritative multi-provider player identity mechanism (Phase 3E-8, Decision 1, Option B), mirroring `game_provider_ids`/`team_provider_ids` exactly. `players.external_provider_id` deprecated, same convention as the other two tables. `games` gains one nullable column, `finalized_at` — the stable anchor Postgame Worker's bounded reconciliation schedule (Volume 2 §8) measures elapsed time against. `players` itself is populated via a small, fixture-backed backfill (`app.persistence.player_backfill`, exactly four real captured players) rather than a live provider call — coverage gaps are real and reported, not hidden. See `CHANGELOG.md` v4.10 entry for full reasoning.
 **v4.11 note (MINOR):** §4.0 gains `roster_memberships` — the historical record of player-team membership over time (Phase 3F-1, Decision 1, Option B), separate from `players.team_id`'s fast current-team lookup. `depth_chart_snapshots` is corrected from its original `game_id`-keyed shape (never exercised by any code) to `team_id`-keyed (Decision 2), matching SportsDataIO's confirmed team-scoped DepthCharts payload. Both tables live-proven against real dev Supabase (append-only trigger rejection, full first-observation/team-change lifecycle) via controlled insert/verify/delete. See `CHANGELOG.md` v4.11 entry for full reasoning.
+**v4.12 note (MINOR):** §4.0's `team_stats`/`player_stats` gain the `block_snapshot_updates()` append-only trigger (Phase 3F-3), closing the gap flagged since 3E-8 — application-layer correction-aware logic was already correct, this makes "no UPDATE, only INSERT" authoritative at the database level too, live-proven against real dev Supabase. §4.1's `daily_game_intelligence.stadium` gains a documented shape (`name`/`latitude`/`longitude`/`venue_type`), surfacing `games.venue_lat`/`.venue_long`/`.venue_type` (stored since v4.9) into the working table for the first time. No new tables, no column additions. See `CHANGELOG.md` v4.12 entry for full reasoning.
 **Read next:** Volume 4 (AI Intelligence) — the agent, consensus, and orchestration tables defined here are the tables Volume 4's logic reads and writes
 
 ---
@@ -209,6 +210,22 @@ create table team_stats (
   stats jsonb not null,
   created_at timestamptz default now()
 );
+
+-- Phase 3F-3, v4.12: DB-level append-only hardening. team_stats/player_stats
+-- carry no uniqueness constraint (correction rows are a second, later row for
+-- the same (game,team)/(game,player) pair, by design -- a uniqueness
+-- constraint would block them) -- only UPDATE is blocked, INSERT is
+-- unrestricted. Reuses block_snapshot_updates() verbatim, the same function
+-- odds_snapshots/injury_reports/weather_snapshots/depth_chart_snapshots/
+-- referee_assignments already use. Live-proven against real dev Supabase:
+-- an UPDATE attempt is rejected, a correction INSERT still succeeds, the
+-- original row is left untouched.
+create trigger trg_block_team_stats_update
+  before update on team_stats
+  for each row execute function block_snapshot_updates();
+create trigger trg_block_player_stats_update
+  before update on player_stats
+  for each row execute function block_snapshot_updates();
 
 -- Sport-specific extension pattern (NFL only at launch, per Volume 1's NFL-only scope —
 -- NBA/MLB extension tables get added when those sports actually enter planning, not before)
@@ -405,6 +422,8 @@ create table daily_game_intelligence (
 **`public_betting`/`sharp_money` — DEFERRED, EXTERNAL/VENDOR DEPENDENCY (v4.4, Decision 3, 2026-08-13).** Both columns stay in the schema as approved, but populating them requires a betting-percentage/handle data vendor this project has not selected or purchased — no vendor decision has been made, and no data is fabricated to fill the gap in the meantime. Until that vendor decision happens, both columns are `null`, which is semantically distinct from a computed neutral/zero value — any Phase 4/5 consumer reading `daily_game_intelligence` must treat `null` here as "unavailable," never coerce it to a default. `travel`/`rest`, by contrast, are populated at launch from data this project already has (existing Schedule/game/stadium data), per the same Decision 3.
 
 **`rest` semantics (v4.5, Phase 3E-2, Decision 2, 2026-08-13).** `rest_days` = days between a team's most recent `games.status = 'final'` game and the current game's `scheduled_start`, counted as a UTC calendar-date difference (a documented initial-implementation simplification, not a claim of kickoff-hour precision). Only a finalized game counts as "the previous game" — a still-`scheduled`, `canceled`, or never-finalized `postponed` game is never used. A season opener (no previous final game exists) is `rest_days: null` with `season_opener: true` — the same null-not-neutral principle as `public_betting`/`sharp_money`, never a fabricated `0`. An elevated `rest_days` value (e.g. 14, after a bye) is left as the raw number; no separate `is_bye_week_return` boolean was added, per Mac's explicit instruction not to add speculative schema/fields ahead of an actual downstream consumer needing one.
+
+**`stadium` shape (v4.12, Phase 3F-3, 2026-08-18).** Current-state venue metadata, surfaced from `games.stadium`/`.venue_lat`/`.venue_long`/`.venue_type` (the last three stored since v4.9/Phase 3E-6 but never previously read back into this working table): `{"name": ..., "latitude": ..., "longitude": ..., "venue_type": ...}`. Each field is independently `null` when the underlying `games` column is `null` — never fabricated, never defaulted — and the whole `stadium` value is `null` only when literally none of the four are known, matching every other category's "no data at all → null" convention in this payload. This is `games`' own current-state columns passed through, not a new historical venue system — a `games` row correction (e.g. a Schedule re-poll fixing a bad venue type) is reflected here on the next refresh, same as `teams`/`rest`/etc. Assembled by the single shared `app.master_refresh.game_refresh._build_stadium` helper, used identically by both Master Refresh's daily run and Pregame Worker's targeted T-minus-5 refresh — no duplicate assembly logic.
 
 **`travel` semantics (v4.5, Phase 3E-2, Decision 3, 2026-08-13).** Defined as the distance from the venue of a team's previous `status = 'final'` game to the venue of its current game (game-to-game travel burden) — explicitly not home-city-to-current-stadium distance. **Deliberately left `null`/unavailable in Phase 3E-2's implementation:** SportsDataIO's Schedule response does include venue coordinates (`StadiumDetails.GeoLat`/`GeoLong`, CONFIRMED present in the live-captured fixture), but neither `ScheduleEntry` (the normalized adapter model) nor `games` currently carries them — everything past the stadium *name* is discarded during normalization. Populating `travel` for real requires (a) widening `ScheduleEntry` with venue coordinates and (b) durable coordinate storage (new nullable `games` columns, or a dedicated `stadiums` reference table, given a venue is reused across many games) — a schema decision deliberately deferred out of 3E-2's scope, tracked as a follow-up architecture item rather than solved by fabricating coordinates or adding scattered geo columns ad hoc. **Both (a) and (b) are now built** (v4.9, Phase 3E-6, Option A — `ScheduleEntry.venue_lat`/`.venue_long`, `games.venue_lat`/`.venue_long`), built for Weather Worker's own location needs rather than travel — `travel` itself is still `null`, still not computed anywhere. The durable coordinate storage this note asked for now exists as a foundation a later phase can build the actual distance calculation on; this note is not itself that phase.
 

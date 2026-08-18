@@ -785,3 +785,27 @@ A one-line cross-reference was added to §7's `postgame_reviews` description (`o
 - MINOR, Volume-3-only bump: one corrected table (safe, zero-row drop/recreate) and one new additive table; no existing data touched.
 
 **Full technical detail:** This entry, plus the new `roster_memberships`/corrected `depth_chart_snapshots` paragraphs in Volume 3 §4.0, `app/persistence/roster_ingestion.py`'s own module docstring, the migration's own inline comments, and the completion report delivered to Mac. Also logged operationally in `PROGRESS.md`'s 2026-08-18 notes (Phase 3F-1).
+
+---
+
+## v4.12 — 2026-08-18 — MINOR
+
+**Volume affected:** Volume 3 (Database Architecture) only.
+
+**Reason:** Phase 3F-3's two approved items: (1) close the `team_stats`/`player_stats` DB-level append-only gap Volume 3 has flagged since 3E-8 (application-layer correction-aware logic was already correct — insert new row on change, never touch the old one — but nothing at the database level prevented a different, less careful writer from issuing a destructive `UPDATE`); (2) surface `games.venue_lat`/`.venue_long`/`.venue_type` (stored since 3E-6/v4.9, never read back anywhere) into `daily_game_intelligence.stadium`, which previously exposed only `name`.
+
+**Decision:**
+- **`team_stats`/`player_stats` gain `block_snapshot_updates()`, reused verbatim** — the same function `odds_snapshots`/`injury_reports`/`weather_snapshots`/`depth_chart_snapshots`/`referee_assignments` already carry. No uniqueness constraint added (would have blocked the correction-row INSERTs the existing application logic depends on — a correction is a second, later row for the same `(game,team)`/`(game,player)` pair, by design); only `UPDATE` is blocked, `INSERT` remains completely unrestricted. Live-proven against real dev Supabase: a controlled `UPDATE` attempt on both tables was rejected (`P0001: ... is append-only and cannot be modified`), a subsequent correction `INSERT` still succeeded, the original row was confirmed unchanged — all proof rows removed afterward.
+- **`daily_game_intelligence.stadium` shape:** `{"name", "latitude", "longitude", "venue_type"}`, each field independently `null` when the underlying `games` column is `null` (never fabricated), the whole value `null` only when nothing about the venue is known at all — matching every other category's existing "no data → null" convention in this table. Assembled by one new pure helper, `app.master_refresh.game_refresh._build_stadium` — the single already-shared per-game refresh path both Master Refresh's daily run and Pregame Worker's targeted T-minus-5 refresh call, so both pick up the new shape from one change, no duplicate assembly logic anywhere.
+- **Travel remains explicitly deferred, unaffected by this phase** — this is current-state venue metadata surfacing, not the travel-distance calculation v4.5/v4.9's notes already describe as still not built.
+
+**Alternatives considered:**
+- Adding a uniqueness constraint on `team_stats`/`player_stats` alongside the trigger, for a stronger "one row per pair" guarantee — rejected; that is a fundamentally different design (would force an UPSERT-then-history pattern) than the correction-history-as-multiple-rows design already built and tested in 3E-8, and would have broken the existing correction-INSERT behavior outright.
+- Building a dedicated `stadiums` reference table or a `daily_game_intelligence.travel`-style distance calculation as part of this phase — rejected; out of 3F-3's explicit two-item scope, travel stays deferred per Mac's explicit instruction.
+
+**Expected impact:**
+- `supabase/migrations/20260818080000_team_stats_player_stats_append_only.sql`, `app/master_refresh/game_refresh.py`'s new `_build_stadium`, and the tests in `tests/test_team_stats_persistence.py`/`tests/test_player_stats_persistence.py`/`tests/test_game_refresh.py`/`tests/test_master_refresh.py`/`tests/test_pregame_worker.py` are the real, tested implementation.
+- No live SportsDataIO/The Odds API/WeatherAPI/NewsAPI/GNews calls anywhere in this phase's build or tests (SportsDataIO budget unchanged at 11 of 12); no hosted Redis provisioned; no Railway scheduler configured.
+- MINOR, Volume-3-only bump: one purely additive trigger pair (no column change, no existing data touched) and one documented jsonb shape addition to an already-existing column.
+
+**Full technical detail:** This entry, plus the new trigger comment block and `stadium` shape paragraph in Volume 3 §4.0/§4.1, `app/master_refresh/game_refresh.py`'s own `_build_stadium` docstring, the migration's own inline comments, and the completion report delivered to Mac. Also logged operationally in `PROGRESS.md`'s 2026-08-18 notes (Phase 3F-3).

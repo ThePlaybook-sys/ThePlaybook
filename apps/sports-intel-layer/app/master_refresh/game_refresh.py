@@ -48,6 +48,26 @@ def _parse_datetime(value: str | datetime) -> datetime:
     return value
 
 
+def _build_stadium(game: dict) -> dict | None:
+    """Phase 3F-3: surfaces `games.venue_lat`/`.venue_long`/`.venue_type`
+    (stored since 3E-6, never previously read back into
+    `daily_game_intelligence.stadium`) alongside the existing `.stadium`
+    name. Current-state only -- these are `games` columns, overwritten in
+    place by whatever the Schedule adapter last reported, not a
+    historical venue system. A field genuinely unknown stays `None`
+    (never fabricated); the whole object collapses to `None` only when
+    literally nothing about the venue is known, matching every other
+    category's "no data at all -> None" convention elsewhere in this
+    payload (odds/props/injuries/weather)."""
+    name = game.get("stadium")
+    lat = game.get("venue_lat")
+    lon = game.get("venue_long")
+    venue_type = game.get("venue_type")
+    if name is None and lat is None and lon is None and venue_type is None:
+        return None
+    return {"name": name, "latitude": lat, "longitude": lon, "venue_type": venue_type}
+
+
 async def refresh_daily_game_intelligence_for_game(
     client: httpx.AsyncClient,
     headers: dict,
@@ -99,6 +119,6 @@ async def refresh_daily_game_intelligence_for_game(
         weather_row=weather_row,
         existing_news=existing_news,
         rest=rest,
-        stadium={"name": game["stadium"]} if game.get("stadium") else None,
+        stadium=_build_stadium(game),
     )
     await upsert_daily_game_intelligence(client, headers, payload)

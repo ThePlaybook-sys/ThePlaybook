@@ -145,3 +145,21 @@ async def test_raises_on_insert_failure(monkeypatch):
 
     with pytest.raises(PersistenceError):
         await persist_team_stats(AdapterResponse(value=[_line("ARI", 10)], source="sportsdataio"))
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_module_never_issues_an_update_to_team_stats(monkeypatch):
+    """Phase 3F-3: team_stats now carries a DB-level append-only trigger
+    (block_snapshot_updates(), live-proven against real dev Supabase to
+    reject an UPDATE). This module's own contribution to that guarantee is
+    structural: it must never even attempt a PATCH/PUT against team_stats
+    -- registering no mock for those methods means respx raises if this
+    module ever tried, across both a first insert and a correction."""
+    _headers_env(monkeypatch)
+    _mock_identity()
+    existing = [{"id": "row1", "game_id": GAME_ID, "team_id": TEAM_ID_ARI, "stats": {"Score": 10, "HomeOrAway": "AWAY"}, "created_at": "2026-09-14T20:10:00Z"}]
+    respx.get(f"{SUPABASE_URL}/rest/v1/team_stats").mock(return_value=httpx.Response(200, json=existing))
+    respx.post(f"{SUPABASE_URL}/rest/v1/team_stats").mock(return_value=httpx.Response(201))
+
+    await persist_team_stats(AdapterResponse(value=[_line("ARI", 13)], source="sportsdataio"))  # no PATCH/PUT route registered -- would raise if attempted

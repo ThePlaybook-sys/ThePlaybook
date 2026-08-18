@@ -167,7 +167,7 @@ async def test_normal_master_refresh(monkeypatch):
     )
     _mock_game_provider_ids()
     _mock_games_create()
-    _mock_games_read([{"id": "db-game-1", "home_team": "SEA", "away_team": "NE", "scheduled_start": "2026-09-10T00:20:00+00:00", "stadium": "Lumen Field", "status": "scheduled"}])
+    _mock_games_read([{"id": "db-game-1", "home_team": "SEA", "away_team": "NE", "scheduled_start": "2026-09-10T00:20:00+00:00", "stadium": "Lumen Field", "status": "scheduled", "venue_lat": 47.5952, "venue_long": -122.3316, "venue_type": "outdoor"}])
     _mock_players_and_depth_charts(["SEA", "NE"])
     _mock_empty_intelligence()
     dgi_route = _mock_dgi_upsert()
@@ -195,6 +195,12 @@ async def test_normal_master_refresh(monkeypatch):
     )
     assert body["public_betting"] is None and body["sharp_money"] is None
     assert body["rest"]["home"]["season_opener"] is True  # no prior games mocked
+    # Phase 3F-3: Master Refresh's own per-game refresh call goes through
+    # the same shared app.master_refresh.game_refresh._build_stadium as
+    # Pregame Worker -- venue_lat/venue_long/venue_type now surface here.
+    assert body["stadium"] == {
+        "name": "Lumen Field", "latitude": 47.5952, "longitude": -122.3316, "venue_type": "outdoor",
+    }
 
 
 @pytest.mark.asyncio
