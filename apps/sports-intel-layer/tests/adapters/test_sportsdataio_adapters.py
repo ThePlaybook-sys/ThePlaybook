@@ -127,7 +127,11 @@ async def test_depth_chart_failure_propagates_no_silent_fallback():
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_malformed_roster_raises_provider_data_error():
+async def test_malformed_roster_row_is_isolated_and_skipped(caplog):
+    """Row isolation (2026-08-18, same defensive philosophy as the
+    Schedule fix): one player row missing PlayerID is logged and skipped,
+    not batch-fatal. This fixture has exactly one row, so the result
+    comes back empty, not raised."""
     respx.get(f"{BASE_URL}/v3/nfl/scores/json/Players/KC").mock(
         return_value=httpx.Response(200, json=load("roster_malformed.json"))
     )
@@ -135,13 +139,42 @@ async def test_malformed_roster_raises_provider_data_error():
         return_value=httpx.Response(200, json=load("depth_charts_normal.json"))
     )
     adapter = SportsDataIORosterAdapter(client=_client(), api_key=API_KEY)
-    with pytest.raises(ProviderDataError):
-        await adapter.fetch_roster("KC")
+    with caplog.at_level("WARNING"):
+        response = await adapter.fetch_roster("KC")
+    assert response.value == []
+    assert "skipping malformed roster row" in caplog.text
 
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_malformed_depth_chart_raises_provider_data_error():
+async def test_roster_valid_rows_survive_around_one_malformed_row():
+    """The fuller row-isolation proof: a valid player alongside a
+    malformed one -- the valid player still comes back."""
+    respx.get(f"{BASE_URL}/v3/nfl/scores/json/Players/KC").mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                {"PlayerID": 24924, "Team": "KC", "Name": "Xavier Worthy", "Position": "WR"},
+                {"Team": "KC", "Name": "Nobody", "Position": "QB"},  # missing PlayerID
+            ],
+        )
+    )
+    respx.get(f"{BASE_URL}/v3/nfl/scores/json/DepthCharts").mock(
+        return_value=httpx.Response(200, json=load("depth_charts_normal.json"))
+    )
+    adapter = SportsDataIORosterAdapter(client=_client(), api_key=API_KEY)
+    response = await adapter.fetch_roster("KC")
+    assert [e.player_external_id for e in response.value] == ["24924"]
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_malformed_depth_chart_entry_is_isolated_and_skipped(caplog):
+    """Row isolation: one depth-chart entry missing PlayerID is logged
+    and skipped -- the roster fetch itself still succeeds, just without a
+    depth_chart_rank for that entry (this fixture has only that one
+    entry, so every roster player ends up with depth_chart_rank=None,
+    not raised)."""
     respx.get(f"{BASE_URL}/v3/nfl/scores/json/Players/KC").mock(
         return_value=httpx.Response(200, json=load("rosters_normal.json"))
     )
@@ -149,8 +182,11 @@ async def test_malformed_depth_chart_raises_provider_data_error():
         return_value=httpx.Response(200, json=load("depth_charts_malformed.json"))
     )
     adapter = SportsDataIORosterAdapter(client=_client(), api_key=API_KEY)
-    with pytest.raises(ProviderDataError):
-        await adapter.fetch_roster("KC")
+    with caplog.at_level("WARNING"):
+        response = await adapter.fetch_roster("KC")
+    assert len(response.value) == 2  # rosters_normal.json's own 2 players, both isolated from the bad depth-chart entry
+    assert all(e.depth_chart_rank is None for e in response.value)
+    assert "skipping malformed depth chart entry" in caplog.text
 
 
 # ============================================================
@@ -450,7 +486,11 @@ async def test_team_stats_tolerates_internally_inconsistent_scrambled_numbers():
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_malformed_team_stats_raises_provider_data_error():
+async def test_malformed_team_stats_row_is_isolated_and_skipped(caplog):
+    """Row isolation (2026-08-18): a row missing GameKey can't even be
+    matched against the requested game, so it's logged and skipped during
+    filtering -- not batch-fatal. This fixture has exactly one row, so
+    the result comes back empty, not raised."""
     respx.get(f"{BASE_URL}/v3/nfl/scores/json/TeamGameStats/2025REG/1").mock(
         return_value=httpx.Response(200, json=load("team_stats_malformed.json"))
     )
@@ -458,8 +498,37 @@ async def test_malformed_team_stats_raises_provider_data_error():
         client=_client(), api_key=API_KEY,
         season_week_for_game=_season_week_lookup({"whatever": ("2025REG", 1)}),
     )
-    with pytest.raises(ProviderDataError):
-        await adapter.fetch_team_stats("whatever")
+    with caplog.at_level("WARNING"):
+        response = await adapter.fetch_team_stats("whatever")
+    assert response.value == []
+    assert "skipping malformed team-stats row" in caplog.text
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_team_stats_valid_rows_survive_a_malformed_row_elsewhere_in_the_week(caplog):
+    """The fuller proof: the week's bulk payload has one row for the
+    requested game (valid) and one row belonging to a different game
+    entirely, missing GameKey -- the valid row for the requested game
+    still comes back."""
+    respx.get(f"{BASE_URL}/v3/nfl/scores/json/TeamGameStats/2025REG/1").mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                {"GameKey": "202510104", "Team": "BUF", "Score": 27},
+                {"Team": "SOME-OTHER-GAME", "Score": 10},  # missing GameKey
+            ],
+        )
+    )
+    adapter = SportsDataIOTeamStatsAdapter(
+        client=_client(), api_key=API_KEY,
+        season_week_for_game=_season_week_lookup({"202510104": ("2025REG", 1)}),
+    )
+    with caplog.at_level("WARNING"):
+        response = await adapter.fetch_team_stats("202510104")
+    assert len(response.value) == 1
+    assert response.value[0].team == "BUF"
+    assert "skipping malformed team-stats row" in caplog.text
 
 
 @pytest.mark.asyncio
@@ -582,7 +651,10 @@ async def test_player_stats_second_game_same_week_reuses_cached_bulk_no_second_c
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_malformed_player_stats_raises_provider_data_error():
+async def test_malformed_player_stats_row_is_isolated_and_skipped(caplog):
+    """Row isolation (2026-08-18): a row missing PlayerID is logged and
+    skipped, not batch-fatal. This fixture has exactly one row, so the
+    result comes back empty, not raised."""
     respx.get(f"{BASE_URL}/v3/nfl/stats/json/PlayerGameStatsByWeek/2025REG/1").mock(
         return_value=httpx.Response(200, json=load("player_stats_malformed.json"))
     )
@@ -590,8 +662,36 @@ async def test_malformed_player_stats_raises_provider_data_error():
         client=_client(), api_key=API_KEY,
         season_week_for_game=_season_week_lookup({"202510104": ("2025REG", 1)}),
     )
-    with pytest.raises(ProviderDataError):
-        await adapter.fetch_player_stats("202510104")
+    with caplog.at_level("WARNING"):
+        response = await adapter.fetch_player_stats("202510104")
+    assert response.value == []
+    assert "skipping malformed player-stats row" in caplog.text
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_player_stats_valid_rows_survive_a_malformed_row_for_the_same_game(caplog):
+    """The fuller proof: two rows for the same requested game, one valid
+    and one missing PlayerID -- the valid player's stats still come
+    back."""
+    respx.get(f"{BASE_URL}/v3/nfl/stats/json/PlayerGameStatsByWeek/2025REG/1").mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                {"GameKey": "202510104", "PlayerID": 19801, "Name": "Josh Allen", "Team": "BUF", "PassingYards": 300},
+                {"GameKey": "202510104", "Name": "Nobody", "Team": "BUF", "PassingYards": 0},  # missing PlayerID
+            ],
+        )
+    )
+    adapter = SportsDataIOPlayerStatsAdapter(
+        client=_client(), api_key=API_KEY,
+        season_week_for_game=_season_week_lookup({"202510104": ("2025REG", 1)}),
+    )
+    with caplog.at_level("WARNING"):
+        response = await adapter.fetch_player_stats("202510104")
+    assert len(response.value) == 1
+    assert response.value[0].player_external_id == "19801"
+    assert "skipping malformed player-stats row" in caplog.text
 
 
 @pytest.mark.asyncio

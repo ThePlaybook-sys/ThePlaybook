@@ -30,6 +30,7 @@ test," and swapping the transport is the only thing that changes.
 """
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 
 import httpx
@@ -68,6 +69,8 @@ _PLAYER_PROP_MARKETS = (
     "player_reception_yds",
     "player_receptions",
 )
+
+_logger = logging.getLogger("sports-intel-layer.adapters.the_odds_api")
 
 
 def _parse_timestamp(value: str | None) -> datetime | None:
@@ -181,20 +184,44 @@ class TheOddsApiOddsAdapter(OddsAdapter):
         events = _parse_json_array(response, provider_name=self.provider_name)
         wanted = set(game_external_ids)
 
+        # Row isolation (2026-08-18, same defensive philosophy as the
+        # Schedule fix): a malformed row must not destroy otherwise valid
+        # data from the same response. Two isolation tiers, matching the
+        # two levels of "row" this bulk payload actually has:
+        #   - event-level: if an event's own identifying fields (id/teams/
+        #     commence_time) are malformed, nothing under it can be
+        #     trusted (every OddsLine needs them), so the whole event is
+        #     skipped -- logged, not silently dropped.
+        #   - market-level: once an event's own fields are known-good, one
+        #     malformed bookmaker/market/outcome must not take down that
+        #     event's other valid markets -- isolated per market.
+        # HTTP failure / invalid top-level JSON / non-array payload still
+        # fail the whole call, unchanged -- those already happened above,
+        # via `_get`/`_parse_json_array`, before this loop starts.
         lines: list[OddsLine] = []
         latest_update: str | None = None
-        try:
-            for event in events:
-                if wanted and event["id"] not in wanted:
+        for event in events:
+            try:
+                event_id = event["id"]
+                if wanted and event_id not in wanted:
                     continue
+                home_team = event["home_team"]
+                away_team = event["away_team"]
                 commence_time = _parse_timestamp(event["commence_time"])
-                for bookmaker in event.get("bookmakers", []):
-                    for market in bookmaker.get("markets", []):
+            except (KeyError, TypeError, ValueError) as exc:
+                _logger.warning(
+                    "skipping malformed odds event (id=%r): %s", event.get("id"), exc
+                )
+                continue
+
+            for bookmaker in event.get("bookmakers", []):
+                for market in bookmaker.get("markets", []):
+                    try:
                         lines.append(
                             OddsLine(
-                                game_external_id=event["id"],
-                                home_team=event["home_team"],
-                                away_team=event["away_team"],
+                                game_external_id=event_id,
+                                home_team=home_team,
+                                away_team=away_team,
                                 commence_time=commence_time,
                                 sportsbook=bookmaker["key"],
                                 market_type=_BULK_MARKET_TYPE.get(market["key"], "prop"),
@@ -204,8 +231,12 @@ class TheOddsApiOddsAdapter(OddsAdapter):
                         market_update = market.get("last_update")
                         if market_update and (latest_update is None or market_update > latest_update):
                             latest_update = market_update
-        except (KeyError, TypeError, ValueError) as exc:
-            raise ProviderDataError(f"malformed odds payload: {exc}", provider=self.provider_name) from exc
+                    except (KeyError, TypeError, ValueError) as exc:
+                        _logger.warning(
+                            "skipping malformed odds market (event=%r, bookmaker=%r): %s",
+                            event_id, bookmaker.get("key"), exc,
+                        )
+                        continue
 
         return AdapterResponse(
             value=lines,
@@ -245,23 +276,51 @@ class TheOddsApiPlayerPropsAdapter(PlayerPropsAdapter):
             )
             event = _parse_json_object(response, provider_name=self.provider_name)
 
-            grouped: dict[tuple[str, str, str, float | None], PlayerProp] = {}
+            # Row isolation (2026-08-18, same defensive philosophy as the
+            # Schedule/Odds fixes), three tiers matching this payload's
+            # actual nesting:
+            #   - event-level: if this game's own identifying fields are
+            #     malformed, nothing under it can be trusted -- skip this
+            #     game_id entirely (logged), move on to the next one. This
+            #     is already its own HTTP call, so isolating it costs
+            #     nothing extra.
+            #   - market-level: a market with no usable `outcomes` is
+            #     skipped, other markets for the same game still process.
+            #   - outcome-level: one malformed outcome must not discard
+            #     every other valid Over/Under pair for the same market.
             try:
+                event_id = event["id"]
                 event_home_team = event["home_team"]
                 event_away_team = event["away_team"]
                 event_commence_time = _parse_timestamp(event["commence_time"])
-                for bookmaker in event.get("bookmakers", []):
-                    for market in bookmaker.get("markets", []):
-                        market_update = market.get("last_update")
-                        if market_update and (latest_update is None or market_update > latest_update):
-                            latest_update = market_update
-                        for outcome in market["outcomes"]:
+            except (KeyError, TypeError, ValueError) as exc:
+                _logger.warning(
+                    "skipping malformed player-prop event (game_id=%r): %s", game_id, exc
+                )
+                continue
+
+            grouped: dict[tuple[str, str, str, float | None], PlayerProp] = {}
+            for bookmaker in event.get("bookmakers", []):
+                for market in bookmaker.get("markets", []):
+                    market_update = market.get("last_update")
+                    if market_update and (latest_update is None or market_update > latest_update):
+                        latest_update = market_update
+                    try:
+                        outcomes = market["outcomes"]
+                    except (KeyError, TypeError) as exc:
+                        _logger.warning(
+                            "skipping malformed player-prop market (game_id=%r, bookmaker=%r): %s",
+                            game_id, bookmaker.get("key"), exc,
+                        )
+                        continue
+                    for outcome in outcomes:
+                        try:
                             player_name = outcome["description"]
                             key = (bookmaker["key"], market["key"], player_name, outcome.get("point"))
                             prop = grouped.get(key)
                             if prop is None:
                                 prop = PlayerProp(
-                                    game_external_id=event["id"],
+                                    game_external_id=event_id,
                                     home_team=event_home_team,
                                     away_team=event_away_team,
                                     commence_time=event_commence_time,
@@ -277,10 +336,12 @@ class TheOddsApiPlayerPropsAdapter(PlayerPropsAdapter):
                                 prop.over_odds = outcome["price"]
                             elif side == "Under":
                                 prop.under_odds = outcome["price"]
-            except (KeyError, TypeError, ValueError) as exc:
-                raise ProviderDataError(
-                    f"malformed player-prop payload for game {game_id}: {exc}", provider=self.provider_name
-                ) from exc
+                        except (KeyError, TypeError, ValueError) as exc:
+                            _logger.warning(
+                                "skipping malformed player-prop outcome (game_id=%r, bookmaker=%r, market=%r): %s",
+                                game_id, bookmaker.get("key"), market.get("key"), exc,
+                            )
+                            continue
 
             props.extend(grouped.values())
 

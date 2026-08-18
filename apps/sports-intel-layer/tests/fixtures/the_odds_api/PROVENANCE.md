@@ -38,3 +38,42 @@ PROGRESS.md's 2026-08-11 entry). Two provenance tiers apply, per file below:
 
 Nothing here is invented and then treated as provider fact in the adapter or its
 tests — the adapter's own docstring carries the same CONFIRMED/ASSUMED split.
+
+## Row isolation (2026-08-18, Data Dictionary reconciliation corrective pass)
+
+Found and fixed as part of a broader row-isolation sweep prompted by the
+SportsDataIO Schedule status fix (same day): `TheOddsApiOddsAdapter.fetch_odds`
+and `TheOddsApiPlayerPropsAdapter.fetch_player_props` both wrapped their entire
+event-parsing loop in one try/except, so one malformed event/bookmaker/market/
+outcome anywhere in the response aborted the whole call — for `fetch_odds`,
+that meant every game in the bulk multi-game response; for `fetch_player_props`,
+every game in that cycle's batch, despite each game already being its own HTTP
+call.
+
+**Fixed with the same defensive philosophy as the Schedule fix, no vendor-shape
+assumptions changed:**
+- `fetch_odds`: two isolation tiers — a malformed event (missing id/teams/
+  commence_time) is logged and skipped; a malformed market within an
+  otherwise-valid event is logged and skipped, that event's other valid
+  markets still process.
+- `fetch_player_props`: three isolation tiers — a malformed event (one game's
+  own HTTP response) is logged and skipped, moving on to the next game_id; a
+  market with no usable `outcomes` is logged and skipped; a malformed
+  individual outcome is logged and skipped, the market's other valid
+  Over/Under pairs still process.
+- HTTP failure, invalid top-level JSON, and non-array/non-object payloads
+  still fail the whole call, unchanged — no change to `_get`/
+  `_parse_json_array`/`_parse_json_object`.
+- **Known characteristic, not a defect:** a malformed field that fails *after*
+  a `PlayerProp` has already been created for a given (bookmaker, market,
+  player, point) key (e.g. a missing `price` on the very first outcome seen
+  for that key) leaves that prop in the result with the affected side
+  (`over_odds`/`under_odds`) still `None` rather than removing the whole
+  entry — consistent with the model's own optional-field design and the
+  null-not-neutral convention, not fabricated data. Isolation guarantees no
+  *other* valid prop is lost; it does not retroactively undo a partial
+  mutation already made to an in-progress record.
+
+`malformed_payload.json`'s own tier note above is unaffected — the fixture
+still deliberately breaks a required field, it now demonstrates isolation
+(logged, skipped, empty result) rather than a raised exception.

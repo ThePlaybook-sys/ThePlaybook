@@ -430,18 +430,34 @@ async def test_team_stats_provider_failure_is_isolated(monkeypatch):
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_malformed_team_stats_row_is_isolated(monkeypatch):
+async def test_malformed_team_stats_row_is_isolated(monkeypatch, caplog):
+    """Row isolation (2026-08-18): a malformed team-stats row (missing
+    GameKey) is now isolated and skipped inside
+    SportsDataIOTeamStatsAdapter.fetch_team_stats itself -- it no longer
+    raises and no longer blocks this game's overall ingestion. The game
+    still gets reconciled; team_stats simply has nothing valid to write
+    for it (0 rows), while player_stats -- unaffected -- still persists
+    normally."""
     _headers_env(monkeypatch)
     _mock_games_store(status="scheduled")
     _mock_game_provider_ids()
     _mock_season()
     _mock_schedule_final()
-    _mock_team_stats(rows=[{"Team": "KC"}])  # missing GameKey -- malformed
+    _mock_team_provider_ids()
+    _mock_player_provider_ids()
+    _mock_team_stats(rows=[{"Team": "KC"}])  # missing GameKey -- isolated, not batch-fatal
+    _mock_player_stats()
+    team_stats_store = _mock_team_stats_table()
+    player_stats_store = _mock_player_stats_table()
 
-    result = await _run(now=NOW)
+    with caplog.at_level("WARNING"):
+        result = await _run(now=NOW)
 
-    assert result.status == "partial"
-    assert result.games_reconciled == []
+    assert result.status == "success"
+    assert result.games_reconciled == [GAME_ID]
+    assert len(team_stats_store.rows) == 0  # the only row was malformed, isolated away
+    assert len(player_stats_store.rows) == 1  # unaffected
+    assert "skipping malformed team-stats row" in caplog.text
 
 
 # ============================================================================

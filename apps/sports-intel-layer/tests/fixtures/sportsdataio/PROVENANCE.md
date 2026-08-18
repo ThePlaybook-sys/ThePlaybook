@@ -253,3 +253,37 @@ per explicit instruction not to expand scope solely to wire this up. This
 project's own season resolution (`app.persistence.seasons.
 fetch_current_season_string`) remains the current mechanism; Timeframes is
 not consumed anywhere in this codebase.
+
+## Row isolation, Roster/DepthCharts/TeamStats/PlayerStats (2026-08-18, Data Dictionary reconciliation corrective pass)
+
+Found and fixed in the same sweep as the Schedule status fix above.
+`SportsDataIORosterAdapter.fetch_roster`, `_get_depth_chart_lookup`,
+`SportsDataIOTeamStatsAdapter.fetch_team_stats`, and
+`SportsDataIOPlayerStatsAdapter.fetch_player_stats` all wrapped their entire
+row-building loop in one try/except, so one malformed row aborted the whole
+call:
+
+- **Roster**: one malformed player row took down that team's entire roster
+  (~53 players). Fixed: each player row is isolated (logged, skipped),
+  other valid players in the same team's roster still come back.
+- **DepthCharts**: one malformed depth-chart entry took down the whole
+  league-wide depth-chart lookup (shared, bulk-cached, used by every team's
+  roster fetch that cycle). Fixed: each entry is isolated; other teams'
+  depth ranks are unaffected by one team's bad entry.
+- **TeamStats/PlayerStats**: `rows` is the whole week's bulk payload, shared
+  across every game that week via `_WeeklyBulkCacheMixin` — a malformed row
+  belonging to a *different* game (or a different player, for PlayerStats)
+  could already take down the specific game being fetched, purely from
+  filtering the shared bulk list down to the requested `GameKey`. Fixed:
+  the GameKey-filtering step and the per-row model-building step are both
+  isolated (logged, skipped) instead of one try/except around the whole
+  thing.
+
+**Unchanged, per explicit instruction:** HTTP failure / invalid top-level
+JSON / non-array payload still fail the whole call (via `_get`/
+`_parse_json_array`, before any of these loops start). The DepthCharts
+*call itself* failing outright (a transport/request-level failure, not a
+malformed row within a successful response) still propagates and fails
+`fetch_roster` unchanged — that boundary is a deliberate, separate decision
+(this class's own module docstring), not touched by this fix. No enum
+vocabulary was expanded and no schema was changed as part of this pass.

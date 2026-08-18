@@ -212,13 +212,78 @@ async def test_line_movement_between_successive_calls():
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_malformed_payload_raises_provider_data_error_not_a_crash():
+async def test_malformed_event_is_isolated_and_skipped(caplog):
+    """Row isolation (2026-08-18, same defensive philosophy as the
+    Schedule fix): an event missing id/commence_time is logged and
+    skipped -- not batch-fatal. This fixture has exactly one event, so
+    the result comes back empty, not raised."""
     respx.get(ODDS_URL).mock(
         return_value=httpx.Response(200, json=load("malformed_payload.json"))
     )
     adapter = _odds_adapter()
-    with pytest.raises(ProviderDataError):
-        await adapter.fetch_odds([GAME_CHIEFS_RAVENS])
+    with caplog.at_level("WARNING"):
+        response = await adapter.fetch_odds([GAME_CHIEFS_RAVENS])
+    assert response.value == []
+    assert "skipping malformed odds event" in caplog.text
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_valid_events_survive_a_malformed_event_in_the_same_response():
+    """The fuller proof: a malformed event (missing id) alongside a
+    fully valid one -- the valid event's odds lines still come back."""
+    respx.get(ODDS_URL).mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                {
+                    "home_team": "Kansas City Chiefs", "away_team": "Baltimore Ravens",
+                    "bookmakers": [{"key": "draftkings", "markets": [{"key": "h2h", "outcomes": [{"name": "Kansas City Chiefs", "price": -150}]}]}],
+                },  # missing id + commence_time
+                {
+                    "id": GAME_COWBOYS_EAGLES, "home_team": "Dallas Cowboys", "away_team": "Philadelphia Eagles",
+                    "commence_time": "2026-09-14T17:00:00Z",
+                    "bookmakers": [{"key": "fanduel", "markets": [{"key": "h2h", "outcomes": [{"name": "Dallas Cowboys", "price": -110}]}]}],
+                },
+            ],
+        )
+    )
+    adapter = _odds_adapter()
+    response = await adapter.fetch_odds([])
+    assert [line.game_external_id for line in response.value] == [GAME_COWBOYS_EAGLES]
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_valid_markets_survive_a_malformed_market_in_the_same_event(caplog):
+    """One malformed market (missing outcomes) within an otherwise-valid
+    event must not discard that event's other valid markets."""
+    respx.get(ODDS_URL).mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                {
+                    "id": GAME_CHIEFS_RAVENS, "home_team": "Kansas City Chiefs", "away_team": "Baltimore Ravens",
+                    "commence_time": "2026-09-14T17:00:00Z",
+                    "bookmakers": [
+                        {
+                            "key": "draftkings",
+                            "markets": [
+                                {"key": "h2h"},  # missing outcomes -- malformed
+                                {"key": "spreads", "outcomes": [{"name": "Kansas City Chiefs", "price": -110, "point": -3.5}]},
+                            ],
+                        }
+                    ],
+                },
+            ],
+        )
+    )
+    adapter = _odds_adapter()
+    with caplog.at_level("WARNING"):
+        response = await adapter.fetch_odds([])
+    assert len(response.value) == 1
+    assert response.value[0].market_type == "spread"
+    assert "skipping malformed odds market" in caplog.text
 
 
 @pytest.mark.asyncio
@@ -338,6 +403,69 @@ async def test_player_props_missing_market_produces_no_props_not_a_crash():
     adapter = _props_adapter()
     response = await adapter.fetch_player_props([GAME_49ERS_BILLS])
     assert response.value == []
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_player_props_one_malformed_game_does_not_block_a_valid_one(caplog):
+    """Row isolation (2026-08-18): a per-game player-props fetch is
+    already one HTTP call per game -- one game's malformed event
+    (missing home_team) is logged and skipped, the other game's valid
+    props still come back, rather than the whole multi-game batch
+    aborting."""
+    respx.get(f"{BASE_URL}/v4/sports/americanfootball_nfl/events/{GAME_CHIEFS_RAVENS}/odds").mock(
+        return_value=httpx.Response(200, json=load("player_props_event.json"))
+    )
+    respx.get(f"{BASE_URL}/v4/sports/americanfootball_nfl/events/{GAME_49ERS_BILLS}/odds").mock(
+        return_value=httpx.Response(
+            200,
+            json={"id": GAME_49ERS_BILLS, "away_team": "Buffalo Bills"},  # missing home_team
+        )
+    )
+    adapter = _props_adapter()
+    with caplog.at_level("WARNING"):
+        response = await adapter.fetch_player_props([GAME_CHIEFS_RAVENS, GAME_49ERS_BILLS])
+    assert {prop.game_external_id for prop in response.value} == {GAME_CHIEFS_RAVENS}
+    assert "skipping malformed player-prop event" in caplog.text
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_player_props_one_malformed_outcome_does_not_block_valid_ones(caplog):
+    """One malformed outcome (missing the player description entirely --
+    nothing to key or attribute it by) within an otherwise-valid market
+    must not discard that market's other valid Over/Under pairs."""
+    respx.get(f"{BASE_URL}/v4/sports/americanfootball_nfl/events/{GAME_CHIEFS_RAVENS}/odds").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "id": GAME_CHIEFS_RAVENS, "home_team": "Kansas City Chiefs", "away_team": "Baltimore Ravens",
+                "commence_time": "2026-09-14T17:00:00Z",
+                "bookmakers": [
+                    {
+                        "key": "draftkings",
+                        "markets": [
+                            {
+                                "key": "player_pass_tds",
+                                "outcomes": [
+                                    {"name": "Over", "point": 2.5, "price": -105},  # missing description -- malformed
+                                    {"name": "Over", "description": "Josh Allen", "point": 2.5, "price": -120},
+                                    {"name": "Under", "description": "Josh Allen", "point": 2.5, "price": 100},
+                                ],
+                            }
+                        ],
+                    }
+                ],
+            },
+        )
+    )
+    adapter = _props_adapter()
+    with caplog.at_level("WARNING"):
+        response = await adapter.fetch_player_props([GAME_CHIEFS_RAVENS])
+    assert [p.player_name for p in response.value] == ["Josh Allen"]
+    assert response.value[0].over_odds == -120
+    assert response.value[0].under_odds == 100
+    assert "skipping malformed player-prop outcome" in caplog.text
 
 
 @pytest.mark.asyncio
