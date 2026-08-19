@@ -29,6 +29,7 @@ import json
 import logging
 import time
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable
 
 if TYPE_CHECKING:
@@ -39,7 +40,19 @@ _logger = logging.getLogger("sports-intel-layer.cache")
 
 class CacheBackend(ABC):
     """Minimal key/value + TTL contract. Redis (Phase 3D) implements this;
-    tests and pre-3D development use `InMemoryCacheBackend`."""
+    tests and pre-3D development use `InMemoryCacheBackend`.
+
+    **`errors` (Phase 3F acceptance closure, 2026-08-19):** a plain
+    instance counter, incremented by a subclass whenever it internally
+    catches a backend-specific failure (e.g. `RedisCacheBackend`'s own
+    `redis.exceptions.RedisError` handling below) and falls back to its
+    existing fail-open behavior (`get` returns `None`, `set` is a no-op --
+    both unchanged from before this counter existed). `InMemoryCacheBackend`
+    has no failure mode of its own, so it never increments this -- the
+    counter stays meaningful only for backends that actually can fail,
+    without needing a backend-specific metrics type."""
+
+    errors: int = 0
 
     @abstractmethod
     async def get(self, key: str) -> str | None:
@@ -59,6 +72,7 @@ class InMemoryCacheBackend(CacheBackend):
     def __init__(self, *, clock: Callable[[], float] | None = None):
         self._store: dict[str, tuple[str, float]] = {}
         self._clock = clock or time.monotonic
+        self.errors = 0
 
     async def get(self, key: str) -> str | None:
         entry = self._store.get(key)
@@ -123,6 +137,7 @@ class RedisCacheBackend(CacheBackend):
 
     def __init__(self, client: "redis_asyncio.Redis"):
         self._client = client
+        self.errors = 0
 
     async def get(self, key: str) -> str | None:
         import redis.exceptions
@@ -130,6 +145,7 @@ class RedisCacheBackend(CacheBackend):
         try:
             value = await self._client.get(key)
         except redis.exceptions.RedisError as exc:
+            self.errors += 1
             _logger.warning("RedisCacheBackend.get failed, treating as cache miss: %s", exc)
             return None
         if value is None:
@@ -142,6 +158,7 @@ class RedisCacheBackend(CacheBackend):
         try:
             await self._client.set(key, value, ex=ttl_seconds)
         except redis.exceptions.RedisError as exc:
+            self.errors += 1
             _logger.warning("RedisCacheBackend.set failed, cache write skipped: %s", exc)
 
 
@@ -193,6 +210,61 @@ def cache_key(provider_name: str, method_name: str, *args: Any) -> str:
     return f"adapter:{provider_name}:{method_name}:{digest}"
 
 
+@dataclass
+class CacheMetrics:
+    """Phase 3F acceptance closure (2026-08-19): the measurable primitives
+    Volume 2 §8's own acceptance criterion #3 ("cache hit rate is
+    measurable") asked for, previously absent entirely -- TTL behavior was
+    real and tested, but nothing counted it. Owned per-`CachingAdapter`
+    instance, not globally -- since every worker already constructs one
+    `CachingAdapter` per category (confirmed by inspection: `odds_worker`,
+    `player_props_worker`, `injury_worker`, `weather_worker`,
+    `news_worker`, and Master Refresh's own Schedule/Roster callers each
+    build their own instance), this gives independent per-category numbers
+    for free, without a second category-keyed metrics store.
+
+    **Definitions (exact, not left implicit):**
+    - **hit**: `CacheBackend.get` returned a non-`None` value for this
+      call's key -- the provider was NOT called.
+    - **miss**: `CacheBackend.get` returned `None` -- for any reason: a
+      genuinely new key, an expired entry, or a backend read failure that
+      fails open (see `CacheBackend.errors` below for the last case's own
+      distinct count). The provider IS then called.
+    - **set**: `CacheBackend.set` was called once, after a real provider
+      fetch on a miss -- an *attempt*, not a confirmed durable write:
+      `RedisCacheBackend.set` already swallows a write failure internally
+      (existing fail-open behavior, unchanged), so this call has no way to
+      observe whether the value actually landed. `errors` (below) is
+      where that distinction lives.
+    - **error** (`CacheBackend.errors`, not a field here): a backend-level
+      read/write failure that was caught and turned into the existing
+      fail-open behavior. Tracked on the backend itself, not here, since
+      only backends with an actual failure mode (Redis) can produce one --
+      `InMemoryCacheBackend.errors` is always 0.
+
+    Deliberately does **not** compute a hit-rate percentage here -- see
+    `hit_rate` below for why."""
+
+    hits: int = 0
+    misses: int = 0
+    sets: int = 0
+
+    @property
+    def total(self) -> int:
+        return self.hits + self.misses
+
+    @property
+    def hit_rate(self) -> float | None:
+        """`hits / total`, or `None` when `total == 0` -- a tiny/empty
+        sample must never be presented as a misleadingly precise
+        percentage (e.g. "100%" off one lucky hit). `None` is the honest
+        "not enough data yet" signal, consistent with this project's
+        null-not-neutral convention elsewhere."""
+        if self.total == 0:
+            return None
+        return self.hits / self.total
+
+
 class CachingAdapter:
     """Wraps calls to any `ProviderAdapter` subclass with a cache-aside
     strategy. Deliberately generic over which adapter method is called,
@@ -203,6 +275,14 @@ class CachingAdapter:
         self._adapter = adapter
         self._backend = backend
         self._ttl_seconds = ttl_seconds
+        self.metrics = CacheMetrics()
+
+    @property
+    def errors(self) -> int:
+        """Convenience proxy to the wrapped backend's own error counter --
+        see `CacheBackend.errors`/`CacheMetrics`'s own docstring for why
+        this lives on the backend, not `CacheMetrics`."""
+        return self._backend.errors
 
     async def call(self, method_name: str, *args: Any, response_model: Any) -> Any:
         """Call `method_name` on the wrapped adapter, transparently caching
@@ -212,11 +292,14 @@ class CachingAdapter:
         key = cache_key(self._adapter.provider_name, method_name, *args)
         cached = await self._backend.get(key)
         if cached is not None:
+            self.metrics.hits += 1
             response = response_model.model_validate_json(cached)
             response.from_cache = True
             return response
+        self.metrics.misses += 1
 
         method = getattr(self._adapter, method_name)
         response = await method(*args)
         await self._backend.set(key, response.model_dump_json(), self._ttl_seconds)
+        self.metrics.sets += 1
         return response
