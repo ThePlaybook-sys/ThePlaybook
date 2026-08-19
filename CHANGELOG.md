@@ -905,4 +905,25 @@ A one-line cross-reference was added to §7's `postgame_reviews` description (`o
 
 **Full technical detail:** This entry, plus the new "`daily_game_intelligence.players` reconciliation" and exception-isolation-gap paragraphs in Volume 2 §8, and the completion report delivered to Mac. Also logged operationally in `PROGRESS.md`'s 2026-08-19 notes (Phase 3F-4).
 
+---
+
+## v4.15 — 2026-08-19 — PATCH
+
+**Volume affected:** Volume 2 (System Architecture) only.
+
+**Reason:** Fixes the exception-isolation gap v4.14's `daily_game_intelligence.players` reconciliation work surfaced and reported (not fixed, per that substep's explicit "complete 3F-4 only" scope). Mac reviewed the finding and approved the smallest safe fix as the prerequisite for 3F-5.
+
+**Decision:** `run_master_refresh`'s per-team `try: await persist_roster(roster_response) except RosterIngestionError` boundary widened to `except (RosterIngestionError, PlayerIdentityError, TeamIdentityError)` -- the two additional exception types `persist_roster` can actually raise via its calls into `player_identity`/`team_identity`, caught at the exact same per-team boundary `RosterIngestionError` already used. No generic `except Exception`, no change to `persist_roster` itself, no fabricated identity on failure -- a failed team's `player_id` still correctly resolves to `null` in `daily_game_intelligence.players`, never guessed.
+
+**Alternatives considered:**
+- Having `persist_roster` itself catch `PlayerIdentityError`/`TeamIdentityError` internally and re-raise as `RosterIngestionError` -- rejected as a slightly larger change (touches `roster_ingestion.py`, not just the orchestration boundary) for the same observable effect; the orchestration-level fix is the smaller, safer change and keeps each module's own exception type meaningful to its own callers.
+- Catching generic `Exception` at this boundary -- explicitly rejected per Mac's instruction; would silently swallow genuine programming errors alongside the two known identity-failure classes, confirmed still-propagating via a dedicated test.
+
+**Expected impact:**
+- `app/master_refresh/run.py` (widened except clause + docstring correction) and 3 new tests in `tests/test_master_refresh.py` (`PlayerIdentityError` isolation, `TeamIdentityError` isolation, unrelated-exception-still-propagates) are the real, tested implementation. 454/454 full regression passing (451 pre-existing + 3 new).
+- No live SportsDataIO/The Odds API/WeatherAPI/NewsAPI/GNews calls; no hosted Redis; no Railway scheduling; no schema change.
+- PATCH, Volume-2-only: corrects a real availability defect in already-shipped 3F-4/3F-1 orchestration code; no new capability, no architecture change.
+
+**Full technical detail:** This entry, plus the corrected exception-isolation-gap paragraph in Volume 2 §8, and the completion report delivered to Mac. Also logged operationally in `PROGRESS.md`'s 2026-08-19 notes (Phase 3F-5 prerequisite fix).
+
 **Full technical detail:** This entry, plus the new "Status-map correction and row isolation" paragraph in Volume 2 §8, `app/adapters/providers/sportsdataio.py`'s own module docstring and `_SCHEDULE_STATUS_MAP` comment, `PROVENANCE.md`'s updated status-vocabulary section, and the completion report delivered to Mac. Also logged operationally in `PROGRESS.md`'s 2026-08-18 notes.
