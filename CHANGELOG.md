@@ -860,4 +860,22 @@ A one-line cross-reference was added to §7's `postgame_reviews` description (`o
 
 **Full technical detail:** This entry, plus the "Row isolation" sections appended to `tests/fixtures/the_odds_api/PROVENANCE.md` and `tests/fixtures/sportsdataio/PROVENANCE.md`, and the completion report delivered to Mac. Also logged operationally in `PROGRESS.md`'s 2026-08-18 notes (Data Dictionary reconciliation corrective pass).
 
+---
+
+## v4.12.1 — 2026-08-18 — PATCH
+
+**Volume affected:** Volume 3 (Database Architecture) only.
+
+**Reason:** The Data Dictionary reconciliation's inspection phase surfaced `player_stats_nfl` as a real, previously-undocumented Blueprint-vs-reality gap: the table has existed since v4.0 but no code anywhere in this codebase has ever written to it. Rather than leave it silently orphaned, Mac reviewed the STOP-and-report recommendation (Volume 3's own extension-table rationale is purely about multi-sport column bloat, irrelevant at NFL-only scope; no Volume 4/5 documented consumer; the typed table covers only 5 of ~100+ real fields, so jsonb remains necessary regardless; wiring both would add a genuine duplicate-source-of-truth risk) and confirmed it.
+
+**Decision:** `player_stats_nfl` stays **UNWIRED, DEFERRED** — schema unchanged, not dropped, no code writes to it. `player_stats.stats` jsonb is confirmed as the source of truth for NFL player statistics. §4.0 gains a "Status" note directly below the table's existing "Why extension tables" rationale, recording the decision, its four-point rationale, and the concrete conditions that would justify revisiting it (multi-sport expansion actually beginning, a concrete documented downstream consumer needing typed/indexed access, or a demonstrated query-performance requirement — not preemptively).
+
+**Alternatives considered:** Wiring `player_stats_nfl` now on the theory that "it's already built, might as well populate it" — rejected; a currently-undemonstrated benefit against a real, immediate dual-write-consistency cost is the wrong trade, and doing so during a documentation/reconciliation pass rather than a deliberate architectural decision would have been exactly the kind of undocumented drift this changelog exists to prevent. Dropping the table outright — rejected; a future NFL-specific typed need remains plausible, and the table costs nothing sitting empty.
+
+**Expected impact:**
+- No code, schema, or persistence change — this is a documentation-only PATCH closing a real gap between what the Blueprint implied (an active extension table) and what the codebase actually does (never writes to it).
+- Any future PlayerStats-related work should continue treating `player_stats.stats` jsonb as authoritative and complete; `player_stats_nfl` requires no maintenance and should not be silently wired up as a side effect of unrelated work.
+
+**Full technical detail:** This entry, plus the new "Status" paragraph in Volume 3 §4.0 directly below `player_stats_nfl`'s table definition, and the completion report delivered to Mac. Also logged operationally in `PROGRESS.md`'s 2026-08-18 notes.
+
 **Full technical detail:** This entry, plus the new "Status-map correction and row isolation" paragraph in Volume 2 §8, `app/adapters/providers/sportsdataio.py`'s own module docstring and `_SCHEDULE_STATUS_MAP` comment, `PROVENANCE.md`'s updated status-vocabulary section, and the completion report delivered to Mac. Also logged operationally in `PROGRESS.md`'s 2026-08-18 notes.
