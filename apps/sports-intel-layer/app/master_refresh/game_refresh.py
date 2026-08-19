@@ -22,7 +22,27 @@ omitted, this function reads back whatever `daily_game_intelligence.
 players` already holds via `read_existing_players` and preserves it
 verbatim, the same pattern `existing_news`/`read_existing_news` already
 established for the identical "not this call's field to own" situation.
-"""
+Since Master Refresh already wrote the internal `player_id` enrichment
+below into that same row, the read-back passthrough carries it forward
+automatically -- Pregame Worker needs no separate identity resolution.
+
+**`player_ids` (Phase 3F-4): minimal reconciliation, not a durable-table
+read path.** `daily_game_intelligence.players` stays the fresh
+roster-fetch passthrough (Decision, 3F-4 report) -- this is *not* a
+rebuild from `players`/`roster_memberships`/`depth_chart_snapshots`.
+The one real gap those 3F-1 tables closed that the raw fetch alone
+can't -- a stable internal `players.id` for joining to `player_stats`/
+future postgame or recommendation systems -- is added by looking up each
+entry's already-known `player_external_id` in a `player_id` mapping the
+caller resolves once, batched, via `player_identity.resolve_player_ids`
+(Master Refresh does this once for the whole slate, not per-team/
+per-game -- see `run.py`). A player absent from the mapping (never
+durably ingested yet, or this cycle's `persist_roster` failed before
+reaching them) gets `player_id: None` -- never fabricated, never
+name-matched. This is a deliberate, honest signal: the roster/depth-chart
+*content* shown is still the freshest available data even when identity
+resolution lags, but the internal identity link is only ever present when
+truly confirmed."""
 from __future__ import annotations
 
 from datetime import datetime
@@ -46,6 +66,19 @@ def _parse_datetime(value: str | datetime) -> datetime:
     if isinstance(value, str):
         return datetime.fromisoformat(value.replace("Z", "+00:00"))
     return value
+
+
+def _enrich_roster(roster: list[RosterEntry], player_ids: dict[str, str]) -> list[dict]:
+    """Phase 3F-4: adds the resolved internal `players.id` alongside every
+    field the raw roster fetch already exposed (team/player_external_id/
+    player_name/position/depth_chart_rank) -- unchanged, not redesigned.
+    `player_ids` maps `player_external_id` -> internal `players.id` (see
+    `player_identity.resolve_player_ids`); an entry absent from it gets
+    `player_id: None`, never fabricated, never guessed by name."""
+    return [
+        {**entry.model_dump(mode="json"), "player_id": player_ids.get(entry.player_external_id)}
+        for entry in roster
+    ]
 
 
 def _build_stadium(game: dict) -> dict | None:
@@ -74,6 +107,7 @@ async def refresh_daily_game_intelligence_for_game(
     game: dict,
     *,
     rosters: dict[str, list[RosterEntry] | None] | None = None,
+    player_ids: dict[str, str] | None = None,
 ) -> None:
     """Reads back the currently-persisted odds/props/injuries/weather/news
     for `game`, recomputes `rest`, and upserts the resulting
@@ -102,9 +136,10 @@ async def refresh_daily_game_intelligence_for_game(
         away_roster = rosters.get(game["away_team"])
         players = None
         if home_roster is not None or away_roster is not None:
+            ids = player_ids or {}
             players = {
-                "home": [r.model_dump(mode="json") for r in home_roster] if home_roster is not None else None,
-                "away": [r.model_dump(mode="json") for r in away_roster] if away_roster is not None else None,
+                "home": _enrich_roster(home_roster, ids) if home_roster is not None else None,
+                "away": _enrich_roster(away_roster, ids) if away_roster is not None else None,
             }
     else:
         players = await read_existing_players(client, headers, game_id=game_id)

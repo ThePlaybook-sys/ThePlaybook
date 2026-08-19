@@ -644,3 +644,308 @@ async def test_no_unauthorized_provider_urls_are_ever_contacted(monkeypatch):
     for call in respx.calls:
         host = call.request.url.host
         assert host in ("test-project.supabase.co", "api.sportsdata.io")
+
+
+def _mock_player_provider_ids_matching(mapping: dict[str, str]):
+    """Phase 3F-4: a differentiated player_provider_ids GET mock -- returns
+    only the rows whose provider_player_id appears in the request's own
+    `in.(...)` filter, so both persist_roster's internal per-player
+    resolve calls and the new end-of-cycle batched resolve call get a
+    realistic, query-scoped answer instead of one blanket response."""
+
+    def _respond(request: httpx.Request) -> httpx.Response:
+        ids_param = request.url.params.get("provider_player_id", "")
+        rows = [
+            {"provider_player_id": provider_id, "player_id": player_id}
+            for provider_id, player_id in mapping.items()
+            if provider_id in ids_param
+        ]
+        return httpx.Response(200, json=rows)
+
+    return respx.get(f"{SUPABASE_URL}/rest/v1/player_provider_ids").mock(side_effect=_respond)
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_player_id_resolved_from_durable_identity_layer(monkeypatch):
+    """Phase 3F-4: a player already known to player_provider_ids (from a
+    prior cycle's persist_roster) gets its internal player_id attached to
+    daily_game_intelligence.players this cycle."""
+    _headers_env(monkeypatch)
+    _mock_season()
+    respx.get(f"{SPORTSDATAIO_URL}/v3/nfl/scores/json/Schedules/2026REG").mock(
+        return_value=httpx.Response(200, json=[_game_row("g1", "SEA", "NE", "2026-09-10T00:20:00")])
+    )
+    _mock_game_provider_ids()
+    _mock_games_create()
+    _mock_games_read([{"id": "db-game-1", "home_team": "SEA", "away_team": "NE", "scheduled_start": "2026-09-10T00:20:00+00:00", "stadium": "Lumen Field", "status": "scheduled"}])
+    respx.get(f"{SPORTSDATAIO_URL}/v3/nfl/scores/json/DepthCharts").mock(return_value=httpx.Response(200, json=[]))
+    respx.get(f"{SPORTSDATAIO_URL}/v3/nfl/scores/json/Players/SEA").mock(
+        return_value=httpx.Response(200, json=[{"PlayerID": 1, "Team": "SEA", "Name": "SEA QB", "Position": "QB"}])
+    )
+    respx.get(f"{SPORTSDATAIO_URL}/v3/nfl/scores/json/Players/NE").mock(
+        return_value=httpx.Response(200, json=[{"PlayerID": 2, "Team": "NE", "Name": "NE QB", "Position": "QB"}])
+    )
+    respx.get(f"{SUPABASE_URL}/rest/v1/team_provider_ids").mock(
+        return_value=httpx.Response(200, json=[{"team_id": "team-SEA", "provider_team_id": "SEA"}, {"team_id": "team-NE", "provider_team_id": "NE"}])
+    )
+    _mock_player_provider_ids_matching({"1": "internal-uuid-sea-qb", "2": "internal-uuid-ne-qb"})
+    respx.post(f"{SUPABASE_URL}/rest/v1/players").mock(return_value=httpx.Response(201, json=[{"id": "unused"}]))
+    respx.patch(f"{SUPABASE_URL}/rest/v1/players").mock(return_value=httpx.Response(204))
+    respx.post(f"{SUPABASE_URL}/rest/v1/player_provider_ids").mock(return_value=httpx.Response(201))
+    respx.get(f"{SUPABASE_URL}/rest/v1/roster_memberships").mock(return_value=httpx.Response(200, json=[]))
+    respx.post(f"{SUPABASE_URL}/rest/v1/roster_memberships").mock(return_value=httpx.Response(201))
+    respx.post(f"{SUPABASE_URL}/rest/v1/depth_chart_snapshots").mock(return_value=httpx.Response(201))
+    _mock_empty_intelligence()
+    dgi_route = _mock_dgi_upsert()
+
+    async with (
+        httpx.AsyncClient(base_url=SUPABASE_URL) as supabase_client,
+        httpx.AsyncClient(base_url=SPORTSDATAIO_URL) as sdio_client,
+    ):
+        result = await run_master_refresh(
+            supabase_client=supabase_client, sportsdataio_client=sdio_client,
+            sportsdataio_api_key="test-key", today=TODAY,
+        )
+
+    assert result.status == "success"
+    body = _json.loads(dgi_route.calls.last.request.content)
+    assert body["players"]["home"][0]["player_id"] == "internal-uuid-sea-qb"
+    assert body["players"]["away"][0]["player_id"] == "internal-uuid-ne-qb"
+    # unchanged fields still present
+    assert body["players"]["home"][0]["player_name"] == "SEA QB"
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_persist_roster_failure_preserves_fresh_roster_with_null_player_id(monkeypatch):
+    """Phase 3F-4, the required partial-failure case: roster fetch
+    succeeds for a team, but that team's persist_roster call fails (here,
+    the depth_chart_snapshots write -- the one RosterIngestionError-raising
+    failure mode run.py already isolates per-team). daily_game_intelligence
+    still shows that team's fresh roster data -- it is never dropped -- but
+    player_id must not be fabricated: since no confirmed identity mapping
+    exists for that player this cycle, it stays null."""
+    _headers_env(monkeypatch)
+    _mock_season()
+    respx.get(f"{SPORTSDATAIO_URL}/v3/nfl/scores/json/Schedules/2026REG").mock(
+        return_value=httpx.Response(200, json=[_game_row("g1", "SEA", "NE", "2026-09-10T00:20:00")])
+    )
+    _mock_game_provider_ids()
+    _mock_games_create()
+    _mock_games_read([{"id": "db-game-1", "home_team": "SEA", "away_team": "NE", "scheduled_start": "2026-09-10T00:20:00+00:00", "stadium": "Lumen Field", "status": "scheduled"}])
+    respx.get(f"{SPORTSDATAIO_URL}/v3/nfl/scores/json/DepthCharts").mock(return_value=httpx.Response(200, json=[]))
+    respx.get(f"{SPORTSDATAIO_URL}/v3/nfl/scores/json/Players/SEA").mock(
+        return_value=httpx.Response(200, json=[{"PlayerID": 1, "Team": "SEA", "Name": "SEA QB", "Position": "QB"}])
+    )
+    respx.get(f"{SPORTSDATAIO_URL}/v3/nfl/scores/json/Players/NE").mock(
+        return_value=httpx.Response(200, json=[{"PlayerID": 2, "Team": "NE", "Name": "NE QB", "Position": "QB"}])
+    )
+    respx.get(f"{SUPABASE_URL}/rest/v1/team_provider_ids").mock(
+        return_value=httpx.Response(200, json=[{"team_id": "team-SEA", "provider_team_id": "SEA"}, {"team_id": "team-NE", "provider_team_id": "NE"}])
+    )
+    # No confirmed identity mapping exists yet for either player this cycle.
+    _mock_player_provider_ids_matching({})
+    respx.post(f"{SUPABASE_URL}/rest/v1/players").mock(return_value=httpx.Response(201, json=[{"id": "some-id"}]))
+    respx.patch(f"{SUPABASE_URL}/rest/v1/players").mock(return_value=httpx.Response(204))
+    respx.post(f"{SUPABASE_URL}/rest/v1/player_provider_ids").mock(return_value=httpx.Response(201))
+    respx.get(f"{SUPABASE_URL}/rest/v1/roster_memberships").mock(return_value=httpx.Response(200, json=[]))
+    respx.post(f"{SUPABASE_URL}/rest/v1/roster_memberships").mock(return_value=httpx.Response(201))
+
+    def _depth_chart_respond(request: httpx.Request) -> httpx.Response:
+        body = _json.loads(request.content)
+        if body.get("team_id") == "team-SEA":
+            return httpx.Response(500)  # SEA's persist_roster call fails here
+        return httpx.Response(201)
+
+    respx.post(f"{SUPABASE_URL}/rest/v1/depth_chart_snapshots").mock(side_effect=_depth_chart_respond)
+    _mock_empty_intelligence()
+    dgi_route = _mock_dgi_upsert()
+
+    async with (
+        httpx.AsyncClient(base_url=SUPABASE_URL) as supabase_client,
+        httpx.AsyncClient(base_url=SPORTSDATAIO_URL) as sdio_client,
+    ):
+        result = await run_master_refresh(
+            supabase_client=supabase_client, sportsdataio_client=sdio_client,
+            sportsdataio_api_key="test-key", today=TODAY,
+        )
+
+    assert result.status == "partial"
+    assert result.roster_ingestion_failures == ["SEA: failed to insert depth_chart_snapshots for team team-SEA: 500 "]
+    body = _json.loads(dgi_route.calls.last.request.content)
+    # SEA's roster data is still fresh and present -- never dropped because
+    # the durable write failed.
+    assert body["players"]["home"][0]["player_name"] == "SEA QB"
+    assert body["players"]["home"][0]["depth_chart_rank"] is None
+    # ...but its internal player_id is not fabricated.
+    assert body["players"]["home"][0]["player_id"] is None
+    # NE's game data is unaffected by SEA's failure.
+    assert body["players"]["away"][0]["player_name"] == "NE QB"
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_player_id_resolution_is_batched_single_query_for_whole_slate(monkeypatch):
+    """Phase 3F-4: the internal-player_id lookup is one batched query for
+    the entire slate, not one per team or one per player -- avoiding N+1.
+    Distinguishes the batched call from persist_roster's own pre-existing
+    per-player resolve calls (each queries exactly one id) by asserting
+    the *last* call (the new one, made after every team's roster loop
+    finishes) carries every player's id in one `in.(...)` filter."""
+    _headers_env(monkeypatch)
+    _mock_season()
+    respx.get(f"{SPORTSDATAIO_URL}/v3/nfl/scores/json/Schedules/2026REG").mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                _game_row("g1", "SEA", "NE", "2026-09-10T00:20:00"),
+                _game_row("g2", "KC", "BUF", "2026-09-13T17:00:00"),
+            ],
+        )
+    )
+    _mock_game_provider_ids()
+    created_ids = iter(["db-1", "db-2"])
+    respx.post(f"{SUPABASE_URL}/rest/v1/games").mock(
+        side_effect=lambda request: httpx.Response(201, json=[{"id": next(created_ids)}])
+    )
+    _mock_games_read(
+        [
+            {"id": "db-1", "home_team": "SEA", "away_team": "NE", "scheduled_start": "2026-09-10T00:20:00+00:00", "stadium": "Lumen Field", "status": "scheduled"},
+            {"id": "db-2", "home_team": "KC", "away_team": "BUF", "scheduled_start": "2026-09-13T17:00:00+00:00", "stadium": "Arrowhead", "status": "scheduled"},
+        ]
+    )
+    respx.get(f"{SPORTSDATAIO_URL}/v3/nfl/scores/json/DepthCharts").mock(return_value=httpx.Response(200, json=[]))
+    for team, player_id in [("SEA", 1), ("NE", 2), ("KC", 3), ("BUF", 4)]:
+        respx.get(f"{SPORTSDATAIO_URL}/v3/nfl/scores/json/Players/{team}").mock(
+            return_value=httpx.Response(200, json=[{"PlayerID": player_id, "Team": team, "Name": f"{team} QB", "Position": "QB"}])
+        )
+    respx.get(f"{SUPABASE_URL}/rest/v1/team_provider_ids").mock(
+        return_value=httpx.Response(
+            200, json=[{"team_id": f"team-{t}", "provider_team_id": t} for t in ("SEA", "NE", "KC", "BUF")]
+        )
+    )
+    player_ids_route = _mock_player_provider_ids_matching(
+        {"1": "uuid-1", "2": "uuid-2", "3": "uuid-3", "4": "uuid-4"}
+    )
+    respx.post(f"{SUPABASE_URL}/rest/v1/players").mock(return_value=httpx.Response(201, json=[{"id": "some-id"}]))
+    respx.patch(f"{SUPABASE_URL}/rest/v1/players").mock(return_value=httpx.Response(204))
+    respx.post(f"{SUPABASE_URL}/rest/v1/player_provider_ids").mock(return_value=httpx.Response(201))
+    respx.get(f"{SUPABASE_URL}/rest/v1/roster_memberships").mock(return_value=httpx.Response(200, json=[]))
+    respx.post(f"{SUPABASE_URL}/rest/v1/roster_memberships").mock(return_value=httpx.Response(201))
+    respx.post(f"{SUPABASE_URL}/rest/v1/depth_chart_snapshots").mock(return_value=httpx.Response(201))
+    _mock_empty_intelligence()
+    _mock_dgi_upsert()
+
+    async with (
+        httpx.AsyncClient(base_url=SUPABASE_URL) as supabase_client,
+        httpx.AsyncClient(base_url=SPORTSDATAIO_URL) as sdio_client,
+    ):
+        result = await run_master_refresh(
+            supabase_client=supabase_client, sportsdataio_client=sdio_client,
+            sportsdataio_api_key="test-key", today=TODAY,
+        )
+
+    assert result.status == "success"
+    # persist_roster's own 4 per-player resolve calls (one per new player)
+    # each query exactly one id; the new batched call is the *last* one and
+    # queries all 4 at once -- proof it's genuinely one query for the slate.
+    last_call_ids = player_ids_route.calls.last.request.url.params.get("provider_player_id")
+    assert last_call_ids == "in.(1,2,3,4)"
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_player_id_resolution_query_failure_is_non_blocking(monkeypatch):
+    """Phase 3F-4: if the batched player_id lookup itself fails (e.g. a
+    transient Supabase error), the run is NON-BLOCKING -- fresh roster
+    data still reaches daily_game_intelligence.players, just with every
+    player_id left null this cycle rather than fabricated."""
+    _headers_env(monkeypatch)
+    _mock_season()
+    respx.get(f"{SPORTSDATAIO_URL}/v3/nfl/scores/json/Schedules/2026REG").mock(
+        return_value=httpx.Response(200, json=[_game_row("g1", "SEA", "NE", "2026-09-10T00:20:00")])
+    )
+    _mock_game_provider_ids()
+    _mock_games_create()
+    _mock_games_read([{"id": "db-game-1", "home_team": "SEA", "away_team": "NE", "scheduled_start": "2026-09-10T00:20:00+00:00", "stadium": "Lumen Field", "status": "scheduled"}])
+    respx.get(f"{SPORTSDATAIO_URL}/v3/nfl/scores/json/DepthCharts").mock(return_value=httpx.Response(200, json=[]))
+    respx.get(f"{SPORTSDATAIO_URL}/v3/nfl/scores/json/Players/SEA").mock(
+        return_value=httpx.Response(200, json=[{"PlayerID": 1, "Team": "SEA", "Name": "SEA QB", "Position": "QB"}])
+    )
+    respx.get(f"{SPORTSDATAIO_URL}/v3/nfl/scores/json/Players/NE").mock(return_value=httpx.Response(200, json=[]))
+    respx.get(f"{SUPABASE_URL}/rest/v1/team_provider_ids").mock(
+        return_value=httpx.Response(200, json=[{"team_id": "team-SEA", "provider_team_id": "SEA"}])
+    )
+
+    call_count = {"n": 0}
+
+    def _player_provider_ids_respond(request: httpx.Request) -> httpx.Response:
+        call_count["n"] += 1
+        # persist_roster's own pre-existing per-player resolve calls (one
+        # from its own is_new check, one from inside ensure_player -- both
+        # for SEA's single new player) succeed with "not found yet"; the
+        # new batched call made after the whole roster loop finishes (the
+        # 3rd hit) is the one that fails.
+        if call_count["n"] <= 2:
+            return httpx.Response(200, json=[])
+        return httpx.Response(500)
+
+    respx.get(f"{SUPABASE_URL}/rest/v1/player_provider_ids").mock(side_effect=_player_provider_ids_respond)
+    respx.post(f"{SUPABASE_URL}/rest/v1/players").mock(return_value=httpx.Response(201, json=[{"id": "some-id"}]))
+    respx.patch(f"{SUPABASE_URL}/rest/v1/players").mock(return_value=httpx.Response(204))
+    respx.post(f"{SUPABASE_URL}/rest/v1/player_provider_ids").mock(return_value=httpx.Response(201))
+    respx.get(f"{SUPABASE_URL}/rest/v1/roster_memberships").mock(return_value=httpx.Response(200, json=[]))
+    respx.post(f"{SUPABASE_URL}/rest/v1/roster_memberships").mock(return_value=httpx.Response(201))
+    respx.post(f"{SUPABASE_URL}/rest/v1/depth_chart_snapshots").mock(return_value=httpx.Response(201))
+    _mock_empty_intelligence()
+    dgi_route = _mock_dgi_upsert()
+
+    async with (
+        httpx.AsyncClient(base_url=SUPABASE_URL) as supabase_client,
+        httpx.AsyncClient(base_url=SPORTSDATAIO_URL) as sdio_client,
+    ):
+        result = await run_master_refresh(
+            supabase_client=supabase_client, sportsdataio_client=sdio_client,
+            sportsdataio_api_key="test-key", today=TODAY,
+        )
+
+    assert result.status == "partial"
+    assert result.player_id_resolution_failed is True
+    body = _json.loads(dgi_route.calls.last.request.content)
+    # roster data still fresh and present despite the lookup failure
+    assert body["players"]["home"][0]["player_name"] == "SEA QB"
+    assert body["players"]["home"][0]["player_id"] is None
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_player_enrichment_touches_no_phase4_or_phase5_fields(monkeypatch):
+    """Phase 3F-4 is a read-side enrichment of `players` only -- confirms
+    it doesn't newly introduce any Phase 4/5 field into the upsert body."""
+    _headers_env(monkeypatch)
+    _mock_season()
+    respx.get(f"{SPORTSDATAIO_URL}/v3/nfl/scores/json/Schedules/2026REG").mock(
+        return_value=httpx.Response(200, json=[_game_row("g1", "SEA", "NE", "2026-09-10T00:20:00")])
+    )
+    _mock_game_provider_ids()
+    _mock_games_create()
+    _mock_games_read([{"id": "db-game-1", "home_team": "SEA", "away_team": "NE", "scheduled_start": "2026-09-10T00:20:00+00:00", "stadium": "Lumen Field", "status": "scheduled"}])
+    _mock_players_and_depth_charts(["SEA", "NE"])
+    _mock_empty_intelligence()
+    dgi_route = _mock_dgi_upsert()
+
+    async with (
+        httpx.AsyncClient(base_url=SUPABASE_URL) as supabase_client,
+        httpx.AsyncClient(base_url=SPORTSDATAIO_URL) as sdio_client,
+    ):
+        result = await run_master_refresh(
+            supabase_client=supabase_client, sportsdataio_client=sdio_client,
+            sportsdataio_api_key="test-key", today=TODAY,
+        )
+
+    assert result.status == "success"
+    body = _json.loads(dgi_route.calls.last.request.content)
+    assert set(body.keys()).isdisjoint(
+        {"ai_scores", "momentum", "matchup_ratings", "ev_calculations", "confidence_scores", "recommendation_candidates"}
+    )
