@@ -953,3 +953,29 @@ A one-line cross-reference was added to §7's `postgame_reviews` description (`o
 **Full technical detail:** This entry, plus the new "Cache metrics" and "Full-fleet load acceptance" paragraphs in Volume 2 §8, and the completion report delivered to Mac. Also logged operationally in `PROGRESS.md`'s 2026-08-19 notes (Phase 3 acceptance closure).
 
 **Corrective note (2026-08-19):** this changelog file was found, in the course of this entry, to carry a stray orphan "Full technical detail" fragment at its prior end (a leftover from an earlier edit in this same session that duplicated part of the v4.10 entry's own closing line without a heading). Removed here as a documentation-accuracy correction — no version bump of its own, since it was never a real entry.
+
+---
+
+## v4.16.1 — 2026-08-19 — PATCH
+
+**Volume affected:** Volume 2 (System Architecture) only.
+
+**Reason:** DEMO-1 (isolation foundation) of the approved Demo/Simulation Environment (`docs/blueprint/demo-simulation-environment.md`, approved by Mac 2026-08-19 with five decisions). A fourth Railway environment and isolated Supabase project needed to exist, with structural — not conventional — protection against a demo deployment ever reaching real data or a real deployment ever reaching demo data.
+
+**Decision:**
+- **New Railway environment `demo`**, same `theplaybook` project, isolated from dev/staging/production by never sharing variables or a database.
+- **New Supabase project `theplaybook-demo`** (`tbxzecbopoxcexggesmk`, org `ywghsgpylgeajjgmuuow`, region `us-east-1`, $10/month, cost confirmed and approved before creation), given the exact same 17-migration set dev/staging/production draw from.
+- **Genuine pre-existing gap discovered and resolved for demo only:** the 17 checked-in migrations create the `sports`/`leagues`/`teams` tables but never insert the `sports`/`leagues` rows or the original 6 teams (Kansas City Chiefs, Buffalo Bills, San Francisco 49ers, Philadelphia Eagles, Dallas Cowboys, Baltimore Ravens) that dev's own schema has today — those were seeded into dev at some point outside the tracked migration history, using deliberately fixed, human-readable UUIDs (`a2000000...`/`a3000000...`) and synthetic `external_provider_id` placeholders (`seed-kc` etc.). Two downstream migrations (`team_provider_ids_backfill`, `team_provider_ids_sportsdataio_full_coverage`) depend on this seed and silently no-op (zero rows, no error) without it; a third (`expand_nfl_teams_and_provider_ids`) hard-fails outright on a null `league_id`. Replicated the identical bootstrap into `theplaybook-demo` (same fixed IDs, same public NFL team names/synthetic placeholders as dev) as an explicit, separately-named, documented step — not a checked-in migration file, since it fills a gap in the *existing* migration history rather than adding new schema. This is reference/taxonomy data, not real operational data, so it does not conflict with the "no copied data from dev" isolation requirement. **Recommended, not unilaterally decided:** a proper migration should be added to the repo to close this gap for every future environment, not just demo — flagged for Mac, separate from Demo Mode's own scope.
+- **Structural startup isolation guard**, `app/environment_safety.py`'s `assert_demo_isolation`, wired into `app/main.py` before Sentry init and `FastAPI()` construction: hard-fails if `RAILWAY_ENVIRONMENT_NAME=demo` and `SUPABASE_URL` doesn't contain the demo project's ref, and the reverse (non-demo environment pointed at the demo project). No warn-and-continue path either direction, per Mac's explicit instruction.
+- **Zero provider credentials configured on `demo`** — no SportsDataIO/The Odds API/WeatherAPI/NewsAPI/GNews/Twilio/Telegram keys, matching Decision 6 of the approval. `SUPABASE_SERVICE_ROLE_KEY` also intentionally not yet requested from Mac, since nothing deployed in DEMO-1 needs to write to Postgres yet (`/health` returns a static payload) — least-privilege, requested only when DEMO-2/DEMO-3 actually need it.
+- **No hosted Redis, no dedicated Railway token, no Sentry DSN configured for `demo`** at this stage, per Decisions 7/8/9 of the approval — `InMemoryCacheBackend` and the existing shared deploy-token pattern are sufficient until a concrete need proves otherwise.
+
+**Alternatives considered:** none new — this entry implements the isolation model, credential policy, and Redis/Sentry/token defaults already decided and approved in the Demo/Simulation Environment design document; no fresh architectural choice was made here beyond the migration-gap bootstrap approach (data-only bootstrap vs. a new checked-in migration file — bootstrap chosen for DEMO-1 itself, new migration recommended as separate follow-up).
+
+**Expected impact:**
+- `apps/sports-intel-layer/app/environment_safety.py` (new), `apps/sports-intel-layer/app/main.py` (guard wired in), `apps/sports-intel-layer/tests/test_environment_safety.py` (new, 15 tests) — 482/482 full regression passing (467 pre-existing + 15 new), zero regressions.
+- New infrastructure: 1 Railway environment (created — blocked on a manual step, see PROGRESS.md), 1 Supabase project ($10/month, confirmed and approved).
+- No provider calls of any kind; SportsDataIO budget unchanged at 11/12; no schema change to dev/staging/production; no data of any kind copied from dev/staging/production/real users into demo.
+- PATCH, Volume-2-only bump: a new environment and a structural safety mechanism, not a change to any existing environment's behavior or any cross-volume architecture.
+
+**Full technical detail:** This entry, plus the new "Fourth environment: `demo`" paragraph in Volume 2 §5, and the DEMO-1 completion report delivered to Mac. Also logged operationally in `PROGRESS.md`'s 2026-08-19 notes.
