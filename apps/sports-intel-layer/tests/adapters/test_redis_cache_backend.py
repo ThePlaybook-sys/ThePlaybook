@@ -129,6 +129,9 @@ async def test_connection_failure_on_get_is_treated_as_a_cache_miss_not_raised()
 
     backend = RedisCacheBackend(_BrokenClient())
     assert await backend.get("anything") is None  # no exception raised
+    # Phase 3F acceptance closure: fail-open is still fail-open (unchanged
+    # return value), but now the event is counted, not just logged.
+    assert backend.errors == 1
 
 
 @pytest.mark.asyncio
@@ -142,6 +145,7 @@ async def test_connection_failure_on_set_is_swallowed_not_raised():
 
     backend = RedisCacheBackend(_BrokenClient())
     await backend.set("k", "v", 60)  # must not raise
+    assert backend.errors == 1
 
 
 @pytest.mark.asyncio
@@ -162,6 +166,11 @@ async def test_caching_adapter_falls_through_to_real_call_when_redis_is_down():
     response = await caching.call("fetch_odds", ["game-1"], response_model=AdapterResponse[list[OddsLine]])
     assert response.from_cache is False
     assert response.value[0].sportsbook == "fakebook"
+    # A failed read (fail-open miss) and a failed write (swallowed set
+    # attempt) both counted -- caller still got a correct, uncached result.
+    assert caching.metrics.misses == 1
+    assert caching.metrics.sets == 1  # attempted, even though the write silently failed
+    assert caching.errors == 2  # one from the failed get, one from the failed set
 
 
 # ============================================================
@@ -288,6 +297,12 @@ async def test_sportsdataio_weekly_bulk_reuse_survives_redis_backend():
     outer_second = await outer.call("fetch_team_stats", "202510122", response_model=response_model)
     assert outer_first.from_cache is False
     assert outer_second.from_cache is True
+    # Weekly-bulk reuse behaves correctly under the metrics layer too:
+    # the outer CachingAdapter's own miss/hit counters reflect its own
+    # per-call caching, independent of the adapter's internal week-bulk
+    # cache reuse (which is what made route.call_count == 1 above).
+    assert outer.metrics.misses == 1
+    assert outer.metrics.hits == 1
 
 
 @pytest.mark.asyncio
