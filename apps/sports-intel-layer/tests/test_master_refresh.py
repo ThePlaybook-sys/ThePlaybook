@@ -949,3 +949,196 @@ async def test_player_enrichment_touches_no_phase4_or_phase5_fields(monkeypatch)
     assert set(body.keys()).isdisjoint(
         {"ai_scores", "momentum", "matchup_ratings", "ev_calculations", "confidence_scores", "recommendation_candidates"}
     )
+
+
+# Phase 3F-5: identity-isolation fix. persist_roster calls into
+# player_identity/team_identity, which can raise PlayerIdentityError/
+# TeamIdentityError -- distinct exception types from RosterIngestionError,
+# previously NOT caught by run_master_refresh (confirmed by direct test
+# execution during 3F-4 to crash the whole run instead of isolating
+# per-team). These tests prove the fix: the failure is isolated at the
+# same per-team boundary RosterIngestionError already used, unaffected
+# teams/games continue, player_id is never fabricated for the failed
+# team, and a genuinely unrelated exception type still propagates rather
+# than being silently swallowed.
+
+def _two_game_slate_setup():
+    """Shared setup for a 2-game, 4-team slate (SEA@NE, KC@BUF) used by
+    the isolation-fix tests below -- SEA is the team whose identity
+    resolution will be made to fail; NE/KC/BUF all resolve normally."""
+    respx.get(f"{SPORTSDATAIO_URL}/v3/nfl/scores/json/Schedules/2026REG").mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                _game_row("g1", "SEA", "NE", "2026-09-10T00:20:00"),
+                _game_row("g2", "KC", "BUF", "2026-09-13T17:00:00"),
+            ],
+        )
+    )
+    _mock_game_provider_ids()
+    created_ids = iter(["db-1", "db-2"])
+    respx.post(f"{SUPABASE_URL}/rest/v1/games").mock(
+        side_effect=lambda request: httpx.Response(201, json=[{"id": next(created_ids)}])
+    )
+    _mock_games_read(
+        [
+            {"id": "db-1", "home_team": "SEA", "away_team": "NE", "scheduled_start": "2026-09-10T00:20:00+00:00", "stadium": "Lumen Field", "status": "scheduled"},
+            {"id": "db-2", "home_team": "KC", "away_team": "BUF", "scheduled_start": "2026-09-13T17:00:00+00:00", "stadium": "Arrowhead", "status": "scheduled"},
+        ]
+    )
+    respx.get(f"{SPORTSDATAIO_URL}/v3/nfl/scores/json/DepthCharts").mock(return_value=httpx.Response(200, json=[]))
+    for team, player_id in [("SEA", 1), ("NE", 2), ("KC", 3), ("BUF", 4)]:
+        respx.get(f"{SPORTSDATAIO_URL}/v3/nfl/scores/json/Players/{team}").mock(
+            return_value=httpx.Response(200, json=[{"PlayerID": player_id, "Team": team, "Name": f"{team} QB", "Position": "QB"}])
+        )
+    respx.post(f"{SUPABASE_URL}/rest/v1/players").mock(return_value=httpx.Response(201, json=[{"id": "some-id"}]))
+    respx.patch(f"{SUPABASE_URL}/rest/v1/players").mock(return_value=httpx.Response(204))
+    respx.post(f"{SUPABASE_URL}/rest/v1/player_provider_ids").mock(return_value=httpx.Response(201))
+    respx.get(f"{SUPABASE_URL}/rest/v1/roster_memberships").mock(return_value=httpx.Response(200, json=[]))
+    respx.post(f"{SUPABASE_URL}/rest/v1/roster_memberships").mock(return_value=httpx.Response(201))
+    respx.post(f"{SUPABASE_URL}/rest/v1/depth_chart_snapshots").mock(return_value=httpx.Response(201))
+    _mock_empty_intelligence()
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_player_identity_error_for_one_team_does_not_crash_master_refresh(monkeypatch):
+    """Points 1/3/4/5/6/7: a PlayerIdentityError from ensure_player's own
+    resolve_player_ids call (SEA's player) is isolated -- NE/KC/BUF
+    resolve normally, both games still get a daily_game_intelligence row,
+    SEA is reported in roster_ingestion_failures, status is "partial", and
+    SEA's player_id stays null (never fabricated) while NE's resolves."""
+    _headers_env(monkeypatch)
+    _mock_season()
+    _two_game_slate_setup()
+    respx.get(f"{SUPABASE_URL}/rest/v1/team_provider_ids").mock(
+        return_value=httpx.Response(
+            200, json=[{"team_id": f"team-{t}", "provider_team_id": t} for t in ("SEA", "NE", "KC", "BUF")]
+        )
+    )
+
+    def _player_provider_ids_respond(request: httpx.Request) -> httpx.Response:
+        ids_param = request.url.params.get("provider_player_id", "")
+        if "1" in ids_param:  # SEA's player (PlayerID=1) -- identity resolution fails
+            return httpx.Response(500)
+        return httpx.Response(200, json=[])
+
+    player_ids_route = respx.get(f"{SUPABASE_URL}/rest/v1/player_provider_ids").mock(
+        side_effect=_player_provider_ids_respond
+    )
+    dgi_route = _mock_dgi_upsert()
+
+    async with (
+        httpx.AsyncClient(base_url=SUPABASE_URL) as supabase_client,
+        httpx.AsyncClient(base_url=SPORTSDATAIO_URL) as sdio_client,
+    ):
+        result = await run_master_refresh(
+            supabase_client=supabase_client, sportsdataio_client=sdio_client,
+            sportsdataio_api_key="test-key", today=TODAY,
+        )
+
+    assert result.status == "partial"
+    assert result.roster_ingestion_failures == [
+        "SEA: failed to resolve player ids for provider sportsdataio: 500 "
+    ]
+    assert result.games_created == 2
+    assert result.daily_game_intelligence_written == 2  # both games still refreshed
+    assert player_ids_route.called
+
+    # Both games' upserts are in dgi_route.calls -- find each by game_id.
+    bodies = {_json.loads(c.request.content)["game_id"]: _json.loads(c.request.content) for c in dgi_route.calls}
+    sea_game_body = bodies["db-1"]
+    kc_game_body = bodies["db-2"]
+    # SEA's identity resolution failed -- its player_id is never fabricated.
+    assert sea_game_body["players"]["home"][0]["player_id"] is None
+    assert sea_game_body["players"]["home"][0]["player_name"] == "SEA QB"  # fresh data still shown
+    # NE (in the same game as SEA) is unaffected.
+    assert sea_game_body["players"]["away"][0]["player_name"] == "NE QB"
+    # KC/BUF's game is completely unaffected by SEA's failure.
+    assert kc_game_body["players"]["home"][0]["player_name"] == "KC QB"
+    assert kc_game_body["players"]["away"][0]["player_name"] == "BUF QB"
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_team_identity_error_for_one_team_does_not_crash_master_refresh(monkeypatch):
+    """Points 2/3/4/5/6/7: a TeamIdentityError from resolve_team_ids (SEA's
+    own team_provider_ids lookup failing) is isolated the same way."""
+    _headers_env(monkeypatch)
+    _mock_season()
+    _two_game_slate_setup()
+
+    def _team_provider_ids_respond(request: httpx.Request) -> httpx.Response:
+        ids_param = request.url.params.get("provider_team_id", "")
+        if "SEA" in ids_param:
+            return httpx.Response(500)
+        return httpx.Response(
+            200, json=[{"team_id": f"team-{t}", "provider_team_id": t} for t in ("NE", "KC", "BUF")]
+        )
+
+    respx.get(f"{SUPABASE_URL}/rest/v1/team_provider_ids").mock(side_effect=_team_provider_ids_respond)
+    respx.get(f"{SUPABASE_URL}/rest/v1/player_provider_ids").mock(return_value=httpx.Response(200, json=[]))
+    dgi_route = _mock_dgi_upsert()
+
+    async with (
+        httpx.AsyncClient(base_url=SUPABASE_URL) as supabase_client,
+        httpx.AsyncClient(base_url=SPORTSDATAIO_URL) as sdio_client,
+    ):
+        result = await run_master_refresh(
+            supabase_client=supabase_client, sportsdataio_client=sdio_client,
+            sportsdataio_api_key="test-key", today=TODAY,
+        )
+
+    assert result.status == "partial"
+    assert result.roster_ingestion_failures == [
+        "SEA: failed to resolve team ids for provider sportsdataio: 500 "
+    ]
+    assert result.games_created == 2
+    assert result.daily_game_intelligence_written == 2
+
+    bodies = {_json.loads(c.request.content)["game_id"]: _json.loads(c.request.content) for c in dgi_route.calls}
+    sea_game_body = bodies["db-1"]
+    kc_game_body = bodies["db-2"]
+    assert sea_game_body["players"]["home"][0]["player_id"] is None
+    assert sea_game_body["players"]["home"][0]["player_name"] == "SEA QB"
+    assert kc_game_body["players"]["home"][0]["player_name"] == "KC QB"
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_unrelated_exception_from_persist_roster_still_propagates(monkeypatch):
+    """Point 8: the fix catches only the specific expected identity/
+    ingestion exception classes at this boundary -- a genuinely unrelated
+    exception (simulating a real programming error, not a known provider/
+    persistence failure mode) is NOT silently swallowed; it still
+    propagates out of run_master_refresh."""
+    _headers_env(monkeypatch)
+    _mock_season()
+    respx.get(f"{SPORTSDATAIO_URL}/v3/nfl/scores/json/Schedules/2026REG").mock(
+        return_value=httpx.Response(200, json=[_game_row("g1", "SEA", "NE", "2026-09-10T00:20:00")])
+    )
+    _mock_game_provider_ids()
+    _mock_games_create()
+    _mock_games_read([{"id": "db-game-1", "home_team": "SEA", "away_team": "NE", "scheduled_start": "2026-09-10T00:20:00+00:00", "stadium": "Lumen Field", "status": "scheduled"}])
+    respx.get(f"{SPORTSDATAIO_URL}/v3/nfl/scores/json/DepthCharts").mock(return_value=httpx.Response(200, json=[]))
+    respx.get(f"{SPORTSDATAIO_URL}/v3/nfl/scores/json/Players/SEA").mock(
+        return_value=httpx.Response(200, json=[{"PlayerID": 1, "Team": "SEA", "Name": "SEA QB", "Position": "QB"}])
+    )
+    respx.get(f"{SPORTSDATAIO_URL}/v3/nfl/scores/json/Players/NE").mock(return_value=httpx.Response(200, json=[]))
+
+    def _team_provider_ids_raise(request: httpx.Request) -> httpx.Response:
+        raise RuntimeError("simulated unrelated programming error, not a known identity/ingestion failure")
+
+    respx.get(f"{SUPABASE_URL}/rest/v1/team_provider_ids").mock(side_effect=_team_provider_ids_raise)
+    _mock_empty_intelligence()
+    _mock_dgi_upsert()
+
+    async with (
+        httpx.AsyncClient(base_url=SUPABASE_URL) as supabase_client,
+        httpx.AsyncClient(base_url=SPORTSDATAIO_URL) as sdio_client,
+    ):
+        with pytest.raises(RuntimeError, match="simulated unrelated programming error"):
+            await run_master_refresh(
+                supabase_client=supabase_client, sportsdataio_client=sdio_client,
+                sportsdataio_api_key="test-key", today=TODAY,
+            )

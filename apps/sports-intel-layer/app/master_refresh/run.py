@@ -14,7 +14,12 @@ needing its own try/except around this function. This is Decision 6's
     failure. Nothing past this point runs; nothing already-persisted is
     touched, modified, or deleted.
   NON-BLOCKING (isolated, collected, run continues): a single team's
-    roster fetch failure, a single game's rest/assembly/upsert failure,
+    roster fetch failure, a single team's `persist_roster` failure --
+    including the identity-layer `PlayerIdentityError`/`TeamIdentityError`
+    it can raise via `player_identity`/`team_identity`, not just its own
+    `RosterIngestionError` (Phase 3F-5 fix; confirmed by test to have
+    previously crashed the whole run instead of isolating per-team) --
+    a single game's rest/assembly/upsert failure,
     and -- since the 2026-08-18 row-isolation fix -- a single malformed
     or unrecognized-status Schedule row. `SportsDataIOScheduleAdapter.
     fetch_schedule` itself now logs and skips a bad row rather than
@@ -47,6 +52,7 @@ from app.persistence.player_identity import PlayerIdentityError, resolve_player_
 from app.persistence.roster_ingestion import RosterIngestionError, persist_roster
 from app.persistence.schedule import PersistenceError, persist_schedule_entries
 from app.persistence.seasons import SeasonResolutionError, fetch_current_season_string
+from app.persistence.team_identity import TeamIdentityError
 
 _SCHEDULE_TTL_SECONDS = 86400
 _ROSTER_TTL_SECONDS = 86400
@@ -174,9 +180,20 @@ async def run_master_refresh(
         # the fetch above -- one team's persistence failure never blocks
         # another's, and never blocks daily_game_intelligence assembly
         # below (which still reads `rosters` as fetched, unchanged).
+        #
+        # Phase 3F-5 fix: `persist_roster` calls into `player_identity`/
+        # `team_identity`, which can raise `PlayerIdentityError`/
+        # `TeamIdentityError` -- distinct exception types from
+        # `RosterIngestionError`, previously NOT caught here (a real,
+        # confirmed-by-test gap found during 3F-4 and reported, not fixed,
+        # at the time). Both are the expected identity-layer failure
+        # classes for this exact call, caught at this exact per-team
+        # boundary, same as RosterIngestionError always was -- no generic
+        # `except Exception`, so a genuine programming error still
+        # propagates and fails loudly rather than being silently isolated.
         try:
             await persist_roster(roster_response)
-        except RosterIngestionError as exc:
+        except (RosterIngestionError, PlayerIdentityError, TeamIdentityError) as exc:
             roster_ingestion_failures.append(f"{team}: {exc}")
 
     # Phase 3F-4: batched internal player_id resolution -- one query for
