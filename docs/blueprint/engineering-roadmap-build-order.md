@@ -185,6 +185,8 @@ Phases 7, 8, and 9 are the first genuine parallelization point — everything be
 - Load test against expected Sunday-slate polling volume before this phase is considered done, not deferred to Phase 10
 - Verify `daily_game_intelligence` is correctly treated as a working table, not a Time Machine source — confirm a `recommendation_snapshots` reconstruction (tested fully in Phase 5) never reads from it
 
+**Demo Mode note (added 2026-08-19):** this phase's real, shipped ingestion pipeline is the first thing the approved Demo/Simulation Environment (`demo-simulation-environment.md`) can build scenarios against — see that document's DEMO-4 step. Demo work is gated behind its own separately-approved execution plans and does not affect this phase's own acceptance criteria.
+
 ---
 
 ## Phase 4 — AI Orchestrator

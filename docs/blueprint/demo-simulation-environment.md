@@ -1,8 +1,8 @@
 # Demo / Simulation Environment — Architecture & Design
 
-**Status:** PROPOSED — DESIGN ONLY. No part of this document has been implemented. This is a planning artifact, not a build log.
+**Status:** APPROVED — DESIGN ONLY (approved by Mac 2026-08-19). Approval covers the architecture and decisions recorded in this document; it does not authorize implementation. Implementation begins only when a specific execution plan (starting with DEMO-1, Section 19) is separately reviewed and approved.
 
-**Version:** v1.0 (initial draft, 2026-08-19)
+**Version:** v1.1 (2026-08-19 — incorporates Mac's approval decisions: isolation model confirmed, notification direction clarified to Telegram-first/provider-neutral, starter scenario scope expanded, implementation sequence relabeled to the DEMO-N convention. Superseded content from v1.0 is not preserved inline; see PROGRESS.md for the decision record.)
 
 **Depends on:** Volume 1 (personas, journeys, chat-first positioning), Volume 2 §5 (Railway environment strategy), §7 (adapter pattern), §8 (Sports Intelligence Layer, cadence, caching), §9 (DevOps/CI/CD, secrets management), Volume 3 (schema, Time Machine principle, append-only pattern), Volume 4 (agent committee, explainability — not yet built), Volume 5 (dashboard/chat architecture — not yet built), `engineering-roadmap-build-order.md` (phase definitions)
 
@@ -116,9 +116,11 @@ This format is intentionally close to how the existing test suite's fixture-driv
 
 ---
 
-## 7. Ten Starter Scenarios
+## 7. Starter Scenarios (Approved Scope — Full Phase 3 Lifecycle)
 
-Eight are buildable against Phase 3 as it exists today. Two are explicitly Phase-5-future-only and must not be built early, per the phase-gating rule.
+Per Mac's approval (Decision 4), the starter scenario scope is the **full current real Phase 3 lifecycle**, not a representative subset. The initial Demo environment should eventually exercise every one of the following Phase 3 capabilities (each already CONFIRMED real and shipped, per Section 3's parity table): game/schedule ingestion, game/team/player identity resolution, rosters, depth charts, odds, player props, injuries, weather, news, Master Refresh, DGI assembly, Pregame refresh, Postgame ingestion, final scores, team stats, player stats, bounded reconciliation, malformed-row isolation, and cache behavior. This is a wider build than the original eight-scenario proposal — the scenario list below is organized as coverage of that full lifecycle, not a fixed count.
+
+**Core lifecycle scenarios:**
 
 1. **"Sunday Slate Cadence Ramp."** A 13-game synthetic slate (reusing the scale already validated by this session's own full-fleet load test) advances from T-2h to kickoff; the operator watches Odds/Player Props polling tighten through each tier live. The single most demo-worthy Phase 3 story.
 2. **"Breaking Injury News."** Mid-slate, a scripted injury status change (`questionable` → `out`) fires; DGI's `injuries` field updates on the next Master Refresh cycle, visibly.
@@ -128,10 +130,24 @@ Eight are buildable against Phase 3 as it exists today. Two are explicitly Phase
 6. **"Game Goes Final → Postgame Stats Land."** A scripted status transition to `final` triggers the Postgame Worker; stat lines appear.
 7. **"Roster Move Mid-Week."** A scripted depth-chart change between two polling steps.
 8. **"Full Master Refresh, League-Wide."** A wider, less dramatic scenario: run one full Master Refresh cycle across the whole synthetic slate and show the resulting `daily_game_intelligence` rows end-to-end — the "here's literally what Phase 3 produces" scenario.
-9. **PHASE-5-FUTURE-ONLY — "A Recommendation, Explained."** Do not build until Phase 4/5 are real. Placeholder only: once the agent committee and Explainability Engine exist, this scenario shows one scripted game producing a real (not fabricated) consensus recommendation with a full explainability panel.
-10. **PHASE-5-FUTURE-ONLY — "Time Machine Reconstruction."** Do not build until Phase 5's `recommendation_snapshots` exists. Placeholder only: recreate a recommendation from a past scripted moment and show it matches exactly what was shown then — this is meant to demo the product's actual core trust claim (Volume 3 §1, Phase 5's acceptance criteria per the roadmap) once, and only once, that claim is real.
 
-Scenarios 9 and 10 are listed here **specifically so they are not forgotten and not built early** — including them in the design document, marked undoable, is the mechanism that prevents someone from quietly hand-scripting a fake recommendation just because a sales conversation wants one before Phase 4 exists.
+**Controlled scenarios (approved additions, Decision 4):**
+
+9. **"Normal Game Lifecycle."** One game, start to finish, with no scripted complications — the baseline story every other scenario is a variation on; useful as the first thing shown in any demo.
+10. **"Major Pregame Injury."** A star-player injury status change lands close to kickoff, inside the FINAL_RAMP injury-cadence tier (`classify_injury_window`) — distinct from Scenario 2 in that it specifically demonstrates the day-of-week-anchored cadence tightening near kickoff, not just a mid-week change.
+11. **"Significant Line Movement."** A scripted odds swing large enough to be visually obvious between two consecutive polling steps — demonstrates the odds snapshot history (append-only) rather than just the latest value.
+12. **"Overtime / Final-OT Game."** A scripted game status transition through `final/OT` rather than a regulation `final` — proves the Postgame Worker and schedule-status handling treat this as a normal completion, not an edge case that breaks ingestion.
+13. **"Postponed / Rescheduled Game."** A scripted schedule change moves a game's `scheduled_start` mid-slate — demonstrates that window-classification and driver-game selection correctly follow the game to its new time rather than continuing to treat the old kickoff as authoritative.
+14. **"Malformed Provider Row, Valid Rows Survive."** A scripted provider response includes one deliberately malformed row (missing/invalid field) alongside otherwise-valid rows in the same batch — demonstrates the row-level isolation pattern (Volume 2 §8, this session's own corrective work) at the data-shape level, distinct from Scenario 4's whole-request-failure case.
+15. **"Player-Team Change / Identity Stability."** A scripted mid-week roster move (trade/waiver) for a specific player, followed by a subsequent poll — demonstrates `roster_memberships`' insert-on-change convention and confirms the player's internal identity (`players.id`) stays stable across the team change rather than being treated as a new player.
+16. **"Postgame Stat Correction."** A scripted stat line for an already-final game is corrected in a later provider poll — demonstrates the append-only correction-history pattern (a new row per correction, never an overwrite) directly.
+
+**Explicitly NOT built yet — future Demo parity items (do not build early):**
+
+17. **PHASE-4-FUTURE-ONLY — "A Recommendation, Explained."** Do not build until Phase 4/5 are real. Placeholder only: once the agent committee and Explainability Engine exist, this scenario shows one scripted game producing a real (not fabricated) consensus recommendation with a full explainability panel.
+18. **PHASE-5-FUTURE-ONLY — "Time Machine Reconstruction."** Do not build until Phase 5's `recommendation_snapshots` exists. Placeholder only: recreate a recommendation from a past scripted moment and show it matches exactly what was shown then — this is meant to demo the product's actual core trust claim (Volume 3 §1, Phase 5's acceptance criteria per the roadmap) once, and only once, that claim is real.
+
+Scenarios 17 and 18 are listed here **specifically so they are not forgotten and not built early** — including them in the design document, marked undoable, is the mechanism that prevents someone from quietly hand-scripting a fake recommendation just because a sales conversation wants one before Phase 4 exists. Per Decision 3: Demo Mode must never simulate a feature the real product has not actually implemented yet — parlay and grading scenarios are Phase 4/5 parity items and are not listed above at all, pending those phases shipping.
 
 ---
 
@@ -173,7 +189,20 @@ CONFIRMED: `apps/frontend` has no dashboard components yet (Phase 6 hasn't start
 
 ## 12. Telegram / Notification Compatibility
 
-Phase 7 (Twilio) doesn't exist yet — CONFIRMED via roadmap read. This section is a compatibility note for that future phase, not a build. The user's own instruction referenced "Telegram" specifically; note for the record: the blueprint as currently written (Volume 2, Volume 5 §7 heading "Twilio Integration") specifies **Twilio**, not Telegram, as the SMS/notification vendor — **flagging this as a discrepancy between the request and repository reality** rather than silently substituting one for the other, per this document's own stated method. If Telegram is intended as an actual future channel in addition to or instead of Twilio, that is a blueprint question for Mac to resolve when Phase 7 is scoped, not something this document should decide unilaterally. Whichever vendor Phase 7 ultimately uses, the same Rule 1/Rule 3 logic applies directly: a demo notification must go through a `Demo`-flavored adapter behind whatever notification-adapter interface Phase 7 defines, never a real Twilio (or Telegram) credential, and must be clearly labeled as a demo message if it's ever actually delivered to a real device rather than just logged/rendered in the demo UI.
+**Resolved by Mac, 2026-08-19 (Decision 2).** Phase 7 doesn't exist yet — CONFIRMED via roadmap read, still titled "Twilio Integration" in the roadmap and in Volume 5 §7 as of this document's version. That heading is now understood to name the roadmap's originally-scoped SMS channel, not an exclusive commitment: for early Demo/Beta use, **Telegram is the preferred notification channel**, while the underlying notification architecture stays provider-neutral. This is a direction for how Phase 7 (or an earlier notification need) should be *architected*, not a decision this document makes on Phase 7's behalf — the roadmap and Volume 5 §7's own text should be updated to reflect this the next time either is substantively revised, per Change Management (Blueprint first, roadmap second).
+
+**The required pattern, regardless of which channel ships first:**
+
+```
+Playbook event
+  → notification abstraction/service   (channel-agnostic, mirrors the adapter pattern's own boundary)
+      → Telegram                        (initial channel)
+      → SMS/Twilio, or other channels    (added later if needed, behind the same abstraction)
+```
+
+This is a direct extension of the adapter pattern's own enforcement point (Section 8, Rule 1): exactly as no worker is allowed to import a provider SDK directly, no piece of core business logic (a worker, a future agent, the Recommendation Worker) may depend on Telegram — or any specific channel — directly. Everything upstream of the notification abstraction stays channel-agnostic; only the abstraction's own implementation knows which vendor it's currently calling.
+
+**What this means for Demo Mode specifically:** Demo Mode's own notification compatibility work (Section 19, DEMO-9) targets that same channel-agnostic abstraction, not Telegram's API directly — a `DemoNotificationAdapter` sits behind whichever interface the abstraction defines, exactly like every other `Demo*Adapter` in Section 8, and is swappable for a `TelegramNotificationAdapter` or `TwilioNotificationAdapter` with no change to calling code. **Per Mac's explicit instruction: do not implement Telegram yet, in Demo Mode or anywhere else, unless/until the approved Demo implementation sequence actually reaches DEMO-9.** Building it earlier — even for a demo — would be exactly the kind of early-and-unapproved implementation this document's approval process exists to prevent, and would risk locking in a real Telegram integration before the channel-agnostic abstraction it's supposed to sit behind has itself been designed.
 
 ---
 
@@ -256,32 +285,30 @@ This is not a one-time task. Add to the phase-closure process (alongside CLAUDE.
 
 ---
 
-## 19. Proposed Implementation Sequence
+## 19. Approved Implementation Sequence (DEMO-1 through DEMO-9)
 
-Derived from the repository's actual current state (Section 3's parity table) rather than the illustrative `DEMO-0` through `DEMO-6` labels given only as an example in the originating instruction — the real dependency order is:
+Approved by Mac 2026-08-19 (Decision 5). Labeled `DEMO-N` to match the repository's existing phase-substep convention (e.g. `3E-1`…`3E-4`, `3F-4`, `3F-5`) rather than a standalone numbering scheme — Demo Mode is a cross-cutting initiative gated by the real roadmap's phases, not a roadmap phase of its own, so its substeps are named the same way this session's own sub-phase work has been throughout Phase 3.
 
-1. **Isolation infrastructure first.** Provision the `demo` Railway environment + Supabase project (Section 4, Option A), including the full real migration set (Section 9) — nothing else can safely proceed without this existing, since every later step either writes demo data or needs somewhere isolated to write it.
-2. **`Demo*Adapter` family** (Section 8) — the nine category adapters, conformance-suite-tested (Section 17 #1) exactly like real adapters.
-3. **Virtual clock + scenario runner** (Section 5, Section 6) — the orchestration layer that drives real worker entrypoints via their existing `now`/`today` override parameters.
-4. **Scenarios 1–8** (Section 7) — the eight Phase-3-buildable starter scenarios, built and tested (Section 17) against the real Master Refresh/worker pipeline.
-5. **Operator lifecycle tooling** (Section 16) — session start/advance/rewind/end, likely a minimal internal-only interface (CLI or bare API endpoints) until Phase 6 gives it a real UI to live in.
-6. **Rule 4 labeling + dashboard integration** — blocked on Phase 6 existing at all; not startable earlier no matter how ready the rest of Demo Mode is.
-7. **Scenario 9 (agent/explainability demo)** — unlocked only once Phase 4 ships for real.
-8. **Scenario 10 (Time Machine reconstruction demo)** — unlocked only once Phase 5 ships `recommendation_snapshots` for real.
-9. **Notification/Twilio-or-Telegram demo compatibility** (Section 12) — unlocked only once Phase 7 exists, and only once the Twilio-vs-Telegram discrepancy flagged in Section 12 is resolved by Mac.
+1. **DEMO-1 — Isolation foundation.** Provision the `demo` Railway environment + Supabase project (Section 4, Option A), including the full real migration set (Section 9) — nothing else can safely proceed without this existing, since every later step either writes demo data or needs somewhere isolated to write it. **Do not skip this step** — explicitly called out in Decision 5 as non-skippable regardless of how much faster it might feel to prototype DEMO-2/3 against a shared database first. This document's companion execution plan (delivered separately, per Mac's request) scopes DEMO-1 in full before any provisioning happens.
+2. **DEMO-2 — Demo provider-adapter family** (Section 8) — the nine category adapters, conformance-suite-tested (Section 17 #1) exactly like real adapters.
+3. **DEMO-3 — Virtual clock / scenario runner** (Section 5, Section 6) — the orchestration layer that drives real worker entrypoints via their existing `now`/`today` override parameters.
+4. **DEMO-4 — Phase 3 scenario library** (Section 7) — the full approved lifecycle-coverage scenario set (core lifecycle + controlled scenarios), built and tested (Section 17) against the real Master Refresh/worker pipeline.
+5. **DEMO-5 — Operator lifecycle tooling** (Section 16) — session start/advance/rewind/end, likely a minimal internal-only interface (CLI or bare API endpoints) until Phase 6 gives it a real UI to live in.
+6. **DEMO-6 — Shared dashboard integration** — Rule 4 labeling plus the dashboard strategy (Section 10), built when Phase 6's frontend/UX components actually exist; not startable earlier no matter how ready the rest of Demo Mode is.
+7. **DEMO-7 — Phase 4 scenario parity** — Scenario 17 (agent/explainability demo), unlocked only once Phase 4 ships for real, per the Section 18 maintenance process.
+8. **DEMO-8 — Phase 5 / Time Machine scenario parity** — Scenario 18 (Time Machine reconstruction demo), unlocked only once Phase 5 ships `recommendation_snapshots` for real.
+9. **DEMO-9 — Telegram notification compatibility** — built against the channel-agnostic notification abstraction described in Section 12, once that abstraction and a real notification need exist. Explicitly not started before this step is reached, per Decision 2.
 
-Steps 1–5 are the only ones that could reasonably start soon, since they depend only on Phase 3 (already real). Steps 6–9 are hard-gated on later phases per the roadmap's own dependency chain, exactly mirroring CLAUDE.md's phase-gating rule — Demo Mode does not get to skip ahead of the phases it's demonstrating.
+DEMO-1 through DEMO-5 are the only steps that could reasonably start soon, since they depend only on Phase 3 (already real). DEMO-6 through DEMO-9 are hard-gated on later phases per the roadmap's own dependency chain, exactly mirroring CLAUDE.md's phase-gating rule — Demo Mode does not get to skip ahead of the phases it's demonstrating. **Approval of this sequence is not approval to begin executing it.** Per Mac's instruction, a focused execution plan for DEMO-1 specifically is required and must be separately approved before any provisioning occurs; each subsequent DEMO-N step is expected to get the same treatment in turn.
 
 ---
 
-## 20. Documentation Cross-References — What Else Needs Updating
+## 20. Documentation Cross-References — Registration Record
 
-Per the instruction's explicit ask to determine (but not unilaterally execute beyond registering this document's existence): the following files reference or list documentation in a way that should plausibly mention this new document, and are flagged here rather than edited:
+Per Mac's approval (Document Registration section of the 2026-08-19 decision), this document is now registered as an authoritative Blueprint/supporting architecture document. What changed, file by file:
 
-- **`docs/blueprint/README.md`** — its "Reserved for Future Documents" list (CONFIRMED, read this session) does not include a Demo Mode category, and this new document doesn't cleanly fit any of the six placeholders already listed (API Reference, Developer Guide, Operations Manual, Deployment Runbook, Disaster Recovery, Security Handbook). It likely needs a new entry — either added to that reserved list (if treated as not-yet-authoritative) or added directly to the "Current Versions" table (if treated as authoritative once approved). **Separately and independently of this document:** that same "Current Versions" table was already found to be stale (shows Volume 2/3 at v4.0 against their real current v4.16/v4.12.1) — a pre-existing gap unrelated to Demo Mode, flagged for Mac's awareness but out of scope to fix as part of this task.
-- **`engineering-roadmap-build-order.md`** — currently has no Demo Mode phase or mention. Given Section 19's sequencing is gated by the existing phases rather than being its own phase, it may not need a new numbered phase at all — but the roadmap's own text could reasonably gain a pointer to this document near Phase 3's close (where Demo Mode first becomes buildable) and near Phase 6's close (where the dashboard-labeling work unlocks). A decision for Mac.
-- **`CLAUDE.md`** — no change needed. CLAUDE.md's existing rules (phase-gating, credentials discipline, blueprint-vs-reality flagging) already govern Demo Mode's eventual implementation without modification; this document was written to comply with those rules, not to add new ones to that file.
-- **`PROGRESS.md`** — should get an entry noting this design document now exists, once Mac confirms it as accepted (consistent with how every other piece of work this session was logged there).
-- **`CHANGELOG.md`** — arguably not yet, since nothing architectural has changed (no code, no schema, no deployed behavior) — a design document's creation is not itself a PATCH/MINOR/MAJOR blueprint change under the versioning scheme's own definition (CONFIRMED, that scheme keys off actual decisions affecting the volumes, not documents that reference them). A CHANGELOG entry would be more appropriate at the point Demo Mode's actual implementation begins and produces a real decision to log.
-
-None of the above have been edited. This section is a report, per the instruction's own framing ("do not make unrelated edits — report if broader changes are needed").
+- **`docs/blueprint/README.md`** — added a Documentation Index row for this document, and corrected the two stale "Current Versions" rows this session had already found (Volume 2 shown as v4.0, actually v4.16; Volume 3 shown as v4.0, actually v4.12.1) since the correction was straightforward, directly verifiable against each volume's own header, and unrelated behavior was not affected. Volumes 1/4/5, the roadmap, and both amendments documents were checked against their own headers too and found to already match the table (v3.0/v4.0/v4.0/v4.0/v2.0/v3.0 respectively) — left untouched, no correction needed there.
+- **`engineering-roadmap-build-order.md`** — a single pointer added at the close of Phase 3's Testing Requirements, where Demo Mode's DEMO-4 scenario library first becomes buildable (per Section 19) — no new phase, no renumbering, minimal footprint per Mac's "do not create broad documentation churn" instruction.
+- **`CLAUDE.md`** — no change. Unchanged from the original assessment: CLAUDE.md's existing rules already govern Demo Mode's eventual implementation without modification.
+- **`PROGRESS.md`** — added an entry recording this document's approval and the five decisions above.
+- **`CHANGELOG.md`** — still not touched, per the original reasoning: no architectural/schema/deployed-behavior change has happened yet. The DEMO-1 execution plan (Section 19, requested separately) is the next point at which a real decision requiring a CHANGELOG entry is likely to occur.
