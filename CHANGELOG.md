@@ -878,4 +878,31 @@ A one-line cross-reference was added to §7's `postgame_reviews` description (`o
 
 **Full technical detail:** This entry, plus the new "Status" paragraph in Volume 3 §4.0 directly below `player_stats_nfl`'s table definition, and the completion report delivered to Mac. Also logged operationally in `PROGRESS.md`'s 2026-08-18 notes.
 
+---
+
+## v4.14 — 2026-08-19 — MINOR
+
+**Volume affected:** Volume 2 (System Architecture) only.
+
+**Reason:** Phase 3F-4 (`daily_game_intelligence` reconciliation audit), scoped since 3F-1's own close: `daily_game_intelligence.players` was still the raw roster-fetch passthrough, never reading anything from the durable `players`/`roster_memberships`/`depth_chart_snapshots` tables 3F-1 built. Mac's own inspect-and-report checkpoint confirmed the gap and approved a minimal reconciliation (Option A) over a full durable-table read path (Option B), per an explicit tradeoff analysis: Option A preserves the freshest-possible roster data and costs zero extra per-team/per-game round trips (the same in-memory fetch already feeds both the working table and the durable tables); Option B would have added real round-trip cost for a benefit Option A delivers just as well.
+
+**Decision:**
+- **`app.master_refresh.game_refresh._enrich_roster`** (new) adds the resolved internal `players.id` to each roster entry passed into `daily_game_intelligence.players`, alongside every field already exposed (`team`/`player_external_id`/`player_name`/`position`/`depth_chart_rank`, unchanged). No redesign of the rest of the payload.
+- **`app.master_refresh.run.run_master_refresh`** resolves the mapping via **one batched `player_identity.resolve_player_ids` call for the entire slate**, run once after every team's `persist_roster` attempt (not per-team, not per-player -- no N+1). A player absent from the mapping (never durably ingested, or this cycle's `persist_roster` failed before reaching them) gets `player_id: null` -- never fabricated, never name-matched. A failure of the batched lookup itself is non-blocking (`MasterRefreshResult.player_id_resolution_failed`): fresh roster data still reaches `daily_game_intelligence.players`, just with every `player_id` left null that cycle.
+- **Pregame Worker's call site needed no change** -- it already reads back whatever Master Refresh last wrote (`read_existing_players`), so the enrichment carries forward automatically without a second identity resolution.
+- **A real, pre-existing exception-isolation gap found and reported, not fixed.** `persist_roster` calls `ensure_player`/`resolve_player_ids`/`resolve_team_ids` without catching their own exception types (`PlayerIdentityError`, `TeamIdentityError`); only `RosterIngestionError` is actually isolated by `run_master_refresh`. Confirmed by direct test execution (not just static reading): a `PlayerIdentityError` from `ensure_player` crashes the whole `run_master_refresh` call rather than being isolated per-team as the module's own comments describe. Out of 3F-4's explicit scope to fix -- flagged for Mac's decision.
+
+**Alternatives considered:**
+- Full durable-table read path (Option B) -- rejected per Mac's explicit approval of Option A; would have added a per-team/per-game query cost the existing in-memory `rosters` dict doesn't need, for a benefit (internal `player_id`) Option A delivers without it.
+- Reordering `_enrich_roster`'s resolution to run before `persist_roster` so it could avoid the "possibly-stale" framing -- rejected; running it after is what lets a brand-new player's just-created mapping resolve within the same cycle, which running before would miss entirely.
+- Silently fixing the `PlayerIdentityError`/`TeamIdentityError` isolation gap discovered while testing -- rejected; out of 3F-4's explicit "complete 3F-4 only" scope, reported instead per this project's stop-and-flag discipline.
+
+**Expected impact:**
+- `app/master_refresh/game_refresh.py` (`_enrich_roster`, widened `refresh_daily_game_intelligence_for_game` signature), `app/master_refresh/run.py` (batched resolution, widened `MasterRefreshResult`), and 15 new tests across `tests/test_game_refresh.py`/`tests/test_master_refresh.py` are the real, tested implementation -- covering resolved/unresolved/mixed players, the persist_roster-failure case (fresh data preserved, `player_id` not fabricated), batching (one query for a 4-team/4-player slate, not four), the lookup-failure-is-non-blocking case, and both Master Refresh's and Pregame Worker's call sites.
+- Live dev-Supabase proof (`nhwjtsdebgiwskshzqiq`): a durably-linked player resolved to its real internal `players.id` via the exact batched-query shape; a never-linked player correctly resolved to nothing (no fabrication); both round-tripped correctly through a real `daily_game_intelligence` row; all proof rows removed afterward, dev state confirmed returned to its exact prior counts.
+- No live SportsDataIO/The Odds API/WeatherAPI/NewsAPI/GNews calls anywhere in this phase's build or tests (SportsDataIO budget unchanged at 11 of 12); no hosted Redis provisioned; no Railway scheduler configured; no schema change (Volume 3 unaffected -- `daily_game_intelligence.players` is jsonb, already permissive of the new key).
+- MINOR, Volume-2-only bump: closes the 3F-4 gap named at 3F-1's close; surfaces (does not fix) one real exception-isolation defect for a separate decision.
+
+**Full technical detail:** This entry, plus the new "`daily_game_intelligence.players` reconciliation" and exception-isolation-gap paragraphs in Volume 2 §8, and the completion report delivered to Mac. Also logged operationally in `PROGRESS.md`'s 2026-08-19 notes (Phase 3F-4).
+
 **Full technical detail:** This entry, plus the new "Status-map correction and row isolation" paragraph in Volume 2 §8, `app/adapters/providers/sportsdataio.py`'s own module docstring and `_SCHEDULE_STATUS_MAP` comment, `PROVENANCE.md`'s updated status-vocabulary section, and the completion report delivered to Mac. Also logged operationally in `PROGRESS.md`'s 2026-08-18 notes.

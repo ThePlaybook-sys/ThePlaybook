@@ -21,7 +21,11 @@ needing its own try/except around this function. This is Decision 6's
     raising for the whole batch (see that adapter's own docstring), so
     this worker never even sees the isolation happen -- it just receives
     a slate with that one game absent, exactly as if that row were never
-    in the response at all.
+    in the response at all. Also non-blocking (Phase 3F-4): the single
+    batched internal-player_id resolution query -- a failure there never
+    drops the fresh roster/depth-chart data already fetched for
+    `daily_game_intelligence.players`, it only means no entry resolves
+    an internal `player_id` this cycle (`player_id_resolution_failed`).
 """
 from __future__ import annotations
 
@@ -39,12 +43,14 @@ from app.master_refresh.game_refresh import refresh_daily_game_intelligence_for_
 from app.master_refresh.slate import filter_slate_window
 from app.persistence.daily_game_intelligence import DailyGameIntelligenceError
 from app.persistence.games import GamesQueryError, list_games_in_window
+from app.persistence.player_identity import PlayerIdentityError, resolve_player_ids
 from app.persistence.roster_ingestion import RosterIngestionError, persist_roster
 from app.persistence.schedule import PersistenceError, persist_schedule_entries
 from app.persistence.seasons import SeasonResolutionError, fetch_current_season_string
 
 _SCHEDULE_TTL_SECONDS = 86400
 _ROSTER_TTL_SECONDS = 86400
+_ROSTER_PROVIDER_NAME = "sportsdataio"
 
 
 @dataclass
@@ -56,6 +62,7 @@ class MasterRefreshResult:
     games_updated: int = 0
     roster_failures: list[str] = field(default_factory=list)
     roster_ingestion_failures: list[str] = field(default_factory=list)
+    player_id_resolution_failed: bool = False
     daily_game_intelligence_written: int = 0
     daily_game_intelligence_failures: list[str] = field(default_factory=list)
     error: str | None = None
@@ -172,6 +179,30 @@ async def run_master_refresh(
         except RosterIngestionError as exc:
             roster_ingestion_failures.append(f"{team}: {exc}")
 
+    # Phase 3F-4: batched internal player_id resolution -- one query for
+    # the whole slate (not per-team, not per-player -- avoids N+1), run
+    # after every team's persist_roster attempt above so a brand-new
+    # player's just-created mapping resolves this same cycle. Reads
+    # whatever player_provider_ids mappings actually exist at this
+    # moment: a player never durably ingested, or whose team's
+    # persist_roster call above failed before reaching them, is simply
+    # absent -- daily_game_intelligence.players still shows their fresh
+    # roster data (below), just with player_id left null, never
+    # fabricated. A failure of this lookup itself is NON-BLOCKING and
+    # isolated the same way -- it never drops the fresh roster/depth-chart
+    # data already fetched, it only means no entry resolves this cycle.
+    all_provider_player_ids = sorted(
+        {entry.player_external_id for roster in rosters.values() if roster is not None for entry in roster}
+    )
+    player_id_resolution_failed = False
+    try:
+        player_ids = await resolve_player_ids(
+            supabase_client, headers, provider_name=_ROSTER_PROVIDER_NAME, provider_player_ids=all_provider_player_ids
+        )
+    except PlayerIdentityError:
+        player_ids = {}
+        player_id_resolution_failed = True
+
     # Steps 6-8: per-game daily_game_intelligence refresh, each isolated so
     # one game's failure never blocks another's. Delegates to
     # app.master_refresh.game_refresh (extracted Phase 3E-8 so Pregame
@@ -182,12 +213,16 @@ async def run_master_refresh(
     for game in games:
         game_id = game["id"]
         try:
-            await refresh_daily_game_intelligence_for_game(supabase_client, headers, game, rosters=rosters)
+            await refresh_daily_game_intelligence_for_game(
+                supabase_client, headers, game, rosters=rosters, player_ids=player_ids
+            )
             dgi_written += 1
         except (GamesQueryError, DailyGameIntelligenceError) as exc:
             dgi_failures.append(f"{game_id}: {exc}")
 
-    status = "partial" if (roster_failures or roster_ingestion_failures or dgi_failures) else "success"
+    status = "partial" if (
+        roster_failures or roster_ingestion_failures or player_id_resolution_failed or dgi_failures
+    ) else "success"
 
     return MasterRefreshResult(
         status=status,
@@ -197,6 +232,7 @@ async def run_master_refresh(
         games_updated=games_updated,
         roster_failures=roster_failures,
         roster_ingestion_failures=roster_ingestion_failures,
+        player_id_resolution_failed=player_id_resolution_failed,
         daily_game_intelligence_written=dgi_written,
         daily_game_intelligence_failures=dgi_failures,
     )
