@@ -1,7 +1,11 @@
-"""Bundled DEMO-3 scenario definitions -- static JSON files, loaded and
-validated through `app.demo.scenario.load_scenario`. One file so far
-(`minimal_pregame_to_postgame.json`, DEMO-3's one approved minimal
-scenario); a richer library is DEMO-5's job, not this module's.
+"""Bundled scenario definitions -- static JSON files, loaded and validated
+through `app.demo.scenario.load_scenario`. `minimal_pregame_to_postgame.json`
+is DEMO-3's one approved minimal scenario; DEMO-5 added the four-scenario
+library (`pregame_intelligence_evolution`, `team_news_injury_depth_chart`,
+`provider_outage_resilience`, `postgame_stat_correction`) proving append-only
+history, per-category provider-outage isolation, and postgame stat
+correction. New files are picked up automatically by `list_bundled_scenarios`'
+glob -- no registration step needed.
 """
 from __future__ import annotations
 

@@ -58,10 +58,21 @@ class ScenarioStep:
     #: `run_postgame_worker`, which delegate to already-configured
     #: category workers rather than owning their own fetch).
     provider_data: dict = field(default_factory=dict)
-    #: True to make this step's adapter(s) raise `ProviderUnavailableError`
-    #: (the DEMO-2 `fail=True` mechanism) instead of returning data --
-    #: failure injection, per the approved scope.
+    #: True to make EVERY adapter this step builds raise
+    #: `ProviderUnavailableError` (the DEMO-2 `fail=True` mechanism)
+    #: instead of returning data -- failure injection, per the approved
+    #: scope. For a single-worker step (`run_odds_worker`, etc.) this is
+    #: already category-specific, since only one adapter is built at all.
     inject_failure: bool = False
+    #: DEMO-5 addition: for a multi-category step (`run_pregame_worker`,
+    #: which builds all four of odds/player_props/injury/weather from one
+    #: step), `inject_failure` alone can't express "only THIS one
+    #: category is down" -- it would fail all four together. Naming a
+    #: category here (e.g. `["injury"]`) fails only that adapter,
+    #: leaving the others to build and succeed normally. Empty for every
+    #: single-worker step; `inject_failure=True` remains the right tool
+    #: when the whole step's one category should fail.
+    fail_categories: list[str] = field(default_factory=list)
     #: Human-readable narration for an operator watching a scenario run.
     #: Never required, always safe to omit.
     checkpoint_note: str | None = None
@@ -161,6 +172,7 @@ def load_scenario(data: dict) -> Scenario:
                 inject_failure=raw_step.get("inject_failure", False),
                 checkpoint_note=raw_step.get("checkpoint_note"),
                 worker_kwargs=raw_step.get("worker_kwargs", {}),
+                fail_categories=raw_step.get("fail_categories", []),
             )
         )
 

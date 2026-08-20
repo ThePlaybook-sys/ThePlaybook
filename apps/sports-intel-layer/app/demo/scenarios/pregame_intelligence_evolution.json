@@ -1,0 +1,189 @@
+{
+  "scenario_id": "demo-pregame-intelligence-evolution",
+  "title": "Pregame Intelligence Evolution",
+  "description": "DEMO-5. The same KC @ BAL matchup, but proving what the existing scenario only shows once: odds, player props, and weather each genuinely CHANGE between two real polls of the same worker -- append-only history, never an overwrite -- and that daily_game_intelligence's per-category freshness status correctly flips from fresh to stale when a category goes unrefreshed for long enough. No postgame content; this scenario stays entirely pregame.",
+  "version": "1.0.0",
+  "phase_requirements": ["phase_3"],
+  "initial_virtual_now": "2026-09-21T12:00:00+00:00",
+  "slate": {
+    "games": ["demo-sdio-kc-bal-w3"],
+    "teams": ["KC", "BAL"]
+  },
+  "steps": [
+    {
+      "virtual_now": "2026-09-21T12:00:00+00:00",
+      "action": "run_master_refresh",
+      "checkpoint_note": "Week 3 schedule ingested (KC @ BAL) and both teams' rosters synced.",
+      "provider_data": {
+        "schedule": [
+          {
+            "game_external_id": "demo-sdio-kc-bal-w3",
+            "home_team": "KC",
+            "away_team": "BAL",
+            "scheduled_start": "2026-09-21T17:00:00+00:00",
+            "stadium": "Arrowhead Stadium",
+            "status": "scheduled",
+            "season_type": "regular",
+            "week": 3,
+            "venue_lat": 39.0489,
+            "venue_long": -94.4839,
+            "venue_type": "outdoor"
+          }
+        ],
+        "roster": {
+          "KC": [
+            {"team": "KC", "player_external_id": "demo-sdio-player-kc-qb", "player_name": "Demo Fixture QB (KC)", "position": "QB", "depth_chart_rank": 1}
+          ],
+          "BAL": [
+            {"team": "BAL", "player_external_id": "demo-sdio-player-bal-qb", "player_name": "Demo Fixture QB (BAL)", "position": "QB", "depth_chart_rank": 1}
+          ]
+        }
+      }
+    },
+    {
+      "virtual_now": "2026-09-21T12:10:00+00:00",
+      "action": "run_odds_worker",
+      "checkpoint_note": "Opening moneyline posted: KC -120 / BAL +100.",
+      "provider_data": {
+        "odds": {
+          "demo-oddsapi-kc-bal-w3": [
+            {
+              "game_external_id": "demo-oddsapi-kc-bal-w3",
+              "home_team": "Kansas City Chiefs",
+              "away_team": "Baltimore Ravens",
+              "commence_time": "2026-09-21T17:00:00+00:00",
+              "sportsbook": "DemoBook",
+              "market_type": "moneyline",
+              "line_data": {"home": -120, "away": 100}
+            }
+          ]
+        }
+      }
+    },
+    {
+      "virtual_now": "2026-09-21T12:15:00+00:00",
+      "action": "run_player_props_worker",
+      "checkpoint_note": "Opening player prop posted: KC QB pass TDs o/u 1.5.",
+      "provider_data": {
+        "player_props": {
+          "demo-oddsapi-kc-bal-w3": [
+            {
+              "game_external_id": "demo-oddsapi-kc-bal-w3",
+              "home_team": "Kansas City Chiefs",
+              "away_team": "Baltimore Ravens",
+              "commence_time": "2026-09-21T17:00:00+00:00",
+              "sportsbook": "DemoBook",
+              "player_external_id": "demo-sdio-player-kc-qb",
+              "player_name": "Demo Fixture QB (KC)",
+              "prop_type": "player_pass_tds",
+              "line": 1.5,
+              "over_odds": -115,
+              "under_odds": -105
+            }
+          ]
+        }
+      }
+    },
+    {
+      "virtual_now": "2026-09-21T12:20:00+00:00",
+      "action": "run_weather_worker",
+      "checkpoint_note": "Initial forecast: clear, 68F, light wind.",
+      "provider_data": {
+        "weather": {
+          "demo-sdio-kc-bal-w3": {
+            "temperature_f": 68.0,
+            "wind_mph": 6.0,
+            "precipitation_pct": 0.0,
+            "conditions": "clear"
+          }
+        }
+      }
+    },
+    {
+      "virtual_now": "2026-09-21T14:00:00+00:00",
+      "action": "run_odds_worker",
+      "checkpoint_note": "Line moves: KC -145 / BAL +125 -- a new snapshot row, not an overwrite of the opening line.",
+      "provider_data": {
+        "odds": {
+          "demo-oddsapi-kc-bal-w3": [
+            {
+              "game_external_id": "demo-oddsapi-kc-bal-w3",
+              "home_team": "Kansas City Chiefs",
+              "away_team": "Baltimore Ravens",
+              "commence_time": "2026-09-21T17:00:00+00:00",
+              "sportsbook": "DemoBook",
+              "market_type": "moneyline",
+              "line_data": {"home": -145, "away": 125}
+            }
+          ]
+        }
+      }
+    },
+    {
+      "virtual_now": "2026-09-21T14:05:00+00:00",
+      "action": "run_player_props_worker",
+      "checkpoint_note": "Prop line moves: KC QB pass TDs o/u 2.5.",
+      "provider_data": {
+        "player_props": {
+          "demo-oddsapi-kc-bal-w3": [
+            {
+              "game_external_id": "demo-oddsapi-kc-bal-w3",
+              "home_team": "Kansas City Chiefs",
+              "away_team": "Baltimore Ravens",
+              "commence_time": "2026-09-21T17:00:00+00:00",
+              "sportsbook": "DemoBook",
+              "player_external_id": "demo-sdio-player-kc-qb",
+              "player_name": "Demo Fixture QB (KC)",
+              "prop_type": "player_pass_tds",
+              "line": 2.5,
+              "over_odds": -110,
+              "under_odds": -110
+            }
+          ]
+        }
+      }
+    },
+    {
+      "virtual_now": "2026-09-21T14:10:00+00:00",
+      "action": "run_weather_worker",
+      "checkpoint_note": "Forecast deteriorates: rain moving in, 55F, wind up to 18mph.",
+      "provider_data": {
+        "weather": {
+          "demo-sdio-kc-bal-w3": {
+            "temperature_f": 55.0,
+            "wind_mph": 18.0,
+            "precipitation_pct": 60.0,
+            "conditions": "rain"
+          }
+        }
+      }
+    },
+    {
+      "virtual_now": "2026-09-21T15:30:00+00:00",
+      "action": "advance_time",
+      "checkpoint_note": "80 minutes pass with no further weather poll -- well past the confirmed 15-minute weather TTL."
+    },
+    {
+      "virtual_now": "2026-09-21T15:30:00+00:00",
+      "action": "run_master_refresh",
+      "checkpoint_note": "daily_game_intelligence recomputed at 15:30 -- the 14:10 weather snapshot is now stale, with zero new weather poll to mask it.",
+      "provider_data": {
+        "schedule": [
+          {
+            "game_external_id": "demo-sdio-kc-bal-w3",
+            "home_team": "KC",
+            "away_team": "BAL",
+            "scheduled_start": "2026-09-21T17:00:00+00:00",
+            "stadium": "Arrowhead Stadium",
+            "status": "scheduled",
+            "season_type": "regular",
+            "week": 3,
+            "venue_lat": 39.0489,
+            "venue_long": -94.4839,
+            "venue_type": "outdoor"
+          }
+        ]
+      }
+    }
+  ]
+}
