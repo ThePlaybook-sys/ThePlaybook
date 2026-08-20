@@ -1,10 +1,11 @@
 # The Playbook — Volume 4
 ## AI Intelligence Architecture: Agents, Orchestration, Consensus, Explainability, Learning
 
-**Version:** v4.0
-**Last updated:** 2026-08-06
-**Depends on:** Volume 2 (v4.0 — Orchestrator deployment shape, async fan-out pattern, scoped event system, Redis, Recommendation Worker) and Volume 3 (v4.0 — `agents`, `agent_performance_scores`, `recommendation_agent_outputs`, `consensus_snapshots`, `model_routing_rules`, `prompt_registry`, `model_registry`, `daily_game_intelligence`, normalized multi-sport core)
+**Version:** v5.0
+**Last updated:** 2026-08-20
+**Depends on:** Volume 2 (v5.0 — Orchestrator deployment shape, async fan-out pattern, scoped event system, Redis, Recommendation Worker, multi-source/deterministic-derived-intelligence vendor strategy) and Volume 3 (v4.0 — `agents`, `agent_performance_scores`, `recommendation_agent_outputs`, `consensus_snapshots`, `model_routing_rules`, `prompt_registry`, `model_registry`, `daily_game_intelligence`, normalized multi-sport core)
 **Resolves open items from:** Volume 2 §7 (confidence variance threshold), Volume 3 §13 (agent weighting algorithm, conversation schema)
+**v5.0 note (MAJOR):** §1.1 (new) establishes the RAW FACT → DETERMINISTIC FEATURE → AI REASONING → CONSENSUS → RECOMMENDATION STRATEGY pipeline as an explicit, volume-wide principle — triggered by declining SportsDataIO's ~$10-15K/season quote and adopting a multi-source + internally-derived-intelligence strategy instead (Volume 2 §8's own updated note). Generalizes the deterministic-math discipline already locked into Phase 4's real implementation (Milestone 4.2's agent output contract) to every feature category, not only EV/Kelly: an LLM never fabricates a missing metric, never performs arithmetic or recalls a fact application code can compute reproducibly. Derived-score-table/`daily_game_intelligence`-field ownership stays explicitly undecided, deferred to the pre-Milestone-4.4/4.5 data-contract inspection Mac has directed. See `CHANGELOG.md` v5.0 entry for full reasoning.
 **v4.0 note:** §3.1 now documents two entry points into the same pipeline — the proactive Recommendation Worker (Volume 2 §4.4) and on-demand NL Engine requests — converging on identical steps, not separate fast/slow paths. See `CHANGELOG.md` v4.0 entry for full reasoning.
 **Read next:** Volume 5 (Frontend & UX Architecture) — every output defined here needs a home on a screen
 
@@ -15,6 +16,36 @@
 Volume 2 defined *how the Orchestrator is deployed* (stateless, async, horizontally scalable). Volume 3 defined *where its outputs are stored* (snapshot tables, append-only history). This volume defines *what it actually thinks* — the 22-agent committee (21 fan-out agents plus the Meta Agent reviewer, v2.0), how their outputs get reconciled into one recommendation, how confidence is calibrated, and how the system gets smarter over thousands of recommendations without overfitting to noise.
 
 This is the largest and most important volume in the blueprint. It's also the one place where a bad decision is hardest to detect early — a flawed pricing tier is obvious in week one; a flawed weighting algorithm can look fine for months and then quietly erode the whole product's credibility. Every section below is written with that risk in mind.
+
+### 1.1 Data Sourcing, Derived Intelligence & the Deterministic Calculation Boundary (v5.0)
+
+Added mid-build (2026-08-20), triggered by a real commercial finding rather than planning-stage foresight: SportsDataIO quoted approximately $10,000-$15,000 per NFL season for the collection of feeds this volume's agents were originally assumed to consume directly. Mac's decision — **not proceeding with that purchase at this stage** — is documented fully in Volume 2 §8's own updated vendor-strategy note; this subsection documents the architectural consequence for how every agent in §2 must be designed as a result, since the consequence is squarely this volume's concern, not Volume 2's.
+
+**The governing pipeline, now explicit rather than implicit:**
+
+```
+RAW FACT
+   ↓
+DETERMINISTIC FEATURE / CALCULATION
+   ↓
+AI REASONING
+   ↓
+CONSENSUS
+   ↓
+RECOMMENDATION STRATEGY
+```
+
+**Three rules follow directly, and apply to every agent in §2, not only the Decision & Advisory group's EV/Kelly math this volume already singled out (§2.5, §9):**
+
+1. **Buy or ingest raw facts where necessary.** A provider (purchased or free/open) supplies facts the product cannot derive itself — market odds, official injury designations, weather observations, play-by-play events. This layer stays exactly as the adapter-pattern architecture already requires (Volume 2 §8) — swappable, never hardcoded to one vendor.
+2. **Calculate what can be calculated deterministically, in application code, not inside a model prompt.** Anywhere a real formula, a real distance calculation, or a real historical aggregation exists, that calculation is plain, reproducible, testable code — never delegated to an LLM to compute or recall. This generalizes the discipline Phase 4's implementation already locked in for EV/Kelly (Milestone 4.2's contract work, `app/agents/contract.py`) to every other feature category a fan-out agent might otherwise be tempted to have the model estimate: travel distance from venue coordinates, line-movement direction/magnitude/velocity from `odds_snapshots`' append-only history, usage shares from `player_stats`, situational tendencies from play-by-play, and any other objectively computable metric.
+3. **AI is for reasoning and interpretation over already-computed facts and features, never for fabricating a missing one.** An agent whose deterministic feature is unavailable (no source exists yet, or the calculation hasn't been built yet) must say so — via `evidence_classification: "assumption"`, a lower `confidence`, and a `finding`/`would_change_mind_if` that names the specific gap (§2.1) — never invent a plausible-sounding number to fill the space. This is the same null-not-neutral principle Volume 3 §4.1 already establishes for `daily_game_intelligence` (a `null` category is "unavailable," never silently coerced to a default), carried forward to what an agent is allowed to output: a missing input must never become a confident-looking, fabricated output.
+
+**Where a deterministic feature actually lives — `daily_game_intelligence`, a supporting table, a derived-score table, or computed on demand — is deliberately NOT decided by this note.** That ownership question (including the long-open one for the 13 derived score tables and `daily_game_intelligence`'s `ai_scores`/`momentum`/`matchup_ratings`/`ev_calculations`/`confidence_scores`/`recommendation_candidates` fields, Volume 3 §4.1/§4.2) is Mac's explicit instruction to resolve via a dedicated data-contract impact inspection immediately before Milestones 4.4/4.5 build the affected agent groups — assigning ownership now, merely because a table already exists, is exactly the premature decision that inspection exists to prevent. See `PROGRESS.md`'s Milestone 4.2 entry (2026-08-20) for the full inspection scope and the affected-agent list it will classify (AVAILABLE RAW / DERIVABLE / EXTERNAL SOURCE REQUIRED / DEGRADED BUT USABLE / BLOCKED).
+
+**`public_betting`/`sharp_money` — reaffirmed, not loosened.** Volume 3 §4.1 already established these stay `null` until a legitimate vendor is selected. This note adds one explicit prohibition that volume didn't need to state until agents actually existed to violate it: **line movement is evidence an agent may reason over, but line movement alone is never treated as proof of, or a substitute for, actual sharp-money/public-betting-percentage data.** The Sharp Money Agent and Public Betting Agent must degrade (lower confidence, `evidence_classification` reflecting the gap) rather than reinterpret `null` as "no signal" or infer a percentage from odds movement that was never actually measured.
+
+See `CHANGELOG.md` v5.0 entry for the full Reason/Decision/Alternatives/Impact record, and Volume 2 §8's own updated note for the vendor-candidate detail (nflverse, The Odds API vs. SportsGameOdds, OpenWeather, injuries/news still open) this subsection deliberately does not duplicate.
 
 ---
 
