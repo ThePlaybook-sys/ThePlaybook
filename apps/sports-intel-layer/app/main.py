@@ -32,6 +32,17 @@ def health() -> dict:
     return {"status": "ok", "service": "sports-intel-layer"}
 
 
+# DEMO-4, Decision 4: mounted only in the demo environment -- defense in depth,
+# matching the existing dev-only /sentry-debug conditional-mount convention below.
+# Every route inside this router independently re-verifies isolation on every
+# request regardless (app.demo.router's own docstring); this mount-time check is
+# deliberately not relied on as the only guard.
+if os.environ.get("RAILWAY_ENVIRONMENT_NAME", "dev") == "demo":
+    from app.demo.router import router as demo_router
+
+    app.include_router(demo_router)
+
+
 if os.environ.get("RAILWAY_ENVIRONMENT_NAME", "dev") == "dev":
 
     @app.get("/sentry-debug")

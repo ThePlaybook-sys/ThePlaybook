@@ -26,6 +26,21 @@ def health() -> dict:
     return {"status": "ok", "service": "api-gateway"}
 
 
+# DEMO-4: mounted unconditionally (unlike sports-intel-layer's demo router,
+# which mounts only in the demo environment) -- every route here proxies to
+# sports-intel-layer, whose own isolation guard refuses outside demo, and
+# is itself gated by the demo-operator token (app.demo_routes' own
+# docstring, Mac's Option A). Mounting api-gateway's demo routes everywhere
+# is harmless: calling them from dev/staging/production without the demo
+# environment's own DEMO_OPERATOR_TOKEN/SPORTS_INTEL_LAYER_URL configured
+# simply 500s, never reaches real demo data.
+from app.demo_routes import login_router as demo_login_router  # noqa: E402
+from app.demo_routes import router as demo_router  # noqa: E402
+
+app.include_router(demo_login_router)
+app.include_router(demo_router)
+
+
 if os.environ.get("RAILWAY_ENVIRONMENT_NAME", "dev") == "dev":
 
     @app.get("/sentry-debug")
