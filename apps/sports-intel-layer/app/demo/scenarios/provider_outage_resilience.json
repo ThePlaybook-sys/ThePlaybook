@@ -1,0 +1,90 @@
+{
+  "scenario_id": "demo-provider-outage-resilience",
+  "title": "Provider Outage Resilience",
+  "description": "DEMO-5. KC @ BAL, Week 5. Proves per-category provider-failure isolation at the exact coordination point where it matters most: the T-minus-5 Pregame Worker's single coordinated refresh across odds/player_props/injury/weather. Only the injury category is made to fail (via the new DEMO-5 `fail_categories` mechanism -- `inject_failure` alone can't single out one of four categories a multi-category step builds); the other three must still succeed, and daily_game_intelligence must still refresh for them. Same resilience the existing `test_one_category_failure_does_not_block_others_or_dgi_refresh` unit test already proves, now demonstrated live through the Operator Dashboard.",
+  "version": "1.0.0",
+  "phase_requirements": ["phase_3"],
+  "initial_virtual_now": "2026-10-05T12:00:00+00:00",
+  "slate": {
+    "games": ["demo-sdio-kc-bal-w5"],
+    "teams": ["KC", "BAL"]
+  },
+  "steps": [
+    {
+      "virtual_now": "2026-10-05T12:00:00+00:00",
+      "action": "run_master_refresh",
+      "checkpoint_note": "Week 5 schedule ingested and both teams' rosters synced.",
+      "provider_data": {
+        "schedule": [
+          {
+            "game_external_id": "demo-sdio-kc-bal-w5",
+            "home_team": "KC",
+            "away_team": "BAL",
+            "scheduled_start": "2026-10-05T17:00:00+00:00",
+            "stadium": "Arrowhead Stadium",
+            "status": "scheduled",
+            "season_type": "regular",
+            "week": 5,
+            "venue_lat": 39.0489,
+            "venue_long": -94.4839,
+            "venue_type": "outdoor"
+          }
+        ],
+        "roster": {
+          "KC": [
+            {"team": "KC", "player_external_id": "demo-sdio-player-kc-qb", "player_name": "Demo Fixture QB (KC)", "position": "QB", "depth_chart_rank": 1}
+          ],
+          "BAL": [
+            {"team": "BAL", "player_external_id": "demo-sdio-player-bal-qb", "player_name": "Demo Fixture QB (BAL)", "position": "QB", "depth_chart_rank": 1}
+          ]
+        }
+      }
+    },
+    {
+      "virtual_now": "2026-10-05T16:55:00+00:00",
+      "action": "run_pregame_worker",
+      "checkpoint_note": "T-minus-5 refresh: the injury provider is down (simulated outage). Odds, player props, and weather all succeed anyway, and daily_game_intelligence still refreshes with the three succeeding categories.",
+      "fail_categories": ["injury"],
+      "provider_data": {
+        "odds": {
+          "demo-oddsapi-kc-bal-w5": [
+            {
+              "game_external_id": "demo-oddsapi-kc-bal-w5",
+              "home_team": "Kansas City Chiefs",
+              "away_team": "Baltimore Ravens",
+              "commence_time": "2026-10-05T17:00:00+00:00",
+              "sportsbook": "DemoBook",
+              "market_type": "moneyline",
+              "line_data": {"home": -130, "away": 110}
+            }
+          ]
+        },
+        "player_props": {
+          "demo-oddsapi-kc-bal-w5": [
+            {
+              "game_external_id": "demo-oddsapi-kc-bal-w5",
+              "home_team": "Kansas City Chiefs",
+              "away_team": "Baltimore Ravens",
+              "commence_time": "2026-10-05T17:00:00+00:00",
+              "sportsbook": "DemoBook",
+              "player_external_id": "demo-sdio-player-kc-qb",
+              "player_name": "Demo Fixture QB (KC)",
+              "prop_type": "player_pass_tds",
+              "line": 1.5,
+              "over_odds": -115,
+              "under_odds": -105
+            }
+          ]
+        },
+        "weather": {
+          "demo-sdio-kc-bal-w5": {
+            "temperature_f": 60.0,
+            "wind_mph": 9.0,
+            "precipitation_pct": 10.0,
+            "conditions": "partly cloudy"
+          }
+        }
+      }
+    }
+  ]
+}

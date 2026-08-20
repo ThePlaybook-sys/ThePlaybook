@@ -1,0 +1,110 @@
+{
+  "scenario_id": "demo-team-news-injury-depth-chart",
+  "title": "Team News: Injury & Depth Chart Change",
+  "description": "DEMO-5. KC @ BAL, Week 4. Proves two distinct real Phase 3 persistence behaviors never exercised by any prior scenario: injury_reports' append-only escalation history (questionable -> out), and roster_memberships' genuine insert-ON-CHANGE semantics -- a player's membership row is only ever inserted again when the OBSERVED team differs from the LATEST known team, never on every poll. A depth-chart-only reshuffle (same player, same team, new rank) deliberately does NOT create a second roster_memberships row -- only a genuine team change (a wide receiver moving from BAL to KC) does, while depth_chart_snapshots itself is written unconditionally on every poll regardless.",
+  "version": "1.0.0",
+  "phase_requirements": ["phase_3"],
+  "initial_virtual_now": "2026-09-28T12:00:00+00:00",
+  "slate": {
+    "games": ["demo-sdio-kc-bal-w4"],
+    "teams": ["KC", "BAL"]
+  },
+  "steps": [
+    {
+      "virtual_now": "2026-09-28T12:00:00+00:00",
+      "action": "run_master_refresh",
+      "checkpoint_note": "Week 4 schedule ingested. Initial rosters synced: KC's QB, and BAL's QB plus a wide receiver.",
+      "provider_data": {
+        "schedule": [
+          {
+            "game_external_id": "demo-sdio-kc-bal-w4",
+            "home_team": "KC",
+            "away_team": "BAL",
+            "scheduled_start": "2026-09-28T17:00:00+00:00",
+            "stadium": "Arrowhead Stadium",
+            "status": "scheduled",
+            "season_type": "regular",
+            "week": 4,
+            "venue_lat": 39.0489,
+            "venue_long": -94.4839,
+            "venue_type": "outdoor"
+          }
+        ],
+        "roster": {
+          "KC": [
+            {"team": "KC", "player_external_id": "demo-sdio-player-kc-qb", "player_name": "Demo Fixture QB (KC)", "position": "QB", "depth_chart_rank": 1}
+          ],
+          "BAL": [
+            {"team": "BAL", "player_external_id": "demo-sdio-player-bal-qb", "player_name": "Demo Fixture QB (BAL)", "position": "QB", "depth_chart_rank": 1},
+            {"team": "BAL", "player_external_id": "demo-sdio-player-shared-wr", "player_name": "Demo Fixture WR", "position": "WR", "depth_chart_rank": 2}
+          ]
+        }
+      }
+    },
+    {
+      "virtual_now": "2026-09-28T12:10:00+00:00",
+      "action": "run_injury_worker",
+      "checkpoint_note": "BAL's starting QB is listed questionable (ankle).",
+      "provider_data": {
+        "injury": [
+          {
+            "game_external_id": "demo-sdio-kc-bal-w4",
+            "player_external_id": "demo-sdio-player-bal-qb",
+            "player_name": "Demo Fixture QB (BAL)",
+            "team": "BAL",
+            "status": "questionable",
+            "description": "ankle"
+          }
+        ]
+      }
+    },
+    {
+      "virtual_now": "2026-09-28T14:00:00+00:00",
+      "action": "run_master_refresh",
+      "checkpoint_note": "Roster shakeup: the shared WR moves from BAL to KC's active roster -- a genuine team change, not just a depth-chart reshuffle.",
+      "provider_data": {
+        "schedule": [
+          {
+            "game_external_id": "demo-sdio-kc-bal-w4",
+            "home_team": "KC",
+            "away_team": "BAL",
+            "scheduled_start": "2026-09-28T17:00:00+00:00",
+            "stadium": "Arrowhead Stadium",
+            "status": "scheduled",
+            "season_type": "regular",
+            "week": 4,
+            "venue_lat": 39.0489,
+            "venue_long": -94.4839,
+            "venue_type": "outdoor"
+          }
+        ],
+        "roster": {
+          "KC": [
+            {"team": "KC", "player_external_id": "demo-sdio-player-kc-qb", "player_name": "Demo Fixture QB (KC)", "position": "QB", "depth_chart_rank": 1},
+            {"team": "KC", "player_external_id": "demo-sdio-player-shared-wr", "player_name": "Demo Fixture WR", "position": "WR", "depth_chart_rank": 1}
+          ],
+          "BAL": [
+            {"team": "BAL", "player_external_id": "demo-sdio-player-bal-qb", "player_name": "Demo Fixture QB (BAL)", "position": "QB", "depth_chart_rank": 1}
+          ]
+        }
+      }
+    },
+    {
+      "virtual_now": "2026-09-28T14:10:00+00:00",
+      "action": "run_injury_worker",
+      "checkpoint_note": "BAL's starting QB is escalated to out -- a new injury_reports row, the questionable report from earlier is never overwritten.",
+      "provider_data": {
+        "injury": [
+          {
+            "game_external_id": "demo-sdio-kc-bal-w4",
+            "player_external_id": "demo-sdio-player-bal-qb",
+            "player_name": "Demo Fixture QB (BAL)",
+            "team": "BAL",
+            "status": "out",
+            "description": "ankle -- ruled out"
+          }
+        ]
+      }
+    }
+  ]
+}

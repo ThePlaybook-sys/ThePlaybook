@@ -29,6 +29,7 @@ destructive-reset boundary).
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -282,7 +283,7 @@ class ScenarioRunner:
                 weatherapi_key=UNUSED_PLACEHOLDER_KEY,
                 cache_backend=InMemoryCacheBackend(),
                 now=self.virtual_now,
-                weather_adapter=self._build_weather_adapter(step),
+                weather_adapter=await self._build_weather_adapter(step),
                 **step.worker_kwargs,
             )
         if step.action == "run_news_worker":
@@ -309,7 +310,7 @@ class ScenarioRunner:
                 odds_adapter=self._build_odds_adapter(step),
                 player_props_adapter=self._build_player_props_adapter(step),
                 injury_adapter=self._build_injury_adapter(step),
-                weather_adapter=self._build_weather_adapter(step),
+                weather_adapter=await self._build_weather_adapter(step),
                 **step.worker_kwargs,
             )
         if step.action == "run_postgame_worker":
@@ -336,47 +337,110 @@ class ScenarioRunner:
     # step's data is meant to be exhaustive for what it drives, not
     # silently topped up with DEMO-2's unrelated fixture content.
 
+    @staticmethod
+    def _should_fail(step: ScenarioStep, category: str) -> bool:
+        """`inject_failure=True` fails every adapter a step builds -- the
+        right tool for a single-worker step, where only one adapter is
+        ever built anyway. `fail_categories` (DEMO-5) fails only the
+        named category, the tool a multi-category step
+        (`run_pregame_worker`) needs to fail exactly one of its four
+        adapters while the other three build and succeed normally."""
+        return step.inject_failure or category in step.fail_categories
+
     def _build_odds_adapter(self, step: ScenarioStep) -> DemoOddsAdapter:
         raw = step.provider_data.get("odds", {})
         odds_by_game = {game_id: [OddsLine(**line) for line in lines] for game_id, lines in raw.items()}
-        return DemoOddsAdapter(odds_by_game=odds_by_game, fail=step.inject_failure, provider_name=_THE_ODDS_API)
+        return DemoOddsAdapter(
+            odds_by_game=odds_by_game, fail=self._should_fail(step, "odds"), provider_name=_THE_ODDS_API
+        )
 
     def _build_player_props_adapter(self, step: ScenarioStep) -> DemoPlayerPropsAdapter:
         raw = step.provider_data.get("player_props", {})
         props_by_game = {game_id: [PlayerProp(**prop) for prop in props] for game_id, props in raw.items()}
-        return DemoPlayerPropsAdapter(props_by_game=props_by_game, fail=step.inject_failure, provider_name=_THE_ODDS_API)
+        return DemoPlayerPropsAdapter(
+            props_by_game=props_by_game, fail=self._should_fail(step, "player_props"), provider_name=_THE_ODDS_API
+        )
 
     def _build_injury_adapter(self, step: ScenarioStep) -> DemoInjuryAdapter:
         raw = step.provider_data.get("injury", [])
         injuries = [InjuryReport(**report) for report in raw]
-        return DemoInjuryAdapter(injuries=injuries, fail=step.inject_failure, provider_name=_SPORTSDATAIO)
+        return DemoInjuryAdapter(
+            injuries=injuries, fail=self._should_fail(step, "injury"), provider_name=_SPORTSDATAIO
+        )
 
-    def _build_weather_adapter(self, step: ScenarioStep) -> DemoWeatherAdapter:
+    async def _resolve_internal_game_id(self, sportsdataio_provider_game_id: str) -> str | None:
+        """Weather is the one category (`app.workers.weather_worker`'s own
+        documented "no `game_provider_ids` hop" design) keyed by this
+        project's own internal `games.id`, never a provider id -- which a
+        scenario step, authored before that id is generated, has no way
+        to know statically. This is a Demo-only gap, not a production
+        one: real callers never need this lookup because they already
+        have the internal id in hand from whatever query found the game
+        in the first place. Resolves the same way any other reverse
+        lookup in this codebase already does (`game_provider_ids`,
+        `provider_name=sportsdataio`) -- no new query shape, no
+        production code touched.
+        """
+        headers = {
+            "Authorization": f"Bearer {os.environ['SUPABASE_SERVICE_ROLE_KEY']}",
+            "apikey": os.environ["SUPABASE_SERVICE_ROLE_KEY"],
+        }
+        response = await self.supabase_client.get(
+            "/rest/v1/game_provider_ids",
+            params={
+                "provider_name": "eq.sportsdataio",
+                "provider_game_id": f"eq.{sportsdataio_provider_game_id}",
+                "select": "game_id",
+            },
+            headers=headers,
+        )
+        if response.status_code != 200:
+            return None
+        rows = response.json()
+        return rows[0]["game_id"] if rows else None
+
+    async def _build_weather_adapter(self, step: ScenarioStep) -> DemoWeatherAdapter:
         raw = step.provider_data.get("weather", {})
-        weather_by_game = {game_id: WeatherConditions(**conditions) for game_id, conditions in raw.items()}
-        return DemoWeatherAdapter(weather_by_game=weather_by_game, fail=step.inject_failure, provider_name=_WEATHERAPI)
+        weather_by_game: dict[str, WeatherConditions] = {}
+        for sportsdataio_provider_game_id, conditions in raw.items():
+            internal_game_id = await self._resolve_internal_game_id(sportsdataio_provider_game_id)
+            if internal_game_id is not None:
+                weather_by_game[internal_game_id] = WeatherConditions(game_external_id=internal_game_id, **conditions)
+        return DemoWeatherAdapter(
+            weather_by_game=weather_by_game, fail=self._should_fail(step, "weather"), provider_name=_WEATHERAPI
+        )
 
     def _build_roster_adapter(self, step: ScenarioStep) -> DemoRosterAdapter:
         raw = step.provider_data.get("roster", {})
         roster_by_team = {team: [RosterEntry(**entry) for entry in entries] for team, entries in raw.items()}
-        return DemoRosterAdapter(roster_by_team=roster_by_team, fail=step.inject_failure, provider_name=_SPORTSDATAIO)
+        return DemoRosterAdapter(
+            roster_by_team=roster_by_team, fail=self._should_fail(step, "roster"), provider_name=_SPORTSDATAIO
+        )
 
     def _build_schedule_adapter(self, step: ScenarioStep) -> DemoScheduleAdapter:
         raw = step.provider_data.get("schedule", [])
         schedule = [ScheduleEntry(**entry) for entry in raw]
-        return DemoScheduleAdapter(schedule=schedule, fail=step.inject_failure, provider_name=_SPORTSDATAIO)
+        return DemoScheduleAdapter(
+            schedule=schedule, fail=self._should_fail(step, "schedule"), provider_name=_SPORTSDATAIO
+        )
 
     def _build_news_adapter(self, step: ScenarioStep) -> DemoNewsAdapter:
         raw = step.provider_data.get("news", [])
         articles = [NewsArticle(**article) for article in raw]
-        return DemoNewsAdapter(articles=articles, fail=step.inject_failure, provider_name=_NEWSAPI)
+        return DemoNewsAdapter(
+            articles=articles, fail=self._should_fail(step, "news"), provider_name=_NEWSAPI
+        )
 
     def _build_team_stats_adapter(self, step: ScenarioStep) -> DemoTeamStatsAdapter:
         raw = step.provider_data.get("team_stats", {})
         stats_by_game = {game_id: [TeamStatLine(**line) for line in lines] for game_id, lines in raw.items()}
-        return DemoTeamStatsAdapter(stats_by_game=stats_by_game, fail=step.inject_failure, provider_name=_SPORTSDATAIO)
+        return DemoTeamStatsAdapter(
+            stats_by_game=stats_by_game, fail=self._should_fail(step, "team_stats"), provider_name=_SPORTSDATAIO
+        )
 
     def _build_player_stats_adapter(self, step: ScenarioStep) -> DemoPlayerStatsAdapter:
         raw = step.provider_data.get("player_stats", {})
         stats_by_game = {game_id: [PlayerStatLine(**line) for line in lines] for game_id, lines in raw.items()}
-        return DemoPlayerStatsAdapter(stats_by_game=stats_by_game, fail=step.inject_failure, provider_name=_SPORTSDATAIO)
+        return DemoPlayerStatsAdapter(
+            stats_by_game=stats_by_game, fail=self._should_fail(step, "player_stats"), provider_name=_SPORTSDATAIO
+        )

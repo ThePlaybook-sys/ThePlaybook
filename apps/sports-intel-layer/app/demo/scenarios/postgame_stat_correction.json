@@ -1,0 +1,121 @@
+{
+  "scenario_id": "demo-postgame-stat-correction",
+  "title": "Postgame Stat Correction",
+  "description": "DEMO-5. KC @ BAL, Week 6. The existing minimal scenario only ever exercises the FIRST ('initial') postgame reconciliation checkpoint. This scenario is the first to exercise a SECOND one ('+10m'), with genuinely corrected team/player stats -- proving team_stats/player_stats' insert-only-on-CHANGE persistence (a corrected team gets a new row, an unchanged team does not), and that games.final_score is recomputed and re-written when the correction changes the score, exactly as Volume 3's own stat-correction policy describes.",
+  "version": "1.0.0",
+  "phase_requirements": ["phase_3"],
+  "initial_virtual_now": "2026-10-12T12:00:00+00:00",
+  "slate": {
+    "games": ["demo-sdio-kc-bal-w6"],
+    "teams": ["KC", "BAL"]
+  },
+  "steps": [
+    {
+      "virtual_now": "2026-10-12T12:00:00+00:00",
+      "action": "run_master_refresh",
+      "checkpoint_note": "Week 6 schedule ingested and both teams' rosters synced.",
+      "provider_data": {
+        "schedule": [
+          {
+            "game_external_id": "demo-sdio-kc-bal-w6",
+            "home_team": "KC",
+            "away_team": "BAL",
+            "scheduled_start": "2026-10-12T17:00:00+00:00",
+            "stadium": "Arrowhead Stadium",
+            "status": "scheduled",
+            "season_type": "regular",
+            "week": 6,
+            "venue_lat": 39.0489,
+            "venue_long": -94.4839,
+            "venue_type": "outdoor"
+          }
+        ],
+        "roster": {
+          "KC": [
+            {"team": "KC", "player_external_id": "demo-sdio-player-kc-qb", "player_name": "Demo Fixture QB (KC)", "position": "QB", "depth_chart_rank": 1}
+          ],
+          "BAL": [
+            {"team": "BAL", "player_external_id": "demo-sdio-player-bal-qb", "player_name": "Demo Fixture QB (BAL)", "position": "QB", "depth_chart_rank": 1}
+          ]
+        }
+      }
+    },
+    {
+      "virtual_now": "2026-10-12T20:30:00+00:00",
+      "action": "run_postgame_worker",
+      "checkpoint_note": "Game goes final: KC 27, BAL 24 -- initial team/player stats ingested, final_score recorded (the 'initial' reconciliation checkpoint).",
+      "provider_data": {
+        "schedule": [
+          {
+            "game_external_id": "demo-sdio-kc-bal-w6",
+            "home_team": "KC",
+            "away_team": "BAL",
+            "scheduled_start": "2026-10-12T17:00:00+00:00",
+            "stadium": "Arrowhead Stadium",
+            "status": "final",
+            "season_type": "regular",
+            "week": 6,
+            "venue_lat": 39.0489,
+            "venue_long": -94.4839,
+            "venue_type": "outdoor"
+          }
+        ],
+        "team_stats": {
+          "demo-sdio-kc-bal-w6": [
+            {"game_external_id": "demo-sdio-kc-bal-w6", "team": "KC", "stats": {"Score": 27, "HomeOrAway": "HOME", "total_yards": 350}},
+            {"game_external_id": "demo-sdio-kc-bal-w6", "team": "BAL", "stats": {"Score": 24, "HomeOrAway": "AWAY", "total_yards": 310}}
+          ]
+        },
+        "player_stats": {
+          "demo-sdio-kc-bal-w6": [
+            {
+              "game_external_id": "demo-sdio-kc-bal-w6",
+              "player_external_id": "demo-sdio-player-kc-qb",
+              "player_name": "Demo Fixture QB (KC)",
+              "team": "KC",
+              "stats": {"passing_yards": 240, "passing_tds": 2}
+            },
+            {
+              "game_external_id": "demo-sdio-kc-bal-w6",
+              "player_external_id": "demo-sdio-player-bal-qb",
+              "player_name": "Demo Fixture QB (BAL)",
+              "team": "BAL",
+              "stats": {"passing_yards": 210, "passing_tds": 1}
+            }
+          ]
+        }
+      }
+    },
+    {
+      "virtual_now": "2026-10-12T20:40:00+00:00",
+      "action": "run_postgame_worker",
+      "checkpoint_note": "10 minutes later (the '+10m' reconciliation checkpoint): KC's final score and total yards are corrected (27 -> 30, 350 -> 365) and the KC QB's passing yards corrected (240 -> 255). BAL's stats are re-fetched unchanged -- proving insert-only-on-CHANGE, not insert-on-every-poll. final_score updates to reflect the correction.",
+      "provider_data": {
+        "team_stats": {
+          "demo-sdio-kc-bal-w6": [
+            {"game_external_id": "demo-sdio-kc-bal-w6", "team": "KC", "stats": {"Score": 30, "HomeOrAway": "HOME", "total_yards": 365}},
+            {"game_external_id": "demo-sdio-kc-bal-w6", "team": "BAL", "stats": {"Score": 24, "HomeOrAway": "AWAY", "total_yards": 310}}
+          ]
+        },
+        "player_stats": {
+          "demo-sdio-kc-bal-w6": [
+            {
+              "game_external_id": "demo-sdio-kc-bal-w6",
+              "player_external_id": "demo-sdio-player-kc-qb",
+              "player_name": "Demo Fixture QB (KC)",
+              "team": "KC",
+              "stats": {"passing_yards": 255, "passing_tds": 2}
+            },
+            {
+              "game_external_id": "demo-sdio-kc-bal-w6",
+              "player_external_id": "demo-sdio-player-bal-qb",
+              "player_name": "Demo Fixture QB (BAL)",
+              "team": "BAL",
+              "stats": {"passing_yards": 210, "passing_tds": 1}
+            }
+          ]
+        }
+      }
+    }
+  ]
+}
