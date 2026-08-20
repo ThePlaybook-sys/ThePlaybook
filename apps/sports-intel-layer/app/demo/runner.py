@@ -212,6 +212,23 @@ class ScenarioRunner:
             await self.run_next_step()
         return self.outcomes
 
+    async def run_until_checkpoint(self) -> list[StepOutcome]:
+        """Runs steps starting from the current position until (and
+        including) the next step whose `checkpoint_note` is set, or until
+        the scenario completes or a step errors -- whichever comes first
+        (DEMO-4's "run to defined checkpoint where supported" control
+        endpoint). Returns just the outcomes produced by this call, not
+        the full run-so-far (unlike `run_to_completion`, callers of this
+        one are stepping through a scenario incrementally and only want
+        to know what just happened)."""
+        outcomes: list[StepOutcome] = []
+        while not self.is_finished:
+            outcome = await self.run_next_step()
+            outcomes.append(outcome)
+            if outcome.checkpoint_note or outcome.error:
+                break
+        return outcomes
+
     async def _dispatch(self, step: ScenarioStep) -> Any:
         if step.action == "advance_time":
             return None

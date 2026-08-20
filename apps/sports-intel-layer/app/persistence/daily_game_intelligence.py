@@ -155,6 +155,30 @@ async def read_existing_news(client: httpx.AsyncClient, headers: dict, *, game_i
     return rows[0]["news"] if rows else None
 
 
+async def read_daily_game_intelligence(client: httpx.AsyncClient, headers: dict, *, game_id: str) -> dict | None:
+    """Reads the full `daily_game_intelligence` row for one game -- unlike
+    `read_existing_news`/`read_existing_players` (narrow, single-column
+    reads for a specific write path's own passthrough need), this is a
+    general-purpose full-row read for a caller that just wants to know
+    what the real pipeline currently has (DEMO-4's Operator Dashboard,
+    Section 6 -- "prefer existing read helpers... do not invent a second
+    Demo-specific persistence/read model"). Returns `None` if no row
+    exists yet for this game, never a synthesized empty shape.
+    """
+    response = await client.get(
+        "/rest/v1/daily_game_intelligence",
+        params={"game_id": f"eq.{game_id}", "select": "*"},
+        headers=headers,
+    )
+    if response.status_code != 200:
+        raise DailyGameIntelligenceError(
+            f"failed to read daily_game_intelligence for game {game_id}: "
+            f"{response.status_code} {response.text}"
+        )
+    rows = response.json()
+    return rows[0] if rows else None
+
+
 async def read_existing_players(client: httpx.AsyncClient, headers: dict, *, game_id: str) -> object:
     """Preserves whatever `players` already holds -- Phase 3E-8's targeted
     Pregame refresh (`app.master_refresh.game_refresh.
