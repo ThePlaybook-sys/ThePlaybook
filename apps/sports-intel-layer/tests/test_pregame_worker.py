@@ -240,4 +240,8 @@ def test_pregame_worker_signature_has_no_new_adapter_client():
         "cache_backend",
         "now",
         "triggered_game_ids",
+        "odds_adapter",
+        "player_props_adapter",
+        "injury_adapter",
+        "weather_adapter",
     }

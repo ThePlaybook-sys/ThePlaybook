@@ -76,6 +76,7 @@ from datetime import date, datetime, timedelta, timezone
 
 import httpx
 
+from app.adapters.base import InjuryAdapter, OddsAdapter, PlayerPropsAdapter, WeatherAdapter
 from app.adapters.cache import CacheBackend, InMemoryCacheBackend
 from app.master_refresh.game_refresh import refresh_daily_game_intelligence_for_game
 from app.persistence.daily_game_intelligence import DailyGameIntelligenceError
@@ -135,10 +136,21 @@ async def run_pregame_worker(
     cache_backend: CacheBackend | None = None,
     now: datetime | None = None,
     triggered_game_ids: set[str] | None = None,
+    odds_adapter: OddsAdapter | None = None,
+    player_props_adapter: PlayerPropsAdapter | None = None,
+    injury_adapter: InjuryAdapter | None = None,
+    weather_adapter: WeatherAdapter | None = None,
 ) -> PregameWorkerResult:
     """Runs one Pregame Worker cycle. Always returns a
     `PregameWorkerResult`, never raises -- same finite-job shape as every
-    other specialized worker."""
+    other specialized worker.
+
+    `odds_adapter`/`player_props_adapter`/`injury_adapter`/`weather_adapter`
+    (dependency-injection seam, not Demo-specific): passed straight through
+    to the four delegated worker calls below, unchanged otherwise. `None`
+    (the default, for all four) preserves today's real-provider
+    construction and behavior unchanged -- this worker itself never
+    constructs an adapter, so there is nothing else to inject here."""
     headers = _auth_headers()
     cache_backend = cache_backend or InMemoryCacheBackend()
     now = now or datetime.now(timezone.utc)
@@ -177,24 +189,28 @@ async def run_pregame_worker(
         odds_result = await run_odds_worker(
             supabase_client=supabase_client, the_odds_api_client=the_odds_api_client,
             the_odds_api_key=the_odds_api_key, cache_backend=cache_backend, now=now, target_game_ids=target,
+            odds_adapter=odds_adapter,
         )
         _collect(odds_result, label="odds", game_id=game_id, out=category_failures)
 
         props_result = await run_player_props_worker(
             supabase_client=supabase_client, the_odds_api_client=the_odds_api_client,
             the_odds_api_key=the_odds_api_key, cache_backend=cache_backend, now=now, target_game_ids=target,
+            player_props_adapter=player_props_adapter,
         )
         _collect(props_result, label="player_props", game_id=game_id, out=category_failures)
 
         injury_result = await run_injury_worker(
             supabase_client=supabase_client, sportsdataio_client=sportsdataio_client,
             sportsdataio_api_key=sportsdataio_api_key, cache_backend=cache_backend, now=now, target_game_ids=target,
+            injury_adapter=injury_adapter,
         )
         _collect(injury_result, label="injury", game_id=game_id, out=category_failures)
 
         weather_result = await run_weather_worker(
             supabase_client=supabase_client, weatherapi_client=weatherapi_client,
             weatherapi_key=weatherapi_key, cache_backend=cache_backend, now=now, target_game_ids=target,
+            weather_adapter=weather_adapter,
         )
         _collect(weather_result, label="weather", game_id=game_id, out=category_failures)
 

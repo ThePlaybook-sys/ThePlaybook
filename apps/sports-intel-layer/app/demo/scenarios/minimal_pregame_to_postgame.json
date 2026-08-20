@@ -1,0 +1,226 @@
+{
+  "scenario_id": "demo-minimal-pregame-to-postgame",
+  "title": "Minimal Pregame-to-Postgame Walkthrough",
+  "description": "The one DEMO-3 minimal scenario: a single synthetic KC @ BAL game, built on the two real reference-taxonomy teams every environment already seeds, walked from schedule/roster ingestion through odds, player props, injuries, weather, news, and finally postgame stat ingestion -- proving the Scenario Runner can drive every real worker entrypoint via the DEMO-2 Demo*Adapter family and the DEMO-3 adapter-injection seam, end to end, through the real persistence layer. Richer/branching scenarios are DEMO-5's job.",
+  "version": "1.0.0",
+  "phase_requirements": ["phase_3"],
+  "initial_virtual_now": "2026-09-14T12:00:00+00:00",
+  "slate": {
+    "games": ["demo-sdio-kc-bal"],
+    "teams": ["KC", "BAL"]
+  },
+  "steps": [
+    {
+      "virtual_now": "2026-09-14T12:00:00+00:00",
+      "action": "run_master_refresh",
+      "checkpoint_note": "Schedule ingested (KC @ BAL, Week 2) and both teams' rosters synced.",
+      "provider_data": {
+        "schedule": [
+          {
+            "game_external_id": "demo-sdio-kc-bal",
+            "home_team": "KC",
+            "away_team": "BAL",
+            "scheduled_start": "2026-09-14T17:00:00+00:00",
+            "stadium": "Arrowhead Stadium",
+            "status": "scheduled",
+            "season_type": "regular",
+            "week": 2,
+            "venue_lat": 39.0489,
+            "venue_long": -94.4839,
+            "venue_type": "outdoor"
+          }
+        ],
+        "roster": {
+          "KC": [
+            {
+              "team": "KC",
+              "player_external_id": "demo-sdio-player-kc-qb",
+              "player_name": "Demo Fixture QB (KC)",
+              "position": "QB",
+              "depth_chart_rank": 1
+            }
+          ],
+          "BAL": [
+            {
+              "team": "BAL",
+              "player_external_id": "demo-sdio-player-bal-qb",
+              "player_name": "Demo Fixture QB (BAL)",
+              "position": "QB",
+              "depth_chart_rank": 1
+            }
+          ]
+        }
+      }
+    },
+    {
+      "virtual_now": "2026-09-14T12:10:00+00:00",
+      "action": "run_odds_worker",
+      "checkpoint_note": "Opening moneyline posted and linked to the newly-created game.",
+      "provider_data": {
+        "odds": {
+          "demo-oddsapi-kc-bal": [
+            {
+              "game_external_id": "demo-oddsapi-kc-bal",
+              "home_team": "Kansas City Chiefs",
+              "away_team": "Baltimore Ravens",
+              "commence_time": "2026-09-14T17:00:00+00:00",
+              "sportsbook": "DemoBook",
+              "market_type": "moneyline",
+              "line_data": {"home": -120, "away": 100}
+            }
+          ]
+        }
+      }
+    },
+    {
+      "virtual_now": "2026-09-14T12:20:00+00:00",
+      "action": "run_player_props_worker",
+      "checkpoint_note": "One player prop posted for the KC QB.",
+      "provider_data": {
+        "player_props": {
+          "demo-oddsapi-kc-bal": [
+            {
+              "game_external_id": "demo-oddsapi-kc-bal",
+              "home_team": "Kansas City Chiefs",
+              "away_team": "Baltimore Ravens",
+              "commence_time": "2026-09-14T17:00:00+00:00",
+              "sportsbook": "DemoBook",
+              "player_external_id": "demo-sdio-player-kc-qb",
+              "player_name": "Demo Fixture QB (KC)",
+              "prop_type": "player_pass_tds",
+              "line": 1.5,
+              "over_odds": -115,
+              "under_odds": -105
+            }
+          ]
+        }
+      }
+    },
+    {
+      "virtual_now": "2026-09-14T12:30:00+00:00",
+      "action": "run_injury_worker",
+      "checkpoint_note": "BAL's starting QB is listed questionable.",
+      "provider_data": {
+        "injury": [
+          {
+            "game_external_id": "demo-sdio-kc-bal",
+            "player_external_id": "demo-sdio-player-bal-qb",
+            "player_name": "Demo Fixture QB (BAL)",
+            "team": "BAL",
+            "status": "questionable",
+            "description": "ankle"
+          }
+        ]
+      }
+    },
+    {
+      "virtual_now": "2026-09-14T12:40:00+00:00",
+      "action": "run_news_worker",
+      "checkpoint_note": "One wire story attached to the matchup.",
+      "provider_data": {
+        "news": [
+          {
+            "headline": "Demo Wire: KC and BAL Set for Week 2 Matchup",
+            "url": "https://example.com/demo/kc-bal-week-2",
+            "source": "DemoWire",
+            "published_at": "2026-09-14T11:00:00+00:00",
+            "related_teams": ["KC", "BAL"]
+          }
+        ]
+      }
+    },
+    {
+      "virtual_now": "2026-09-14T16:55:00+00:00",
+      "action": "run_pregame_worker",
+      "checkpoint_note": "T-minus-5 trigger fires: odds/props/injury/weather re-polled together (the line moves to -125) and daily_game_intelligence is refreshed for kickoff.",
+      "provider_data": {
+        "odds": {
+          "demo-oddsapi-kc-bal": [
+            {
+              "game_external_id": "demo-oddsapi-kc-bal",
+              "home_team": "Kansas City Chiefs",
+              "away_team": "Baltimore Ravens",
+              "commence_time": "2026-09-14T17:00:00+00:00",
+              "sportsbook": "DemoBook",
+              "market_type": "moneyline",
+              "line_data": {"home": -125, "away": 105}
+            }
+          ]
+        },
+        "player_props": {
+          "demo-oddsapi-kc-bal": [
+            {
+              "game_external_id": "demo-oddsapi-kc-bal",
+              "home_team": "Kansas City Chiefs",
+              "away_team": "Baltimore Ravens",
+              "commence_time": "2026-09-14T17:00:00+00:00",
+              "sportsbook": "DemoBook",
+              "player_external_id": "demo-sdio-player-kc-qb",
+              "player_name": "Demo Fixture QB (KC)",
+              "prop_type": "player_pass_tds",
+              "line": 1.5,
+              "over_odds": -120,
+              "under_odds": -100
+            }
+          ]
+        },
+        "injury": [
+          {
+            "game_external_id": "demo-sdio-kc-bal",
+            "player_external_id": "demo-sdio-player-bal-qb",
+            "player_name": "Demo Fixture QB (BAL)",
+            "team": "BAL",
+            "status": "out",
+            "description": "ankle -- ruled out pregame"
+          }
+        ]
+      }
+    },
+    {
+      "virtual_now": "2026-09-14T20:30:00+00:00",
+      "action": "run_postgame_worker",
+      "checkpoint_note": "Game goes final: KC 27, BAL 24 -- team/player stats ingested, final_score recorded.",
+      "provider_data": {
+        "schedule": [
+          {
+            "game_external_id": "demo-sdio-kc-bal",
+            "home_team": "KC",
+            "away_team": "BAL",
+            "scheduled_start": "2026-09-14T17:00:00+00:00",
+            "stadium": "Arrowhead Stadium",
+            "status": "final",
+            "season_type": "regular",
+            "week": 2,
+            "venue_lat": 39.0489,
+            "venue_long": -94.4839,
+            "venue_type": "outdoor"
+          }
+        ],
+        "team_stats": {
+          "demo-sdio-kc-bal": [
+            {"game_external_id": "demo-sdio-kc-bal", "team": "KC", "stats": {"Score": 27, "HomeOrAway": "HOME", "total_yards": 350}},
+            {"game_external_id": "demo-sdio-kc-bal", "team": "BAL", "stats": {"Score": 24, "HomeOrAway": "AWAY", "total_yards": 310}}
+          ]
+        },
+        "player_stats": {
+          "demo-sdio-kc-bal": [
+            {
+              "game_external_id": "demo-sdio-kc-bal",
+              "player_external_id": "demo-sdio-player-kc-qb",
+              "player_name": "Demo Fixture QB (KC)",
+              "team": "KC",
+              "stats": {"passing_yards": 240, "passing_tds": 2}
+            },
+            {
+              "game_external_id": "demo-sdio-kc-bal",
+              "player_external_id": "demo-sdio-player-bal-qb",
+              "player_name": "Demo Fixture QB (BAL)",
+              "team": "BAL",
+              "stats": {"passing_yards": 210, "passing_tds": 1}
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

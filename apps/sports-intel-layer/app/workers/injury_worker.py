@@ -56,6 +56,7 @@ from datetime import date, datetime, timedelta, timezone
 
 import httpx
 
+from app.adapters.base import InjuryAdapter
 from app.adapters.cache import CacheBackend, CachingAdapter, InMemoryCacheBackend
 from app.adapters.errors import ProviderError
 from app.adapters.models import AdapterResponse, InjuryReport
@@ -143,11 +144,20 @@ async def run_injury_worker(
     now: datetime | None = None,
     last_polled_at: datetime | None = None,
     target_game_ids: list[str] | None = None,
+    injury_adapter: InjuryAdapter | None = None,
 ) -> InjuryWorkerResult:
     """Runs one Injury Worker cycle. Always returns an `InjuryWorkerResult`,
     never raises -- same finite-job shape as `run_master_refresh`/
     `run_odds_worker`/`run_player_props_worker`. `last_polled_at` is a
     single timestamp, not per-game -- see module docstring for why.
+
+    `injury_adapter` (dependency-injection seam, not Demo-specific): when
+    supplied, used instead of constructing `SportsDataIOInjuryAdapter` --
+    the upstream `game_key_for`/season/week identity resolution below still
+    runs (it's pure Supabase reads, not a provider call), it's simply
+    unused by an injected adapter that doesn't need it. `None` (the
+    default) preserves today's real-provider construction and behavior
+    unchanged.
 
     `target_game_ids` (Phase 3E-8, Decision 3): when provided and one of
     the listed games is active (not yet kicked off), that game is forced
@@ -242,7 +252,7 @@ async def run_injury_worker(
     def game_key_for(team: str, opponent: str, season_arg: str, week_arg: int) -> str | None:
         return matchup_to_provider_id.get((team, opponent, season_arg, week_arg))
 
-    injury_adapter = SportsDataIOInjuryAdapter(
+    injury_adapter = injury_adapter or SportsDataIOInjuryAdapter(
         client=sportsdataio_client,
         api_key=sportsdataio_api_key,
         current_season_week=lambda: (season, week),

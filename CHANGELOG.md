@@ -980,3 +980,29 @@ A one-line cross-reference was added to §7's `postgame_reviews` description (`o
 - PATCH, Volume-2-only bump: a new environment and a structural safety mechanism, not a change to any existing environment's behavior or any cross-volume architecture.
 
 **Full technical detail:** This entry, plus the new "Fourth environment: `demo`" paragraph in Volume 2 §5, and the DEMO-1 completion report delivered to Mac. Also logged operationally in `PROGRESS.md`'s 2026-08-19 notes.
+
+---
+
+## v4.16.2 — 2026-08-20 — PATCH
+
+**Volume affected:** Volume 2 (System Architecture) only.
+
+**Reason:** A pre-existing production bug in `app/persistence/daily_game_intelligence.py`, discovered incidentally while building DEMO-3 (the Demo Scenario Engine) — not a Demo-specific defect. `build_payload`'s player-props branch called `_freshness_status(..., category="props")`, but `CATEGORY_TTL_SECONDS` (`app/adapters/cache.py`) only defines the category as `"player_props"` (matching `app.adapters.models.DataCategory.PLAYER_PROPS`). The mismatch produced an unconditional `KeyError: 'props'` any time `daily_game_intelligence` assembly ran for a game that had an actual player-prop odds snapshot on file — a live-impacting defect in already-deployed code, never caught before because every pre-existing test in `tests/test_daily_game_intelligence_assembly.py` happened to pass `props_row=None`. Flagged to Mac before any fix was applied, per this project's stop-and-report discipline for real production defects found outside a task's own approved scope; Mac reviewed and approved fixing it immediately, with a required regression test and a search for other instances of the same naming mismatch.
+
+**Decision:**
+- `build_payload`'s props `_metadata(...)` call site: `category="props"` → `category="player_props"`.
+- The co-located `_DEFAULT_VENDOR` lookup dict (used by the same `category` argument, for the assembled metadata's `source` field) had its `"props"` key renamed to `"player_props"` to match — both dicts are keyed by the identical `category` value passed into `_metadata`, so leaving one unrenamed would have just moved the `KeyError` rather than fixing it.
+- Searched the full `apps/sports-intel-layer` codebase for any other `category="props"` / `CATEGORY_TTL_SECONDS["props"]` occurrence — none found; this was the only call site with the mismatch.
+- No alias added to `CATEGORY_TTL_SECONDS` for backward compatibility — direct inspection found no other real caller depends on a bare `"props"` key, so an alias would only have hidden the bug's real cause rather than fixing it, per Mac's explicit instruction.
+
+**Alternatives considered:**
+- Adding `"props"` as a second key in `CATEGORY_TTL_SECONDS` pointing at the same TTL value, instead of renaming the call site — rejected per Mac's explicit instruction, since it would paper over the naming inconsistency rather than correcting it, and nothing else in the codebase actually needs a `"props"` key.
+- Leaving the bug unfixed and working around it only inside DEMO-3's own scenario (e.g. never letting a props snapshot exist when Pregame Worker's targeted refresh runs) — rejected; this is a real production defect independent of Demo Mode, and DEMO-3's own approved scope is to exercise the *real* pipeline, not a pipeline with a known bug quietly routed around.
+
+**Expected impact:**
+- `apps/sports-intel-layer/app/persistence/daily_game_intelligence.py` (two-line fix, with an explanatory comment on `_DEFAULT_VENDOR` recording why the two dicts must share the same category vocabulary) and one new regression test, `tests/test_daily_game_intelligence_assembly.py::test_props_row_present_assembles_without_raising` (asserts the corrected payload's `props.status`/`props.source`, that `CATEGORY_TTL_SECONDS["player_props"]` genuinely drives the freshness computation — verified by mutating it and observing the status flip — and that the old `category="props"` value still raises `KeyError`, so the fix isn't a coincidental pass).
+- Full regression suite green after the fix (561/561, including this new test and DEMO-3's own new tests from the same work session).
+- No live SportsDataIO/The Odds API/WeatherAPI/NewsAPI/GNews calls; no schema change; no Railway/Supabase infrastructure mutation; dev/staging/production untouched (a code-only fix, not yet deployed as of this entry).
+- PATCH, Volume-2-only bump: corrects a real availability defect in already-shipped 3E-2/3E-8 assembly code; no new capability, no architecture change, no schema change.
+
+**Full technical detail:** This entry, plus `PROGRESS.md`'s 2026-08-20 DEMO-3 entry (which documents this fix as a dated sub-note distinct from DEMO-3's own narrative, per Mac's instruction) and the DEMO-3 completion report delivered to Mac.

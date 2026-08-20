@@ -92,9 +92,20 @@ from app.adapters.cache import CATEGORY_TTL_SECONDS
 #: Volume 2 §8's named default vendor per category -- used only as the
 #: `source` label in assembled metadata, since the snapshot tables
 #: themselves carry no provider attribution (see module docstring).
+#: Keyed identically to `CATEGORY_TTL_SECONDS` -- both are looked up by the
+#: same `category` argument in `_metadata` below, so they must agree on
+#: the normalized category name (`app.adapters.models.DataCategory.
+#: PLAYER_PROPS` is `"player_props"`, never the bare `"props"` this dict
+#: and `build_payload`'s own `category="props"` call site both used to say
+#: -- a pre-existing bug, confirmed 2026-08-20 to have never been
+#: exercised by any prior test: `_freshness_status` raised `KeyError:
+#: 'props'` the first time this module's props branch ever ran against a
+#: real (non-null) `props_row`, which happened only once DEMO-3's
+#: scenario-runner integration test drove the full Pregame Worker ->
+#: targeted daily_game_intelligence refresh path end to end).
 _DEFAULT_VENDOR = {
     "odds": "the_odds_api",
-    "props": "the_odds_api",
+    "player_props": "the_odds_api",
     "injuries": "sportsdataio",
     "weather": "weatherapi",
 }
@@ -203,7 +214,7 @@ def build_payload(
         "props": (
             _metadata(
                 {"sportsbook": props_row["sportsbook"], "market_type": props_row["market_type"], "line_data": props_row["line_data"]},
-                category="props",
+                category="player_props",
                 captured_at=props_row["captured_at"],
                 now=now,
             )

@@ -751,4 +751,7 @@ def test_run_postgame_worker_signature_has_no_other_provider_client():
         "sportsdataio_api_key",
         "now",
         "reconciliation_state",
+        "schedule_adapter",
+        "team_stats_adapter",
+        "player_stats_adapter",
     }

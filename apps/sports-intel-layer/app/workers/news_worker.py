@@ -143,6 +143,7 @@ from datetime import date, datetime, timedelta, timezone
 
 import httpx
 
+from app.adapters.base import NewsAdapter
 from app.adapters.cache import CacheBackend, CachingAdapter, InMemoryCacheBackend
 from app.adapters.errors import ProviderError
 from app.adapters.models import AdapterResponse, NewsArticle
@@ -231,11 +232,17 @@ async def run_news_worker(
     cache_backend: CacheBackend | None = None,
     now: datetime | None = None,
     last_polled_at: dict[str, datetime] | None = None,
+    news_adapter: NewsAdapter | None = None,
 ) -> NewsWorkerResult:
     """Runs one News Worker cycle. Always returns a `NewsWorkerResult`,
     never raises -- same finite-job shape as every other specialized
     worker. `last_polled_at` is keyed by resolved `teams.id` (the entity
-    this worker actually polls -- see module docstring)."""
+    this worker actually polls -- see module docstring).
+
+    `news_adapter` (dependency-injection seam, not Demo-specific): when
+    supplied, used instead of constructing `NewsAPINewsAdapter`. `None`
+    (the default) preserves today's real-provider construction and
+    behavior unchanged."""
     headers = _auth_headers()
     cache_backend = cache_backend or InMemoryCacheBackend()
     now = now or datetime.now(timezone.utc)
@@ -284,7 +291,7 @@ async def run_news_worker(
         else:
             skipped_not_due += 1
 
-    news_adapter = NewsAPINewsAdapter(client=newsapi_client, api_key=newsapi_key)
+    news_adapter = news_adapter or NewsAPINewsAdapter(client=newsapi_client, api_key=newsapi_key)
     caching = CachingAdapter(news_adapter, cache_backend, ttl_seconds=_POLL_INTERVAL_SECONDS)
 
     team_articles: dict[str, list[NewsArticle]] = {}

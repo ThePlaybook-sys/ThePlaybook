@@ -49,6 +49,7 @@ from datetime import date, datetime, timedelta, timezone
 
 import httpx
 
+from app.adapters.base import OddsAdapter
 from app.adapters.cache import CacheBackend, CachingAdapter, InMemoryCacheBackend
 from app.adapters.errors import ProviderError
 from app.adapters.models import AdapterResponse, OddsLine
@@ -111,9 +112,17 @@ async def run_odds_worker(
     now: datetime | None = None,
     last_polled_at: dict[str, datetime] | None = None,
     target_game_ids: list[str] | None = None,
+    odds_adapter: OddsAdapter | None = None,
 ) -> OddsWorkerResult:
     """Runs one Odds Worker cycle. Always returns an `OddsWorkerResult`,
     never raises -- same finite-job shape as `run_master_refresh`.
+
+    `odds_adapter` (dependency-injection seam, not Demo-specific): when
+    supplied, this exact adapter instance is used instead of constructing
+    `TheOddsApiOddsAdapter` -- e.g. Demo Mode's `DemoOddsAdapter`, or any
+    other `OddsAdapter` implementation. `None` (the default) preserves
+    today's real-provider construction and behavior unchanged for every
+    existing caller.
 
     `last_polled_at` (game_id -> last successful poll time) is injected
     rather than read from any persisted state, since this phase does not
@@ -178,7 +187,7 @@ async def run_odds_worker(
     due_windows = [classify_window(now=now, kickoff=_parse_datetime(g["scheduled_start"])) for g in due_games]
     dynamic_ttl = min(ttl_seconds(w) for w in due_windows)
 
-    odds_adapter = TheOddsApiOddsAdapter(client=the_odds_api_client, api_key=the_odds_api_key)
+    odds_adapter = odds_adapter or TheOddsApiOddsAdapter(client=the_odds_api_client, api_key=the_odds_api_key)
     caching = CachingAdapter(odds_adapter, cache_backend, ttl_seconds=dynamic_ttl)
     try:
         response: AdapterResponse[list[OddsLine]] = await caching.call(

@@ -621,4 +621,5 @@ async def test_worker_signature_has_no_sportsdataio_or_weatherapi_client(monkeyp
         "cache_backend",
         "now",
         "last_polled_at",
+        "news_adapter",
     }
