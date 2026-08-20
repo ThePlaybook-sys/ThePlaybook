@@ -69,6 +69,7 @@ from datetime import date, datetime, timedelta, timezone
 
 import httpx
 
+from app.adapters.base import WeatherAdapter
 from app.adapters.cache import CacheBackend, CachingAdapter, InMemoryCacheBackend
 from app.adapters.errors import ProviderError
 from app.adapters.models import AdapterResponse, WeatherConditions
@@ -154,11 +155,17 @@ async def run_weather_worker(
     now: datetime | None = None,
     last_polled_at: dict[str, datetime] | None = None,
     target_game_ids: list[str] | None = None,
+    weather_adapter: WeatherAdapter | None = None,
 ) -> WeatherWorkerResult:
     """Runs one Weather Worker cycle. Always returns a `WeatherWorkerResult`,
     never raises -- same finite-job shape as every other specialized
     worker. `last_polled_at` is per-game (matching Odds/Player Props, since
     WeatherAPI's endpoint is per-game like theirs, not bulk like Injury's).
+
+    `weather_adapter` (dependency-injection seam, not Demo-specific): when
+    supplied, used instead of constructing `WeatherAPIWeatherAdapter`.
+    `None` (the default) preserves today's real-provider construction and
+    behavior unchanged.
 
     `target_game_ids` (Phase 3E-8, Decision 3): when provided, restricts
     this run to exactly these candidate games, treated as due
@@ -232,7 +239,7 @@ async def run_weather_worker(
             games_skipped_unresolved_location=skipped_unresolved_location,
         )
 
-    weather_adapter = WeatherAPIWeatherAdapter(
+    weather_adapter = weather_adapter or WeatherAPIWeatherAdapter(
         client=weatherapi_client,
         api_key=weatherapi_key,
         location_for_game=lambda game_id: location_by_game_id[game_id],

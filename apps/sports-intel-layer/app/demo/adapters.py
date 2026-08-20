@@ -26,6 +26,29 @@ module ever knowing about scenarios, steps, or a virtual clock. A `fail`
 flag (mirroring the existing `tests/adapters/fakes.py` fakes' own
 convention) lets a caller -- eventually the scenario runner -- deterministically
 trigger the same `ProviderUnavailableError` path a real outage would.
+
+`provider_name` (DEMO-3 addition, discovered necessary only once these
+adapters were actually exercised end-to-end through the real persistence
+layer, not a DEMO-2 design change): every constructor accepts an optional
+`provider_name`, defaulting to `DEMO_PROVIDER_NAME` -- DEMO-2's own tests
+never pass it and keep seeing `"demo"`, unchanged. The reason it exists at
+all: several REAL persistence modules (`app.persistence.game_identity`,
+`.team_identity`, and the workers' own inline reverse-resolvers) key
+`game_provider_ids`/`team_provider_ids` rows by the literal vendor name
+("sportsdataio", "the_odds_api") -- that string comes from
+`AdapterResponse.source`, i.e. `adapter.provider_name`, not from a
+category name. A `Demo*Adapter` that always reported `"demo"` would write
+identity-linkage rows under a provider name none of those real,
+unmodified lookups ever query for, silently breaking cross-worker
+resolution (confirmed by the DEMO-3 scenario-runner integration test
+before this was added -- see that test file's own note). The fix lives
+entirely here, in the Demo adapter construction, not in any real
+persistence module or worker: `app.demo.runner.ScenarioRunner` passes the
+real vendor's own provider name for the categories where identity linkage
+depends on it (schedule/roster/injury/team_stats/player_stats ->
+"sportsdataio", odds/player_props -> "the_odds_api"), exactly mirroring
+what `SportsDataIOScheduleAdapter`/`TheOddsApiOddsAdapter`/etc. already
+report themselves.
 """
 from __future__ import annotations
 
@@ -57,33 +80,49 @@ from app.adapters.models import (
 )
 from app.demo import starter_data
 
-#: Shared provider_name for every Demo*Adapter -- surfaced only as
-#: AdapterResponse.source metadata (per base.py's own docstring), never as
-#: part of the data itself. One consistent value across categories, matching
-#: how a real vendor's own adapters all share that vendor's identity.
+#: Default provider_name for every Demo*Adapter when a caller doesn't
+#: override it -- surfaced only as AdapterResponse.source metadata (per
+#: base.py's own docstring), never as part of the data itself.
 DEMO_PROVIDER_NAME = "demo"
 
 
 class DemoOddsAdapter(OddsAdapter):
-    provider_name = DEMO_PROVIDER_NAME
 
-    def __init__(self, *, odds_by_game: dict[str, list[OddsLine]] | None = None, fail: bool = False):
+    def __init__(
+        self, *, odds_by_game: dict[str, list[OddsLine]] | None = None, fail: bool = False,
+        provider_name: str = DEMO_PROVIDER_NAME,
+    ):
         self._odds_by_game = odds_by_game if odds_by_game is not None else starter_data.default_odds_by_game()
         self._fail = fail
+        self.provider_name = provider_name
 
     async def fetch_odds(self, game_external_ids: list[str]) -> AdapterResponse[list[OddsLine]]:
+        """Mirrors `TheOddsApiOddsAdapter.fetch_odds`'s own documented
+        discovery-mode contract exactly (Phase 3E-4B/C): an empty
+        `game_external_ids` returns every line across every scripted game,
+        unfiltered -- the real bulk endpoint has no per-game filter and
+        always returns the full slate, so Odds Worker's discovery-mode
+        call (`fetch_odds([])`) depends on that exact behavior. A non-empty
+        list filters to just those games, matching the real adapter's own
+        post-fetch filtering for a targeted call."""
         if self._fail:
             raise ProviderUnavailableError("simulated demo outage", provider=self.provider_name)
-        lines = [line for game_id in game_external_ids for line in self._odds_by_game.get(game_id, [])]
+        if not game_external_ids:
+            lines = [line for game_lines in self._odds_by_game.values() for line in game_lines]
+        else:
+            lines = [line for game_id in game_external_ids for line in self._odds_by_game.get(game_id, [])]
         return AdapterResponse(value=lines, source=self.provider_name)
 
 
 class DemoPlayerPropsAdapter(PlayerPropsAdapter):
-    provider_name = DEMO_PROVIDER_NAME
 
-    def __init__(self, *, props_by_game: dict[str, list[PlayerProp]] | None = None, fail: bool = False):
+    def __init__(
+        self, *, props_by_game: dict[str, list[PlayerProp]] | None = None, fail: bool = False,
+        provider_name: str = DEMO_PROVIDER_NAME,
+    ):
         self._props_by_game = props_by_game if props_by_game is not None else starter_data.default_player_props_by_game()
         self._fail = fail
+        self.provider_name = provider_name
 
     async def fetch_player_props(self, game_external_ids: list[str]) -> AdapterResponse[list[PlayerProp]]:
         if self._fail:
@@ -93,11 +132,14 @@ class DemoPlayerPropsAdapter(PlayerPropsAdapter):
 
 
 class DemoInjuryAdapter(InjuryAdapter):
-    provider_name = DEMO_PROVIDER_NAME
 
-    def __init__(self, *, injuries: list[InjuryReport] | None = None, fail: bool = False):
+    def __init__(
+        self, *, injuries: list[InjuryReport] | None = None, fail: bool = False,
+        provider_name: str = DEMO_PROVIDER_NAME,
+    ):
         self._injuries = injuries if injuries is not None else starter_data.default_injuries()
         self._fail = fail
+        self.provider_name = provider_name
 
     async def fetch_injuries(self, team: str | None = None) -> AdapterResponse[list[InjuryReport]]:
         if self._fail:
@@ -107,11 +149,14 @@ class DemoInjuryAdapter(InjuryAdapter):
 
 
 class DemoWeatherAdapter(WeatherAdapter):
-    provider_name = DEMO_PROVIDER_NAME
 
-    def __init__(self, *, weather_by_game: dict[str, WeatherConditions] | None = None, fail: bool = False):
+    def __init__(
+        self, *, weather_by_game: dict[str, WeatherConditions] | None = None, fail: bool = False,
+        provider_name: str = DEMO_PROVIDER_NAME,
+    ):
         self._weather_by_game = weather_by_game if weather_by_game is not None else starter_data.default_weather_by_game()
         self._fail = fail
+        self.provider_name = provider_name
 
     async def fetch_weather(self, game_external_id: str, kickoff: datetime) -> AdapterResponse[WeatherConditions]:
         if self._fail:
@@ -124,11 +169,14 @@ class DemoWeatherAdapter(WeatherAdapter):
 
 
 class DemoRosterAdapter(RosterAdapter):
-    provider_name = DEMO_PROVIDER_NAME
 
-    def __init__(self, *, roster_by_team: dict[str, list[RosterEntry]] | None = None, fail: bool = False):
+    def __init__(
+        self, *, roster_by_team: dict[str, list[RosterEntry]] | None = None, fail: bool = False,
+        provider_name: str = DEMO_PROVIDER_NAME,
+    ):
         self._roster_by_team = roster_by_team if roster_by_team is not None else starter_data.default_roster_by_team()
         self._fail = fail
+        self.provider_name = provider_name
 
     async def fetch_roster(self, team: str) -> AdapterResponse[list[RosterEntry]]:
         if self._fail:
@@ -138,11 +186,14 @@ class DemoRosterAdapter(RosterAdapter):
 
 
 class DemoScheduleAdapter(ScheduleAdapter):
-    provider_name = DEMO_PROVIDER_NAME
 
-    def __init__(self, *, schedule: list[ScheduleEntry] | None = None, fail: bool = False):
+    def __init__(
+        self, *, schedule: list[ScheduleEntry] | None = None, fail: bool = False,
+        provider_name: str = DEMO_PROVIDER_NAME,
+    ):
         self._schedule = schedule if schedule is not None else starter_data.default_schedule()
         self._fail = fail
+        self.provider_name = provider_name
 
     async def fetch_schedule(self, season_external_id: str) -> AdapterResponse[list[ScheduleEntry]]:
         if self._fail:
@@ -151,11 +202,14 @@ class DemoScheduleAdapter(ScheduleAdapter):
 
 
 class DemoNewsAdapter(NewsAdapter):
-    provider_name = DEMO_PROVIDER_NAME
 
-    def __init__(self, *, articles: list[NewsArticle] | None = None, fail: bool = False):
+    def __init__(
+        self, *, articles: list[NewsArticle] | None = None, fail: bool = False,
+        provider_name: str = DEMO_PROVIDER_NAME,
+    ):
         self._articles = articles if articles is not None else starter_data.default_news()
         self._fail = fail
+        self.provider_name = provider_name
 
     async def fetch_news(self, team: str | None = None) -> AdapterResponse[list[NewsArticle]]:
         if self._fail:
@@ -165,11 +219,14 @@ class DemoNewsAdapter(NewsAdapter):
 
 
 class DemoTeamStatsAdapter(TeamStatsAdapter):
-    provider_name = DEMO_PROVIDER_NAME
 
-    def __init__(self, *, stats_by_game: dict[str, list[TeamStatLine]] | None = None, fail: bool = False):
+    def __init__(
+        self, *, stats_by_game: dict[str, list[TeamStatLine]] | None = None, fail: bool = False,
+        provider_name: str = DEMO_PROVIDER_NAME,
+    ):
         self._stats_by_game = stats_by_game if stats_by_game is not None else starter_data.default_team_stats_by_game()
         self._fail = fail
+        self.provider_name = provider_name
 
     async def fetch_team_stats(self, game_external_id: str) -> AdapterResponse[list[TeamStatLine]]:
         if self._fail:
@@ -179,11 +236,14 @@ class DemoTeamStatsAdapter(TeamStatsAdapter):
 
 
 class DemoPlayerStatsAdapter(PlayerStatsAdapter):
-    provider_name = DEMO_PROVIDER_NAME
 
-    def __init__(self, *, stats_by_game: dict[str, list[PlayerStatLine]] | None = None, fail: bool = False):
+    def __init__(
+        self, *, stats_by_game: dict[str, list[PlayerStatLine]] | None = None, fail: bool = False,
+        provider_name: str = DEMO_PROVIDER_NAME,
+    ):
         self._stats_by_game = stats_by_game if stats_by_game is not None else starter_data.default_player_stats_by_game()
         self._fail = fail
+        self.provider_name = provider_name
 
     async def fetch_player_stats(self, game_external_id: str) -> AdapterResponse[list[PlayerStatLine]]:
         if self._fail:

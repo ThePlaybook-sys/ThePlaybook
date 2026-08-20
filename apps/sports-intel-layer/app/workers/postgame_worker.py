@@ -98,6 +98,7 @@ from datetime import date, datetime, timedelta, timezone
 
 import httpx
 
+from app.adapters.base import PlayerStatsAdapter, ScheduleAdapter, TeamStatsAdapter
 from app.adapters.errors import ProviderError
 from app.adapters.models import AdapterResponse, PlayerStatLine, ScheduleEntry, TeamStatLine
 from app.adapters.providers.sportsdataio import (
@@ -188,14 +189,22 @@ async def _detect_newly_final_games(
     season: str,
     window_start: date,
     window_end: date,
+    schedule_adapter: ScheduleAdapter | None = None,
 ) -> None:
     """Re-polls Schedule (reused adapter/persistence, see module
     docstring) and PATCHes any status transition -- including into
     'final', now that `_SCHEDULE_STATUS_MAP` supports it. Scoped to this
     worker's own backward-looking window before persisting, so this
     worker never creates or updates a game outside its own concern (Master
-    Refresh remains the only creator of new `games` rows)."""
-    schedule_adapter = SportsDataIOScheduleAdapter(client=sportsdataio_client, api_key=sportsdataio_api_key)
+    Refresh remains the only creator of new `games` rows).
+
+    `schedule_adapter` (dependency-injection seam, not Demo-specific): when
+    supplied, used instead of constructing `SportsDataIOScheduleAdapter`.
+    `None` (the default) preserves today's real-provider construction and
+    behavior unchanged."""
+    schedule_adapter = schedule_adapter or SportsDataIOScheduleAdapter(
+        client=sportsdataio_client, api_key=sportsdataio_api_key
+    )
     response: AdapterResponse[list[ScheduleEntry]] = await schedule_adapter.fetch_schedule(season)
     in_window = [
         entry
@@ -215,6 +224,8 @@ async def _ingest_final_stats_for_game(
     game: dict,
     *,
     season: str,
+    team_stats_adapter: TeamStatsAdapter | None = None,
+    player_stats_adapter: PlayerStatsAdapter | None = None,
 ) -> tuple[int, list[str]]:
     """Fetches and persists one game's final team/player stats and derived
     final_score. Reuses `SportsDataIOTeamStatsAdapter`/
@@ -222,6 +233,12 @@ async def _ingest_final_stats_for_game(
     stats-fetch pipeline. Structured to be callable identically from a
     future real `GameFinished` event handler (see module docstring).
     Returns (games_touched, unresolved_players).
+
+    `team_stats_adapter`/`player_stats_adapter` (dependency-injection seam,
+    not Demo-specific): when supplied, used instead of constructing
+    `SportsDataIOTeamStatsAdapter`/`SportsDataIOPlayerStatsAdapter`. `None`
+    (the default, for both) preserves today's real-provider construction
+    and behavior unchanged.
     """
     game_id = game["id"]
     week = game["week"]
@@ -236,10 +253,10 @@ async def _ingest_final_stats_for_game(
     def season_week_for_game(_game_external_id: str) -> tuple[str, int]:
         return season, week
 
-    team_stats_adapter = SportsDataIOTeamStatsAdapter(
+    team_stats_adapter = team_stats_adapter or SportsDataIOTeamStatsAdapter(
         client=sportsdataio_client, api_key=sportsdataio_api_key, season_week_for_game=season_week_for_game,
     )
-    player_stats_adapter = SportsDataIOPlayerStatsAdapter(
+    player_stats_adapter = player_stats_adapter or SportsDataIOPlayerStatsAdapter(
         client=sportsdataio_client, api_key=sportsdataio_api_key, season_week_for_game=season_week_for_game,
     )
 
@@ -271,12 +288,21 @@ async def run_postgame_worker(
     sportsdataio_api_key: str,
     now: datetime | None = None,
     reconciliation_state: dict[str, ReconciliationGameState] | None = None,
+    schedule_adapter: ScheduleAdapter | None = None,
+    team_stats_adapter: TeamStatsAdapter | None = None,
+    player_stats_adapter: PlayerStatsAdapter | None = None,
 ) -> PostgameWorkerResult:
     """Runs one Postgame Worker cycle. Always returns a
     `PostgameWorkerResult`, never raises -- same finite-job shape as every
     other specialized worker. `reconciliation_state` is caller-supplied
     and mutated in place (mirroring every other worker's `last_polled_at`
-    convention -- no worker-run-history persistence layer exists yet)."""
+    convention -- no worker-run-history persistence layer exists yet).
+
+    `schedule_adapter`/`team_stats_adapter`/`player_stats_adapter`
+    (dependency-injection seam, not Demo-specific): passed straight through
+    to `_detect_newly_final_games`/`_ingest_final_stats_for_game` below.
+    `None` (the default, for all three) preserves today's real-provider
+    construction and behavior unchanged."""
     headers = _auth_headers()
     now = now or datetime.now(timezone.utc)
     reconciliation_state = reconciliation_state if reconciliation_state is not None else {}
@@ -294,6 +320,7 @@ async def run_postgame_worker(
         await _detect_newly_final_games(
             supabase_client, headers, sportsdataio_client, sportsdataio_api_key,
             season=season, window_start=window_start, window_end=window_end,
+            schedule_adapter=schedule_adapter,
         )
     except (ProviderError, SchedulePersistenceError) as exc:
         return PostgameWorkerResult(status="failed", error=f"Schedule status re-poll failed: {exc}")
@@ -336,6 +363,7 @@ async def run_postgame_worker(
         try:
             _, unresolved = await _ingest_final_stats_for_game(
                 supabase_client, headers, sportsdataio_client, sportsdataio_api_key, game, season=season,
+                team_stats_adapter=team_stats_adapter, player_stats_adapter=player_stats_adapter,
             )
             unresolved_players.extend(unresolved)
             games_reconciled.append(game_id)

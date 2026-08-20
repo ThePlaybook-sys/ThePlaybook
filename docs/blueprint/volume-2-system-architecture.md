@@ -1,8 +1,9 @@
 # The Playbook — Volume 2
 ## System Architecture, Backend Design, Railway Deployment, API Strategy, AI Orchestration, DevOps
 
-**Version:** v4.16.1
-**Last updated:** 2026-08-19
+**Version:** v4.16.2
+**Last updated:** 2026-08-20
+**v4.16.2 note (PATCH):** §8's `daily_game_intelligence` player-props assembly had a pre-existing bug, discovered incidentally while building DEMO-3 (not a Demo-specific defect): `build_payload` looked up freshness by `category="props"`, but `app.adapters.cache.CATEGORY_TTL_SECONDS` only defines `"player_props"` — an unconditional `KeyError` any time a game with an actual player-prop snapshot went through assembly. Fixed at the one call site plus the co-located `_DEFAULT_VENDOR` lookup dict it shares a `category` argument with; no schema change, no new capability. See `CHANGELOG.md` v4.16.2 entry for full reasoning, including why it was never caught before (every pre-existing test passed `props_row=None`).
 **v4.16.1 note (PATCH):** §5 documents the new `demo` Railway environment and isolated `theplaybook-demo` Supabase project (DEMO-1, per the approved `docs/blueprint/demo-simulation-environment.md`), plus the startup isolation guard (`app/environment_safety.py`) that hard-fails `sports-intel-layer` if the environment tag and database target ever disagree. No change to the existing dev/staging/production environment strategy. See `CHANGELOG.md` v4.16.1 entry for full reasoning.
 **Depends on:** Volume 1 (v3.0) — subscription tiers, personas, and core product principles are treated as fixed constraints here
 **v4.0 note:** Core Architecture Principles added (§1.1) as the explicit lens for future decisions. Recommendation Worker added (§4.4) — proactive recommendation generation coexisting with on-demand. Environment data-source policy formalized (§5). See `CHANGELOG.md` v4.0 entry for full reasoning.

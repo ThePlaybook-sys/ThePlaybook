@@ -40,6 +40,7 @@ from datetime import date, datetime, timedelta, timezone
 
 import httpx
 
+from app.adapters.base import RosterAdapter, ScheduleAdapter
 from app.adapters.cache import CacheBackend, CachingAdapter, InMemoryCacheBackend
 from app.adapters.errors import ProviderError
 from app.adapters.models import AdapterResponse, RosterEntry, ScheduleEntry
@@ -91,7 +92,14 @@ async def run_master_refresh(
     cache_backend: CacheBackend | None = None,
     today: date | None = None,
     league_code: str = "nfl",
+    schedule_adapter: ScheduleAdapter | None = None,
+    roster_adapter: RosterAdapter | None = None,
 ) -> MasterRefreshResult:
+    """`schedule_adapter`/`roster_adapter` (dependency-injection seam, not
+    Demo-specific): when supplied, used instead of constructing
+    `SportsDataIOScheduleAdapter`/`SportsDataIORosterAdapter`. `None` (the
+    default, for both) preserves today's real-provider construction and
+    behavior unchanged for every existing caller."""
     headers = _auth_headers()
     cache_backend = cache_backend or InMemoryCacheBackend()
     today = today or datetime.now(timezone.utc).date()
@@ -104,7 +112,9 @@ async def run_master_refresh(
     except SeasonResolutionError as exc:
         return MasterRefreshResult(status="failed", error=f"season resolution failed: {exc}")
 
-    schedule_adapter = SportsDataIOScheduleAdapter(client=sportsdataio_client, api_key=sportsdataio_api_key)
+    schedule_adapter = schedule_adapter or SportsDataIOScheduleAdapter(
+        client=sportsdataio_client, api_key=sportsdataio_api_key
+    )
     schedule_caching = CachingAdapter(schedule_adapter, cache_backend, ttl_seconds=_SCHEDULE_TTL_SECONDS)
     try:
         schedule_response: AdapterResponse[list[ScheduleEntry]] = await schedule_caching.call(
@@ -157,7 +167,7 @@ async def run_master_refresh(
 
     # Step 5: roster fetch, per-team isolated -- NON-BLOCKING.
     teams_in_slate = sorted({g["home_team"] for g in games} | {g["away_team"] for g in games})
-    roster_adapter = SportsDataIORosterAdapter(
+    roster_adapter = roster_adapter or SportsDataIORosterAdapter(
         client=sportsdataio_client, api_key=sportsdataio_api_key, cache_backend=cache_backend
     )
     roster_caching = CachingAdapter(roster_adapter, cache_backend, ttl_seconds=_ROSTER_TTL_SECONDS)

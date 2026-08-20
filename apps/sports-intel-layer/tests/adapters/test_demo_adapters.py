@@ -102,12 +102,6 @@ async def test_deterministic_input_produces_deterministic_output(adapter, method
 
 
 @pytest.mark.asyncio
-async def test_empty_game_list_returns_empty_odds():
-    response = await DemoOddsAdapter().fetch_odds([])
-    assert response.value == []
-
-
-@pytest.mark.asyncio
 async def test_empty_game_list_returns_empty_player_props():
     response = await DemoPlayerPropsAdapter().fetch_player_props([])
     assert response.value == []
@@ -123,6 +117,20 @@ async def test_unknown_team_returns_empty_roster_not_an_error():
 async def test_unknown_game_returns_empty_team_stats_not_an_error():
     response = await DemoTeamStatsAdapter().fetch_team_stats("game-that-does-not-exist")
     assert response.value == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.asyncio
+async def test_empty_game_list_is_discovery_mode_not_empty_result_for_odds():
+    # DEMO-3 corrective fix: mirrors TheOddsApiOddsAdapter.fetch_odds's own
+    # documented discovery-mode contract (Phase 3E-4B/C) -- an empty
+    # game_external_ids list must return every scripted game's lines,
+    # unfiltered, not an empty list. Odds Worker's real discovery-mode call
+    # (`fetch_odds([])`) depends on this exact behavior; a naive "empty
+    # input -> empty output" adapter breaks it silently.
+    response = await DemoOddsAdapter().fetch_odds([])
+    game_ids_present = {line.game_external_id for line in response.value}
+    assert game_ids_present == {starter_data.GAME_1, starter_data.GAME_2}
 
 
 @pytest.mark.asyncio

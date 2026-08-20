@@ -52,6 +52,7 @@ from datetime import date, datetime, timedelta, timezone
 
 import httpx
 
+from app.adapters.base import PlayerPropsAdapter
 from app.adapters.cache import CacheBackend, CachingAdapter, InMemoryCacheBackend
 from app.adapters.errors import ProviderError
 from app.adapters.models import AdapterResponse, PlayerProp
@@ -105,6 +106,7 @@ async def run_player_props_worker(
     now: datetime | None = None,
     last_polled_at: dict[str, datetime] | None = None,
     target_game_ids: list[str] | None = None,
+    player_props_adapter: PlayerPropsAdapter | None = None,
 ) -> PlayerPropsWorkerResult:
     """Runs one Player Props Worker cycle. Always returns a
     `PlayerPropsWorkerResult`, never raises -- same finite-job shape as
@@ -112,6 +114,11 @@ async def run_player_props_worker(
     docstring for `last_polled_at`'s meaning (identical to the Odds
     Worker's). `target_game_ids` (Phase 3E-8, Decision 3) is also
     identical to `run_odds_worker`'s -- see that function's docstring.
+
+    `player_props_adapter` (dependency-injection seam, not Demo-specific):
+    when supplied, used instead of constructing
+    `TheOddsApiPlayerPropsAdapter`. `None` (the default) preserves today's
+    real-provider construction and behavior unchanged.
     """
     headers = _auth_headers()
     cache_backend = cache_backend or InMemoryCacheBackend()
@@ -193,7 +200,9 @@ async def run_player_props_worker(
     # already-fetched props down with it. It also lets each game's cache
     # entry expire on its own window's TTL, rather than every due game
     # sharing one batch-wide minimum TTL.
-    props_adapter = TheOddsApiPlayerPropsAdapter(client=the_odds_api_client, api_key=the_odds_api_key)
+    props_adapter = player_props_adapter or TheOddsApiPlayerPropsAdapter(
+        client=the_odds_api_client, api_key=the_odds_api_key
+    )
 
     all_props: list[PlayerProp] = []
     provider_source = _PROVIDER_NAME
