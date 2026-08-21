@@ -1038,3 +1038,22 @@ A one-line cross-reference was added to §7's `postgame_reviews` description (`o
 - MAJOR, two-volume bump: a coordinated sourcing-strategy and agent-design-principle decision spanning Volume 2 and Volume 4, per the scheme's own definition.
 
 **Full technical detail:** This entry, plus Volume 2 §8's new vendor-strategy paragraph, Volume 4's new §1.1, the new Technical Debt & Feature Backlog entry in the engineering roadmap, and `PROGRESS.md`'s corresponding Phase 4 notes entry (2026-08-20).
+
+---
+
+## v4.13 (Volume 3) — 2026-08-21 — MINOR
+
+**Volume affected:** Volume 3 (Database Architecture) only.
+
+**Reason:** Milestone 4.3 (provider-neutral AI model layer) found neither `model_registry` nor `model_routing_rules` stores explicit vendor identity — `ModelRouter.infer_provider` had to guess a model's provider from its name string (`"claude-"` → anthropic, `"gpt-"` → openai), flagged at the time as acceptable temporary scaffolding but not permanent architecture. Mac's pre-Milestone-4.4 review confirmed this needed a real fix before real agents are built against routing data.
+
+**Decision:** `model_registry` gains `provider text not null` (no default value carried forward — added, backfilled, then set `not null` in one migration, `20260821150000_model_registry_provider.sql`). Deliberately **not** a `check (provider in ('openai','anthropic'))` constraint — Mac's explicit instruction: the architecture is intentionally provider-neutral, and hardcoding today's two vendors into a DB constraint would require a schema migration for every future provider, repeating the exact tradeoff `game_provider_ids`/`team_provider_ids`/`player_provider_ids.provider_name` already accepted (each needs its own follow-up migration for a new vendor). Validity is enforced at the application layer instead: `app.models.router.AdapterRegistry.get()` already raises `UnknownProviderError` for any unregistered provider (Milestone 4.3) — a DB `CHECK` would enforce the identical rule twice, in two different failure modes, for one validation concern. `model_routing_rules` does **not** get its own provider column — provider resolves by joining through `model_registry.model_name`, avoiding storing the same fact in two places (`primary_model`/`fallback_model` remain plain, non-FK model-name references, unchanged). Dev's 2 existing rows (`claude-sonnet-5`, `claude-opus-5`) backfilled `provider = 'anthropic'`, confirmed correct before migrating, not assumed.
+
+**Alternatives considered:**
+- A `check (provider in ('openai','anthropic'))` constraint — presented as a real tradeoff per Mac's own request ("if you believe a DB CHECK is still materially safer, present the tradeoff"); not applied, since `model_registry` is service-role-only/admin-configured (not a untrusted write path) and the real validation consequence already lives correctly at the application layer.
+- A reference table (`ai_model_providers(code text primary key)`, `model_registry.provider` FK'd to it) — a legitimate middle-ground (DB-level referential integrity, still additive-only for a new vendor) but rejected as an unnecessary second table for a problem application code already solves cleanly.
+- Adding `provider` to `model_routing_rules` as well — rejected; no lifecycle reason to duplicate the fact in two tables when one already owns it per model name.
+
+**Expected impact:** `apps/ai-orchestrator/app/models/router.py` updated to resolve provider via `model_registry` (canonical) with `infer_provider`'s name-prefix mapping retained only as an explicitly-deprecated fallback, per Mac's instruction that it "must not silently rescue missing production model-registry configuration forever." No other Phase 3/4 code, cadence, or table touched. Dev migration applied and verified (`provider` column present, correctly backfilled for both existing rows). Staging/production unaffected (staging still lacks the whole Milestone-3/4 AI-intelligence table set, per Milestone 4.1's own finding — this migration will need to be part of whatever eventually promotes that full table set to staging).
+
+**Full technical detail:** This entry, plus the updated `model_registry` definition in Volume 3 §8, and `PROGRESS.md`'s Milestone 4.4 entry.

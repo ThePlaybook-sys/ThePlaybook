@@ -1,8 +1,9 @@
 # The Playbook — Volume 3
 ## Database Architecture: Tables, Relationships, Indexes, Triggers, Migrations, RLS
 
-**Version:** v4.12.1
-**Last updated:** 2026-08-18
+**Version:** v4.13
+**Last updated:** 2026-08-21
+**v4.13 note (MINOR):** §8's `model_registry` gains a `provider text not null` column (Milestone 4.4 pre-check, 2026-08-21) — closes a real gap Milestone 4.3 found: neither `model_registry` nor `model_routing_rules` stored explicit vendor identity, forcing `ModelRouter` to infer provider from model-name string prefixes. Deliberately not a `check (provider in ('openai','anthropic'))` constraint, unlike `game_provider_ids`/`team_provider_ids`/`player_provider_ids.provider_name`'s existing rigid-CHECK convention — adding a future model provider is a plain data insert, never a schema migration. Validated at the application layer instead (`app.models.router`'s adapter registry). Dev's 2 existing rows backfilled `'anthropic'` (both Anthropic-family models, confirmed before migrating). See `CHANGELOG.md` v4.13 (Volume 3) entry for full reasoning.
 **Depends on:** Volume 1 (v3.0 — tiers, personas, principles) and Volume 2 (v4.2 — service shape, routing table reference, RLS placeholder, scoped event system, Redis cache layer, Postgame Ingestion Worker)
 **v4.0 note:** Normalized multi-sport core added (§4.0) — `sports`/`leagues`/`seasons`/`teams`/`players`/`player_stats`/`team_stats` plus the `player_stats_nfl` extension pattern. `games` gains `sport_id`/`league_id`/`season_id` while the legacy `sport` text field is kept, deprecated, for Phase 0/1 backward compatibility. Data quality metadata convention added to `daily_game_intelligence` (§4.1). See `CHANGELOG.md` v4.0 entry for full reasoning.
 **v4.1.1 note (PATCH):** §10 gained a clarification that its RLS scope covers "every table requiring access control," not only tables containing per-user data (Phase 1 Milestone 2). The three tables named in the v2.0 UUIDv7 amendment (`odds_snapshots`, `recommendation_agent_outputs`, `market_monitoring_events`) use a custom `uuid_generate_v7()` function, since the deployed Postgres version predates native `uuidv7()` support. See `CHANGELOG.md` v4.1.1 entry for full reasoning.
@@ -730,11 +731,12 @@ create table prompt_registry (
 ```
 Every agent (Volume 4 §2) loads its prompt from this table by `(prompt_name, status='active')` rather than embedding prompt text in code. This is the mechanism that makes `prompt_version` on `recommendations` (§5 above) meaningful — without a registry, "prompt version" would have nothing to point to.
 
-### `model_registry` (v2.0)
+### `model_registry` (v2.0; `provider` added v4.13)
 ```sql
 create table model_registry (
   id uuid primary key default gen_random_uuid(),
   model_name text not null unique,
+  provider text not null,                   -- v4.13: explicit vendor identity, e.g. 'openai'/'anthropic'
   strengths text,
   weaknesses text,
   cost_per_1k_tokens numeric(10,6),
@@ -745,6 +747,7 @@ create table model_registry (
   updated_at timestamptz default now()
 );
 ```
+**`provider` (v4.13, Milestone 4.4 pre-check, 2026-08-21):** deliberately `text not null` with no `check` constraint enumerating today's vendors — unlike `game_provider_ids`/`team_provider_ids`/`player_provider_ids.provider_name`'s existing rigid-CHECK pattern (each requiring its own follow-up migration for a new vendor), a future model provider is a plain data `insert`, never a schema migration. Validity is enforced at the application layer instead: `app.models.router`'s `AdapterRegistry` already raises `UnknownProviderError` for any provider it has no adapter registered for (Milestone 4.3) — the same check a DB `CHECK` constraint would otherwise duplicate. `model_routing_rules` deliberately does NOT get its own `provider`/`primary_provider`/`fallback_provider` column — `primary_model`/`fallback_model` remain plain model-name references (already documented as conceptual, not FK, since "routing rules should still function if a model is mid-migration"); provider is resolved by joining through `model_registry.model_name`, avoiding storing the same fact in two places.
 `model_routing_rules.primary_model` / `fallback_model` above now conceptually reference `model_registry.model_name` — not a hard foreign key (routing rules should still function if a model is mid-migration), but the Orchestrator's routing decision (Volume 4 §3.2) should factor in this table's `cost_per_1k_tokens` and `avg_latency_ms`, not just task-type mapping alone.
 
 ### `feature_flags` (v2.0)

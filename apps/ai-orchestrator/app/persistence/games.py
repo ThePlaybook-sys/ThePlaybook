@@ -49,6 +49,8 @@ which carries no status field of its own (see this package's
 """
 from __future__ import annotations
 
+from datetime import datetime
+
 import httpx
 
 #: CONFIRMED FROM VOLUME 3 Section 4 -- the complete `games.status` check
@@ -78,12 +80,21 @@ class GameStatusUnrecognizedError(Exception):
 async def get_game(client: httpx.AsyncClient, headers: dict, *, game_id: str) -> dict | None:
     """Reads one `games` row by internal id. Returns `None` when no row
     exists -- never a synthesized shape, matching this package's
-    `daily_game_intelligence` reader's exact convention."""
+    `daily_game_intelligence` reader's exact convention.
+
+    Select list widened (Milestone 4.4, Decision 5) to include
+    `venue_lat`/`venue_long`/`stadium`/`venue_type` -- the Travel &
+    Fatigue Agent's deterministic feature computation
+    (`app.features.travel`) needs the current game's venue coordinates
+    alongside the eligibility fields Milestone 4.1 already selected."""
     response = await client.get(
         "/rest/v1/games",
         params={
             "id": f"eq.{game_id}",
-            "select": "id,status,scheduled_start,home_team,away_team,season_type,week",
+            "select": (
+                "id,status,scheduled_start,home_team,away_team,season_type,week,"
+                "venue_lat,venue_long,stadium,venue_type"
+            ),
         },
         headers=headers,
     )
@@ -128,3 +139,38 @@ async def check_pregame_workflow_eligibility(
     except GameStatusUnrecognizedError as exc:
         return False, f"invalid_status: {exc}"
     return (eligible, "eligible") if eligible else (eligible, f"ineligible_status:{game['status']}")
+
+
+async def find_previous_final_game(
+    client: httpx.AsyncClient, headers: dict, *, team: str, before: datetime
+) -> dict | None:
+    """Returns the most recent `status='final'` game (by `scheduled_start`)
+    involving `team` (as either home or away) strictly before `before`,
+    or `None` if no such game exists (season opener). Mirrors
+    `sports-intel-layer`'s `app.persistence.games.find_previous_final_game`
+    exactly (Milestone 4.4, Decision 5) -- duplicated rather than
+    imported, per this package's own established convention (separate
+    deployable services, no shared package).
+
+    Feeds `app.features.travel.compute_travel_features`'s
+    `previous_venue_lat`/`previous_venue_long`/`previous_stadium`
+    parameters -- the previous-game half of a travel-distance
+    calculation."""
+    response = await client.get(
+        "/rest/v1/games",
+        params={
+            "status": "eq.final",
+            "or": f"(home_team.eq.{team},away_team.eq.{team})",
+            "scheduled_start": f"lt.{before.isoformat()}",
+            "select": "id,home_team,away_team,scheduled_start,stadium,venue_lat,venue_long,status",
+            "order": "scheduled_start.desc",
+            "limit": "1",
+        },
+        headers=headers,
+    )
+    if response.status_code != 200:
+        raise GamesReadError(
+            f"failed to find previous final game for {team!r}: {response.status_code} {response.text}"
+        )
+    rows = response.json()
+    return rows[0] if rows else None
