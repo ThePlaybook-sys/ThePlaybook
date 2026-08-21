@@ -67,3 +67,46 @@ def test_adapter_registry_missing_provider_raises_clearly():
     registry = AdapterRegistry(adapters={})
     with pytest.raises(UnknownProviderError):
         registry.get("openai")
+
+
+# --- canonical model_registry-backed provider resolution (Milestone 4.4 pre-check) ---
+
+
+def test_route_resolves_provider_from_model_registry_lookup_not_name():
+    """The canonical path: provider comes from a model_registry-derived
+    dict, not from parsing the model name at all -- proven with a model
+    name that would infer WRONG under the deprecated prefix guesser."""
+    rule = {"task_type": "injury_analysis", "primary_model": "gpt-mystery-9000", "fallback_model": None}
+    decision = ModelRouter.route(rule, model_providers={"gpt-mystery-9000": "anthropic"})
+    assert decision.primary_provider == "anthropic"  # NOT "openai", despite the "gpt-" name
+
+
+def test_route_cross_provider_via_registry_lookup():
+    rule = {"task_type": "consensus_reconciliation", "primary_model": "gpt-4o", "fallback_model": "claude-sonnet-5"}
+    decision = ModelRouter.route(rule, model_providers={"gpt-4o": "openai", "claude-sonnet-5": "anthropic"})
+    assert decision.primary_provider == "openai"
+    assert decision.fallback_provider == "anthropic"
+
+
+def test_route_model_missing_from_registry_lookup_raises_not_silently_guesses():
+    """Requirement: 'a routing rule that references a model missing from
+    canonical model_registry should eventually produce a clear
+    configuration error rather than silently guessing its provider from
+    its name.' Proven here, now -- not deferred."""
+    rule = {"task_type": "injury_analysis", "primary_model": "claude-sonnet-5", "fallback_model": None}
+    with pytest.raises(UnknownProviderError, match="claude-sonnet-5"):
+        ModelRouter.route(rule, model_providers={"claude-opus-5": "anthropic"})  # primary model absent from lookup
+
+
+def test_route_fallback_missing_from_registry_lookup_also_raises():
+    rule = {"task_type": "injury_analysis", "primary_model": "claude-sonnet-5", "fallback_model": "claude-haiku-4-5-20251001"}
+    with pytest.raises(UnknownProviderError, match="claude-haiku-4-5-20251001"):
+        ModelRouter.route(rule, model_providers={"claude-sonnet-5": "anthropic"})  # fallback absent
+
+
+def test_route_with_no_lookup_at_all_still_falls_back_to_deprecated_inference():
+    """Backward compatibility, explicitly temporary -- callers that don't
+    supply model_providers at all still get the pre-v4.13 behavior."""
+    rule = {"task_type": "injury_analysis", "primary_model": "claude-sonnet-5", "fallback_model": None}
+    decision = ModelRouter.route(rule)  # no model_providers kwarg
+    assert decision.primary_provider == "anthropic"

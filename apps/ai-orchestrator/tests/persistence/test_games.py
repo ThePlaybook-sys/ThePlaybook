@@ -5,10 +5,13 @@ import httpx
 import pytest
 import respx
 
+from datetime import datetime, timezone
+
 from app.persistence.games import (
     GamesReadError,
     GameStatusUnrecognizedError,
     check_pregame_workflow_eligibility,
+    find_previous_final_game,
     get_game,
     is_pregame_workflow_eligible,
 )
@@ -147,3 +150,61 @@ async def test_eligibility_unrecognized_status_rejected_safely():
         eligible, reason = await check_pregame_workflow_eligibility(client, _headers(), game_id="g1")
     assert eligible is False
     assert reason.startswith("invalid_status:")
+
+
+# --- get_game's widened select (Milestone 4.4, Decision 5) ---
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_get_game_requests_venue_fields_in_select():
+    route = respx.get(f"{SUPABASE_URL}/rest/v1/games").mock(return_value=httpx.Response(200, json=[_game("scheduled")]))
+    async with httpx.AsyncClient(base_url=SUPABASE_URL) as client:
+        await get_game(client, _headers(), game_id="g1")
+    select = route.calls.last.request.url.params["select"]
+    for field in ("venue_lat", "venue_long", "stadium", "venue_type"):
+        assert field in select
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_get_game_returns_venue_fields_when_present():
+    row = {**_game("scheduled"), "venue_lat": 39.0489, "venue_long": -94.4839, "stadium": "Arrowhead Stadium", "venue_type": "outdoor"}
+    respx.get(f"{SUPABASE_URL}/rest/v1/games").mock(return_value=httpx.Response(200, json=[row]))
+    async with httpx.AsyncClient(base_url=SUPABASE_URL) as client:
+        result = await get_game(client, _headers(), game_id="g1")
+    assert result["venue_lat"] == 39.0489
+    assert result["stadium"] == "Arrowhead Stadium"
+
+
+# --- find_previous_final_game (Milestone 4.4, Decision 5) ---
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_find_previous_final_game_returns_row():
+    row = {"id": "g0", "home_team": "KC", "away_team": "DEN", "stadium": "Arrowhead Stadium", "venue_lat": 39.0489, "venue_long": -94.4839, "status": "final"}
+    route = respx.get(f"{SUPABASE_URL}/rest/v1/games").mock(return_value=httpx.Response(200, json=[row]))
+    async with httpx.AsyncClient(base_url=SUPABASE_URL) as client:
+        result = await find_previous_final_game(client, _headers(), team="KC", before=datetime(2026, 9, 21, tzinfo=timezone.utc))
+    assert result == row
+    request = route.calls.last.request
+    assert request.url.params["status"] == "eq.final"
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_find_previous_final_game_none_when_season_opener():
+    respx.get(f"{SUPABASE_URL}/rest/v1/games").mock(return_value=httpx.Response(200, json=[]))
+    async with httpx.AsyncClient(base_url=SUPABASE_URL) as client:
+        result = await find_previous_final_game(client, _headers(), team="KC", before=datetime(2026, 9, 10, tzinfo=timezone.utc))
+    assert result is None
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_find_previous_final_game_raises_on_error():
+    respx.get(f"{SUPABASE_URL}/rest/v1/games").mock(return_value=httpx.Response(500, text="db error"))
+    async with httpx.AsyncClient(base_url=SUPABASE_URL) as client:
+        with pytest.raises(GamesReadError):
+            await find_previous_final_game(client, _headers(), team="KC", before=datetime(2026, 9, 10, tzinfo=timezone.utc))
