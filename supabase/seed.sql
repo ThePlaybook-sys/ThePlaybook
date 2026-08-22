@@ -230,6 +230,22 @@ insert into agents (id, name, category, active, current_weight) values
   ('a8000000-0000-0000-0000-000000000005', 'momentum_agent', 'analytics', true, 0.90),
   ('a8000000-0000-0000-0000-000000000006', 'meta_agent', 'meta', true, 1.00);
 
+-- Milestone 4.5 additive dev-only agent rows (Decision D, 2026-08-21):
+-- rest_days_agent/travel_fatigue_agent were built in Milestone 4.4 but
+-- never seeded (4.4 built no persistence path); vegas_line_agent/
+-- closing_line_movement_agent are the two new Milestone 4.5 agents.
+-- current_weight=1.00 is an UNTUNED INITIAL WEIGHT for all four -- it
+-- does not mean historical performance has proven equal weighting. Purely
+-- additive: no existing row above is modified or removed. The broader
+-- Phase-1 fixture cleanup proposed at Milestone 4.1's close remains
+-- deferred until the real 22-agent roster is seeded; this partial
+-- 10-row dev configuration is not the final committee.
+insert into agents (id, name, category, active, current_weight) values
+  ('a8000000-0000-0000-0000-000000000007', 'rest_days_agent', 'context', true, 1.00),
+  ('a8000000-0000-0000-0000-000000000008', 'travel_fatigue_agent', 'context', true, 1.00),
+  ('a8000000-0000-0000-0000-000000000009', 'vegas_line_agent', 'market', true, 1.00),
+  ('a8000000-0000-0000-0000-000000000010', 'closing_line_movement_agent', 'market', true, 1.00);
+
 insert into agent_performance_scores (agent_id, evaluation_window_start, evaluation_window_end, roi, ev, clv, confidence_calibration_score, sample_size) values
   ('a8000000-0000-0000-0000-000000000001', '2026-07-01', '2026-07-31', 0.0820, 0.0450, 1.2000, 0.8800, 42),
   ('a8000000-0000-0000-0000-000000000003', '2026-07-01', '2026-07-31', 0.1140, 0.0610, 1.8000, 0.9100, 38);
@@ -312,6 +328,15 @@ insert into market_monitoring_events (game_id, event_type, event_data, affected_
 insert into model_routing_rules (task_type, primary_model, fallback_model, min_tier_for_second_pass, active) values
   ('injury_analysis', 'claude-sonnet-5', 'claude-haiku-4-5-20251001', 'elite', true),
   ('consensus_reconciliation', 'claude-opus-5', 'claude-sonnet-5', 'elite', true);
+
+-- Milestone 4.5 additive dev-only routing rows (Decision D, 2026-08-21):
+-- the two new Market agents' task_types. Same primary/fallback pairing
+-- as injury_analysis -- a Phase-1-seed-style placeholder, not a
+-- cost-tuned decision (matching the precedent already documented for
+-- the two original rows above).
+insert into model_routing_rules (task_type, primary_model, fallback_model, min_tier_for_second_pass, active) values
+  ('vegas_line_analysis', 'claude-sonnet-5', 'claude-haiku-4-5-20251001', 'elite', true),
+  ('closing_line_movement_analysis', 'claude-sonnet-5', 'claude-haiku-4-5-20251001', 'elite', true);
 
 insert into prompt_registry (prompt_name, version, prompt_text, status, owner) values
   ('nfl_single_v1.0', 1, 'Seed prompt text for single-bet recommendation generation.', 'active', 'seed-script'),

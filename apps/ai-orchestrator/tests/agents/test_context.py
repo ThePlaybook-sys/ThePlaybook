@@ -44,11 +44,28 @@ async def test_build_agent_context_full_data():
         "stadium": "Highmark Stadium",
         "status": "final",
     }
+    # Real production shape -- {"outcomes": [...]}, not the demo-only
+    # {"home": ..., "away": ...} convenience shape (Milestone 4.5).
+    odds_rows = [
+        {
+            "sportsbook": "DraftKings",
+            "market_type": "spread",
+            "line_data": {"outcomes": [{"name": "BUF", "price": -150, "point": -3.5}, {"name": "KC", "price": 130, "point": 3.5}]},
+            "captured_at": "2026-09-18T12:00:00+00:00",
+        },
+        {
+            "sportsbook": "DraftKings",
+            "market_type": "spread",
+            "line_data": {"outcomes": [{"name": "BUF", "price": -130, "point": -2.5}, {"name": "KC", "price": 110, "point": 2.5}]},
+            "captured_at": "2026-09-20T12:00:00+00:00",
+        },
+    ]
     respx.get(f"{SUPABASE_URL}/rest/v1/daily_game_intelligence").mock(return_value=httpx.Response(200, json=[dgi_row]))
     respx.get(f"{SUPABASE_URL}/rest/v1/games", params={"status": "eq.final"}).mock(
         return_value=httpx.Response(200, json=[previous_game_row])
     )
     respx.get(f"{SUPABASE_URL}/rest/v1/games").mock(return_value=httpx.Response(200, json=[game_row]))
+    respx.get(f"{SUPABASE_URL}/rest/v1/odds_snapshots").mock(return_value=httpx.Response(200, json=odds_rows))
 
     async with httpx.AsyncClient(base_url=SUPABASE_URL) as client:
         context = await build_agent_context(client, _headers(), game_id="g1", correlation_id="corr-1")
@@ -61,6 +78,11 @@ async def test_build_agent_context_full_data():
     assert context.stadium == dgi_row["stadium"]
     assert isinstance(context.travel, TravelFeatures)
     assert context.travel.travel_distance_miles == pytest.approx(0.0, abs=1e-6)  # same stadium as previous game
+    assert context.odds_history == odds_rows
+    assert context.line_movement is not None
+    buf_movement = next(f for f in context.line_movement if f.side == "BUF")
+    assert buf_movement.point_movement == pytest.approx(1.0)  # -2.5 - (-3.5)
+    assert buf_movement.insufficient_history is False
 
 
 @pytest.mark.asyncio
@@ -81,6 +103,7 @@ async def test_build_agent_context_missing_dgi_row_leaves_categories_none_not_de
         return_value=httpx.Response(200, json=[])
     )
     respx.get(f"{SUPABASE_URL}/rest/v1/games").mock(return_value=httpx.Response(200, json=[game_row]))
+    respx.get(f"{SUPABASE_URL}/rest/v1/odds_snapshots").mock(return_value=httpx.Response(200, json=[]))
 
     async with httpx.AsyncClient(base_url=SUPABASE_URL) as client:
         context = await build_agent_context(client, _headers(), game_id="g1", correlation_id="corr-1")
@@ -91,3 +114,5 @@ async def test_build_agent_context_missing_dgi_row_leaves_categories_none_not_de
     assert context.stadium is None
     assert context.travel.travel_distance_miles is None
     assert context.travel.timezone_shift_hours is None
+    assert context.odds_history is None
+    assert context.line_movement is None

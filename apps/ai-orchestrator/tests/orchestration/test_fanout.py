@@ -33,7 +33,15 @@ def _empty_travel() -> TravelFeatures:
 
 def _context() -> AgentContext:
     return AgentContext(
-        game_id="g1", correlation_id="corr-1", injuries=None, weather=None, rest=None, stadium=None, travel=_empty_travel()
+        game_id="g1",
+        correlation_id="corr-1",
+        injuries=None,
+        weather=None,
+        rest=None,
+        stadium=None,
+        travel=_empty_travel(),
+        odds_history=None,
+        line_movement=None,
     )
 
 
