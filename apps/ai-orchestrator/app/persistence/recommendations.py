@@ -109,7 +109,9 @@ async def persist_agent_output(
 ) -> None:
     """Persists exactly one `recommendation_agent_outputs` row for a
     successful agent output. Never called for a failed agent -- callers
-    (`app.orchestration.cycle`) iterate only `FanOutResult.successes`."""
+    (`app.orchestration.cycle`) iterate only `FanOutResult.successes`.
+    `candidate_key` stays `NULL` -- this is the game-level fan-out path
+    (Milestones 4.4/4.5), not a candidate-specific evaluation."""
     agent = await resolve_agent(client, headers, agent_name=agent_name)
     payload = {
         "recommendation_id": recommendation_id,
@@ -126,5 +128,51 @@ async def persist_agent_output(
     if response.status_code not in (200, 201):
         raise RecommendationsError(
             f"failed to persist agent output for {agent_name!r} on recommendation_id={recommendation_id!r}: "
+            f"{response.status_code} {response.text}"
+        )
+
+
+async def persist_candidate_agent_output(
+    client: httpx.AsyncClient,
+    headers: dict,
+    *,
+    recommendation_id: str,
+    agent_name: str,
+    candidate_key: str,
+    raw_output: dict,
+    agent_confidence: float | None,
+) -> None:
+    """Persists one candidate-level `recommendation_agent_outputs` row
+    for the sequential Decision & Advisory chain (Milestone 4.6, Decision
+    G) -- `candidate_key` is a first-class, queryable column, not buried
+    inside `raw_output`. `raw_output` itself carries the full structured
+    result for auditability (`{"probability_output": {...}}` for
+    Probability Modeling, or `{"agent_output": {...}, "deterministic":
+    {...}}` for Expected Value/Risk Manager/Bankroll Coach -- callers
+    build this shape, this function stays agnostic to which Pydantic
+    contract produced it).
+
+    No uniqueness check against an existing `(recommendation_id,
+    agent_id, candidate_key)` row -- multiple evaluations of the same
+    candidate may legitimately exist over time (Decision G, no
+    uniqueness constraint approved)."""
+    agent = await resolve_agent(client, headers, agent_name=agent_name)
+    payload = {
+        "recommendation_id": recommendation_id,
+        "agent_id": agent["id"],
+        "raw_output": raw_output,
+        "agent_confidence": agent_confidence,
+        "weight_applied": agent["current_weight"],
+        "candidate_key": candidate_key,
+    }
+    response = await client.post(
+        "/rest/v1/recommendation_agent_outputs",
+        json=payload,
+        headers={**headers, "Content-Type": "application/json"},
+    )
+    if response.status_code not in (200, 201):
+        raise RecommendationsError(
+            f"failed to persist candidate agent output for {agent_name!r} "
+            f"on recommendation_id={recommendation_id!r} candidate_key={candidate_key!r}: "
             f"{response.status_code} {response.text}"
         )

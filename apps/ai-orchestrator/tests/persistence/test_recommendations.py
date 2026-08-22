@@ -13,6 +13,7 @@ from app.persistence.recommendations import (
     RecommendationsError,
     create_recommendation_cycle,
     persist_agent_output,
+    persist_candidate_agent_output,
     resolve_agent,
 )
 
@@ -189,4 +190,96 @@ async def test_persist_agent_output_raises_on_insert_error():
         with pytest.raises(RecommendationsError):
             await persist_agent_output(
                 client, _headers(), recommendation_id="r1", agent_name="vegas_line_agent", output=_output()
+            )
+
+
+# --- persist_candidate_agent_output: candidate_key is first-class (Milestone 4.6, Decision G) ---
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_persist_candidate_agent_output_sends_candidate_key_as_a_column():
+    respx.get(f"{SUPABASE_URL}/rest/v1/agents").mock(
+        return_value=httpx.Response(200, json=[{"id": "a1", "current_weight": 1.0}])
+    )
+    route = respx.post(f"{SUPABASE_URL}/rest/v1/recommendation_agent_outputs").mock(return_value=httpx.Response(201, json=[{}]))
+    async with httpx.AsyncClient(base_url=SUPABASE_URL) as client:
+        await persist_candidate_agent_output(
+            client,
+            _headers(),
+            recommendation_id="r1",
+            agent_name="probability_modeling_agent",
+            candidate_key="g1:DraftKings:moneyline:KC:none",
+            raw_output={"probability_output": {"modeled_probability": 0.57}},
+            agent_confidence=0.72,
+        )
+    sent = json.loads(route.calls.last.request.content)
+    assert sent["candidate_key"] == "g1:DraftKings:moneyline:KC:none"
+    assert sent["recommendation_id"] == "r1"
+    assert sent["agent_id"] == "a1"
+    assert sent["agent_confidence"] == 0.72
+    assert sent["weight_applied"] == 1.0
+    assert sent["raw_output"] == {"probability_output": {"modeled_probability": 0.57}}
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_persist_candidate_agent_output_preserves_composed_deterministic_payload():
+    respx.get(f"{SUPABASE_URL}/rest/v1/agents").mock(
+        return_value=httpx.Response(200, json=[{"id": "a1", "current_weight": 1.0}])
+    )
+    route = respx.post(f"{SUPABASE_URL}/rest/v1/recommendation_agent_outputs").mock(return_value=httpx.Response(201, json=[{}]))
+    raw_output = {
+        "agent_output": {"agent_name": "expected_value_agent", "confidence": 0.6},
+        "deterministic": {"decimal_odds": 1.8, "ev_per_dollar": 0.026},
+    }
+    async with httpx.AsyncClient(base_url=SUPABASE_URL) as client:
+        await persist_candidate_agent_output(
+            client,
+            _headers(),
+            recommendation_id="r1",
+            agent_name="expected_value_agent",
+            candidate_key="g1:DraftKings:moneyline:KC:none",
+            raw_output=raw_output,
+            agent_confidence=0.6,
+        )
+    sent = json.loads(route.calls.last.request.content)
+    assert sent["raw_output"]["agent_output"]["agent_name"] == "expected_value_agent"
+    assert sent["raw_output"]["deterministic"]["ev_per_dollar"] == 0.026
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_persist_candidate_agent_output_missing_agent_fails_clearly():
+    respx.get(f"{SUPABASE_URL}/rest/v1/agents").mock(return_value=httpx.Response(200, json=[]))
+    async with httpx.AsyncClient(base_url=SUPABASE_URL) as client:
+        with pytest.raises(AgentConfigError):
+            await persist_candidate_agent_output(
+                client,
+                _headers(),
+                recommendation_id="r1",
+                agent_name="nonexistent_agent",
+                candidate_key="g1:DraftKings:moneyline:KC:none",
+                raw_output={},
+                agent_confidence=0.5,
+            )
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_persist_candidate_agent_output_raises_on_insert_error():
+    respx.get(f"{SUPABASE_URL}/rest/v1/agents").mock(
+        return_value=httpx.Response(200, json=[{"id": "a1", "current_weight": 1.0}])
+    )
+    respx.post(f"{SUPABASE_URL}/rest/v1/recommendation_agent_outputs").mock(return_value=httpx.Response(500, text="db error"))
+    async with httpx.AsyncClient(base_url=SUPABASE_URL) as client:
+        with pytest.raises(RecommendationsError):
+            await persist_candidate_agent_output(
+                client,
+                _headers(),
+                recommendation_id="r1",
+                agent_name="probability_modeling_agent",
+                candidate_key="g1:DraftKings:moneyline:KC:none",
+                raw_output={},
+                agent_confidence=0.5,
             )
