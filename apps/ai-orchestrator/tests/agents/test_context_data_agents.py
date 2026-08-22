@@ -45,6 +45,8 @@ def _context(**overrides) -> AgentContext:
         rest=None,
         stadium=None,
         travel=_empty_travel(),
+        odds_history=None,
+        line_movement=None,
     )
     base.update(overrides)
     return AgentContext(**base)

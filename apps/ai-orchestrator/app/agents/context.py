@@ -10,6 +10,16 @@ null-not-neutral discipline on the read side and Milestone 4.2's
 no-fabrication discipline on the agent-output side. An agent seeing
 `context.injuries is None` must degrade explicitly, never treat it as "no
 injuries."
+
+**Milestone 4.5 addition:** `odds_history` (raw `odds_snapshots` rows,
+oldest first) and `line_movement` (deterministic features computed from
+that history, `app.features.market`). `line_movement` is `None` iff
+`odds_history` is `None` -- when odds history rows exist but produce no
+computable movement groups (shouldn't normally happen, since each row
+belongs to some `(sportsbook, market_type)` group), `line_movement` is an
+empty list, not `None` -- preserving the same "no data at all" vs.
+"data present but nothing derivable" distinction Milestone 4.4 already
+applies to `TravelFeatures`.
 """
 from __future__ import annotations
 
@@ -18,9 +28,11 @@ from datetime import datetime
 
 import httpx
 
+from app.features.market import LineMovementFeatures, compute_line_movement
 from app.features.travel import TravelFeatures, compute_travel_features
 from app.persistence.daily_game_intelligence import read_daily_game_intelligence
 from app.persistence.games import find_previous_final_game, get_game
+from app.persistence.odds_snapshots import read_odds_snapshots
 
 
 @dataclass(frozen=True)
@@ -32,6 +44,8 @@ class AgentContext:
     rest: dict | None
     stadium: dict | None
     travel: TravelFeatures
+    odds_history: list[dict] | None
+    line_movement: list[LineMovementFeatures] | None
 
 
 async def build_agent_context(
@@ -70,6 +84,10 @@ async def build_agent_context(
         kickoff_at=_scheduled_start(game) if game else datetime.now().astimezone(),
     )
 
+    odds_rows = await read_odds_snapshots(client, headers, game_id=game_id)
+    odds_history = odds_rows if odds_rows else None
+    line_movement = compute_line_movement(odds_rows) if odds_history is not None else None
+
     return AgentContext(
         game_id=game_id,
         correlation_id=correlation_id,
@@ -78,6 +96,8 @@ async def build_agent_context(
         rest=rest,
         stadium=stadium,
         travel=travel,
+        odds_history=odds_history,
+        line_movement=line_movement,
     )
 
 
