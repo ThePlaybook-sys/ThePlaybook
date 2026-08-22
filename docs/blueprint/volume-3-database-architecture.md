@@ -1,8 +1,9 @@
 # The Playbook — Volume 3
 ## Database Architecture: Tables, Relationships, Indexes, Triggers, Migrations, RLS
 
-**Version:** v4.14
+**Version:** v4.15
 **Last updated:** 2026-08-22
+**v4.15 note (MINOR):** `consensus_snapshots` gains four nullable columns (Milestone 4.7, 2026-08-22): `candidate_key` (mirrors `recommendation_agent_outputs.candidate_key`, v4.14, exactly), `final_aggregate_confidence` (distinct from the existing `aggregate_confidence`), `below_confidence_floor` (the internal 0.55-threshold result, never a Phase-5 recommendation decision), and `participation_metadata` (the only durable record of what was attempted/failed/deferred for a historical run, since a failed/deferred agent leaves no row elsewhere). See `CHANGELOG.md` v4.15 entry for full reasoning.
 **v4.14 note (MINOR):** `recommendation_agent_outputs` gains a nullable `candidate_key text` column + partial index (Milestone 4.6, Decision G, 2026-08-22) — makes the identity of a specific evaluated wager (e.g. "KC moneyline -125") a first-class, queryable part of a row, instead of existing only inside `raw_output` JSON. `NULL` for every existing game-level fan-out output; populated only for the new sequential Decision & Advisory chain's candidate-level outputs. Deliberately no uniqueness constraint. See `CHANGELOG.md` v4.14 entry for full reasoning.
 **v4.13 note (MINOR):** §8's `model_registry` gains a `provider text not null` column (Milestone 4.4 pre-check, 2026-08-21) — closes a real gap Milestone 4.3 found: neither `model_registry` nor `model_routing_rules` stored explicit vendor identity, forcing `ModelRouter` to infer provider from model-name string prefixes. Deliberately not a `check (provider in ('openai','anthropic'))` constraint, unlike `game_provider_ids`/`team_provider_ids`/`player_provider_ids.provider_name`'s existing rigid-CHECK convention — adding a future model provider is a plain data insert, never a schema migration. Validated at the application layer instead (`app.models.router`'s adapter registry). Dev's 2 existing rows backfilled `'anthropic'` (both Anthropic-family models, confirmed before migrating). See `CHANGELOG.md` v4.13 (Volume 3) entry for full reasoning.
 **Depends on:** Volume 1 (v3.0 — tiers, personas, principles) and Volume 2 (v4.2 — service shape, routing table reference, RLS placeholder, scoped event system, Redis cache layer, Postgame Ingestion Worker)
@@ -546,9 +547,20 @@ create table consensus_snapshots (
   agreement_variance numeric(5,4),           -- feeds the Elite-tier reconciliation threshold, Volume 2 §7
   model_routing_used jsonb,                  -- which models handled which agents this run
   second_pass_triggered boolean default false,
+  candidate_key text,                        -- v4.15: identity of the candidate this consensus was computed for
+  final_aggregate_confidence numeric,        -- v4.15: post-Meta/Elite-adjustment number, distinct from aggregate_confidence
+  below_confidence_floor boolean,            -- v4.15: internal 0.55-threshold result, never a Phase-5 recommendation_type
+  participation_metadata jsonb,              -- v4.15: configured/built/deferred/attempted/successful/failed/fan_out_status/committee_completeness
   created_at timestamptz default now()
 );
+create index idx_consensus_snapshots_candidate_key on consensus_snapshots(recommendation_id, candidate_key) where candidate_key is not null;
 ```
+
+**Four columns added, v4.15 (Phase 4 Milestone 4.7, 2026-08-22), mirroring the `recommendation_agent_outputs.candidate_key` pattern (v4.14) exactly:**
+- **`candidate_key`** — same identity, same no-uniqueness-constraint reasoning, same partial index — makes candidate identity first-class and queryable rather than buried inside `model_routing_used`.
+- **`final_aggregate_confidence`** — the post-Meta-Agent/Elite-reconciliation-adjustment number. Kept as a genuinely separate column from `aggregate_confidence` (the pre-adjustment value, unchanged) rather than overloading one column with two meanings — a future reader must be able to see both the raw committee number and what it became after review.
+- **`below_confidence_floor`** — the internal Phase-4 result of the 0.55 threshold check (Volume 4 §4.2) as a raw fact, explicitly NOT the same thing as a Phase-5 `recommendation_type = 'no_bet'` decision. Phase 4 computes and persists this; Phase 5 alone decides recommendation shape.
+- **`participation_metadata`** — a full snapshot of `configured_agents`/`built_agents`/`deferred_agents`/`attempted_agents`/`successful_agents`/`failed_agents`/`fan_out_status`/`committee_completeness` for this specific historical run. Required because a failed or deferred agent leaves no row at all in `recommendation_agent_outputs` — this is the only durable record letting a future reader distinguish "0.71 confidence from 17/17 available agents" from "0.71 confidence while only 6/17 intended agents existed."
 
 ### `explainability_payloads`
 ```sql

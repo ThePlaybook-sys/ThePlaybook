@@ -76,6 +76,25 @@ class ParticipationMetadata:
     committee_completeness: float  # len(built_agents) / len(configured_agents)
 
 
+def participation_metadata_to_json(participation: ParticipationMetadata) -> dict:
+    """Serializes `ParticipationMetadata` into a plain, JSON-safe dict
+    (frozensets sorted into lists) -- Milestone 4.7's persisted
+    `consensus_snapshots.participation_metadata` shape. This is the only
+    durable record of what was attempted/failed/deferred for a specific
+    historical consensus run, since a failed or deferred agent leaves no
+    row at all in `recommendation_agent_outputs`."""
+    return {
+        "configured_agents": sorted(participation.configured_agents),
+        "built_agents": sorted(participation.built_agents),
+        "deferred_agents": sorted(participation.deferred_agents),
+        "attempted_agents": sorted(participation.attempted_agents),
+        "successful_agents": sorted(participation.successful_agents),
+        "failed_agents": sorted(participation.failed_agents),
+        "fan_out_status": participation.fan_out_status,
+        "committee_completeness": participation.committee_completeness,
+    }
+
+
 def build_participation_metadata(fan_out_result: FanOutResult) -> ParticipationMetadata:
     """Builds `ParticipationMetadata` from a completed `FanOutResult`.
     `deferred_agents`/`committee_completeness` are derived from the

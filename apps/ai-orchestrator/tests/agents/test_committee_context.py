@@ -3,7 +3,7 @@ metadata distinguishing DEFERRED-BECAUSE-NO-CAPABILITY from
 FAILED-DURING-THIS-RUN."""
 from __future__ import annotations
 
-from app.agents.committee_context import BUILT_AGENTS, CONFIGURED_AGENTS, build_participation_metadata
+from app.agents.committee_context import BUILT_AGENTS, CONFIGURED_AGENTS, build_participation_metadata, participation_metadata_to_json
 from app.orchestration.fanout import AgentRunResult, FanOutResult
 
 
@@ -51,3 +51,18 @@ def test_a_real_runtime_failure_is_distinct_from_a_deferred_agent():
     assert "weather_agent" not in metadata.deferred_agents  # it's built and ran -- just failed this cycle
     assert "referee_tendencies_agent" in metadata.deferred_agents  # never built, never attempted
     assert "referee_tendencies_agent" not in metadata.failed_agents
+
+
+def test_participation_metadata_to_json_is_plain_and_sorted():
+    metadata = build_participation_metadata(
+        FanOutResult(status="partial", results=[AgentRunResult(agent_name="weather_agent", status="failed", error="t")])
+    )
+    payload = participation_metadata_to_json(metadata)
+    assert isinstance(payload["deferred_agents"], list)
+    assert payload["deferred_agents"] == sorted(payload["deferred_agents"])
+    assert payload["fan_out_status"] == "partial"
+    assert payload["failed_agents"] == ["weather_agent"]
+    assert payload["committee_completeness"] == len(BUILT_AGENTS) / len(CONFIGURED_AGENTS)
+    import json
+
+    json.dumps(payload)  # must be fully JSON-serializable
