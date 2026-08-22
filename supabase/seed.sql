@@ -246,6 +246,19 @@ insert into agents (id, name, category, active, current_weight) values
   ('a8000000-0000-0000-0000-000000000009', 'vegas_line_agent', 'market', true, 1.00),
   ('a8000000-0000-0000-0000-000000000010', 'closing_line_movement_agent', 'market', true, 1.00);
 
+-- Milestone 4.6 additive dev-only agent rows (Decision D, 2026-08-22):
+-- the four new sequential Decision & Advisory agents. current_weight=1.00
+-- is again an UNTUNED INITIAL WEIGHT, not a tuned decision. Purely
+-- additive: no existing row above is modified or removed. The broader
+-- Phase-1 fixture cleanup remains deferred until the real 22-agent
+-- roster is seeded; this partial 14-row dev configuration is still not
+-- the final committee.
+insert into agents (id, name, category, active, current_weight) values
+  ('a8000000-0000-0000-0000-000000000011', 'probability_modeling_agent', 'decision', true, 1.00),
+  ('a8000000-0000-0000-0000-000000000012', 'expected_value_agent', 'decision', true, 1.00),
+  ('a8000000-0000-0000-0000-000000000013', 'risk_manager_agent', 'decision', true, 1.00),
+  ('a8000000-0000-0000-0000-000000000014', 'bankroll_coach_agent', 'decision', true, 1.00);
+
 insert into agent_performance_scores (agent_id, evaluation_window_start, evaluation_window_end, roi, ev, clv, confidence_calibration_score, sample_size) values
   ('a8000000-0000-0000-0000-000000000001', '2026-07-01', '2026-07-31', 0.0820, 0.0450, 1.2000, 0.8800, 42),
   ('a8000000-0000-0000-0000-000000000003', '2026-07-01', '2026-07-31', 0.1140, 0.0610, 1.8000, 0.9100, 38);
@@ -337,6 +350,29 @@ insert into model_routing_rules (task_type, primary_model, fallback_model, min_t
 insert into model_routing_rules (task_type, primary_model, fallback_model, min_tier_for_second_pass, active) values
   ('vegas_line_analysis', 'claude-sonnet-5', 'claude-haiku-4-5-20251001', 'elite', true),
   ('closing_line_movement_analysis', 'claude-sonnet-5', 'claude-haiku-4-5-20251001', 'elite', true);
+
+-- Milestone 4.6 configuration-gap backfill (2026-08-22): these three
+-- Milestone 4.4 agents' task_types were never seeded (4.4 built no
+-- persistence/routing wiring at all) -- closing that gap, not new scope.
+insert into model_routing_rules (task_type, primary_model, fallback_model, min_tier_for_second_pass, active) values
+  ('rest_days_analysis', 'claude-sonnet-5', 'claude-haiku-4-5-20251001', 'elite', true),
+  ('travel_fatigue_analysis', 'claude-sonnet-5', 'claude-haiku-4-5-20251001', 'elite', true),
+  ('weather_analysis', 'claude-sonnet-5', 'claude-haiku-4-5-20251001', 'elite', true);
+
+-- Milestone 4.6 new routing rows for the sequential Decision & Advisory
+-- chain (Decision: routing config). Probability Modeling routes to the
+-- stronger tier (Volume 4 Section 3.2 names it explicitly); Expected
+-- Value/Risk Manager/Bankroll Coach stay on the cheap tier -- their
+-- arithmetic is deterministic application code, the LLM layer is
+-- narration only, so there's no evidence they need a stronger model
+-- (Mac's explicit instruction: "do not overpay for arithmetic
+-- narration"). All provisional configuration, FakeModelAdapter-only
+-- until real model validation.
+insert into model_routing_rules (task_type, primary_model, fallback_model, min_tier_for_second_pass, active) values
+  ('probability_modeling_analysis', 'claude-opus-5', 'claude-sonnet-5', 'elite', true),
+  ('expected_value_analysis', 'claude-sonnet-5', 'claude-haiku-4-5-20251001', 'elite', true),
+  ('risk_manager_analysis', 'claude-sonnet-5', 'claude-haiku-4-5-20251001', 'elite', true),
+  ('bankroll_coach_analysis', 'claude-sonnet-5', 'claude-haiku-4-5-20251001', 'elite', true);
 
 insert into prompt_registry (prompt_name, version, prompt_text, status, owner) values
   ('nfl_single_v1.0', 1, 'Seed prompt text for single-bet recommendation generation.', 'active', 'seed-script'),

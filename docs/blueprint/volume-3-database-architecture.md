@@ -1,8 +1,9 @@
 # The Playbook — Volume 3
 ## Database Architecture: Tables, Relationships, Indexes, Triggers, Migrations, RLS
 
-**Version:** v4.13
-**Last updated:** 2026-08-21
+**Version:** v4.14
+**Last updated:** 2026-08-22
+**v4.14 note (MINOR):** `recommendation_agent_outputs` gains a nullable `candidate_key text` column + partial index (Milestone 4.6, Decision G, 2026-08-22) — makes the identity of a specific evaluated wager (e.g. "KC moneyline -125") a first-class, queryable part of a row, instead of existing only inside `raw_output` JSON. `NULL` for every existing game-level fan-out output; populated only for the new sequential Decision & Advisory chain's candidate-level outputs. Deliberately no uniqueness constraint. See `CHANGELOG.md` v4.14 entry for full reasoning.
 **v4.13 note (MINOR):** §8's `model_registry` gains a `provider text not null` column (Milestone 4.4 pre-check, 2026-08-21) — closes a real gap Milestone 4.3 found: neither `model_registry` nor `model_routing_rules` stored explicit vendor identity, forcing `ModelRouter` to infer provider from model-name string prefixes. Deliberately not a `check (provider in ('openai','anthropic'))` constraint, unlike `game_provider_ids`/`team_provider_ids`/`player_provider_ids.provider_name`'s existing rigid-CHECK convention — adding a future model provider is a plain data insert, never a schema migration. Validated at the application layer instead (`app.models.router`'s adapter registry). Dev's 2 existing rows backfilled `'anthropic'` (both Anthropic-family models, confirmed before migrating). See `CHANGELOG.md` v4.13 (Volume 3) entry for full reasoning.
 **Depends on:** Volume 1 (v3.0 — tiers, personas, principles) and Volume 2 (v4.2 — service shape, routing table reference, RLS placeholder, scoped event system, Redis cache layer, Postgame Ingestion Worker)
 **v4.0 note:** Normalized multi-sport core added (§4.0) — `sports`/`leagues`/`seasons`/`teams`/`players`/`player_stats`/`team_stats` plus the `player_stats_nfl` extension pattern. `games` gains `sport_id`/`league_id`/`season_id` while the legacy `sport` text field is kept, deprecated, for Phase 0/1 backward compatibility. Data quality metadata convention added to `daily_game_intelligence` (§4.1). See `CHANGELOG.md` v4.0 entry for full reasoning.
@@ -526,11 +527,15 @@ create table recommendation_agent_outputs (
   raw_output jsonb not null,
   agent_confidence numeric(5,4),
   weight_applied numeric(5,4) not null,      -- snapshot of the agent's weight AT THIS MOMENT
+  candidate_key text,                        -- v4.14: identity of the specific wager evaluated, when applicable
   created_at timestamptz default now()
 );
 create index idx_rao_recommendation on recommendation_agent_outputs(recommendation_id);
+create index idx_recommendation_agent_outputs_candidate_key on recommendation_agent_outputs(recommendation_id, candidate_key) where candidate_key is not null;
 ```
 **`weight_applied` is a frozen copy of `agents.current_weight`, not a join.** This is a direct Time Machine requirement: if we only stored a reference to `agents.current_weight`, reconstructing a recommendation from three months ago would show *today's* weight, not the weight that was actually used to compute the consensus at the time — silently rewriting history. Every place this pattern applies (odds, weights, anything mutable) uses the same frozen-copy approach.
+
+**`candidate_key` (v4.14, Phase 4 Milestone 4.6, Decision G):** a nullable text column identifying *the specific wager being evaluated* (e.g. `"g1:DraftKings:moneyline:Kansas City Chiefs:none"`) — distinct from, and not interchangeable with, `recommendation_id` (the overall recommendation-analysis cycle). Added because the sequential Decision & Advisory chain (Probability Modeling → Expected Value → Risk Manager → Bankroll Coach) evaluates a specific market/selection, not "the game" abstractly — `AgentOutput.directional_lean` can only speak to one side at a time, so one committee run must be scoped to one concrete candidate. `NULL` for every game-level fan-out output (Milestones 4.4/4.5, unchanged); populated only for candidate-level sequential outputs. **Deliberately no uniqueness constraint** — multiple evaluations of the same candidate over time are legitimate history, not an error; retry/versioning semantics for this identity aren't yet designed strongly enough to justify enforcing uniqueness at the database level. The partial index (`where candidate_key is not null`) supports the expected Phase 5 lookup pattern ("every candidate evaluated within this cycle") without indexing the majority of rows that have no candidate at all.
 
 ### `consensus_snapshots`
 ```sql
