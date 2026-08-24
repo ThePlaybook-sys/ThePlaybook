@@ -1,4 +1,5 @@
-"""Read-only AI-orchestration configuration access (Milestone 4.1).
+"""Read-only AI-orchestration configuration access (Milestone 4.1;
+`resolve_active_prompt` added Milestone 4.8).
 
 Covers the four config/registry tables Phase 4's committee will need to
 read once agents/model adapters actually exist (Milestone 4.2+):
@@ -13,15 +14,27 @@ Every reader filters to the "currently usable" subset of its table
 -- a deactivated agent, a retired model, or a draft/deprecated prompt is
 never silently returned to a caller that didn't ask for history.
 
-**Dev's current rows behind these readers are Phase-1 `seed.sql` fixture
-data, not a real Phase 4 configuration** (6 agents whose names only
-partially match the real 22-agent committee, 2 routing rules, 2 models, 2
-prompts) -- see `PROGRESS.md`'s Milestone 4.1 entry for the full
-inspection and the proposed cleanup this module deliberately does not
-perform. These readers return whatever rows actually exist; they do not
-know or care whether those rows are real or fixture data.
+**Dev's current rows behind these readers were Phase-1 `seed.sql` fixture
+data for `agents`/`model_routing_rules`/`model_registry`** -- see
+`PROGRESS.md`'s Milestone 4.1 entry for the full inspection.
+`prompt_registry` additionally carried two unrelated Phase-1 fixture rows
+(`nfl_parlay_v1.0`, `nfl_single_v1.0`, a different "recommendation-type
+prompt" concept) alongside which Milestone 4.8 seeds the 12 real agents'
+canonical prompts, one per `agent_name`, per Mac's approved
+`prompt_name = agent_name` convention.
+
+**`resolve_active_prompt` (Milestone 4.8) is the one function in this
+module callers outside this file should actually use for prompt
+resolution** -- `get_active_prompt` (below) remains as the thin per-row
+Milestone 4.1 reader it always was, but has no caller of its own left
+once `resolve_active_prompt` exists; kept for backward compatibility
+rather than removed mid-milestone. `resolve_active_prompt` is deterministic
+and fails loud (`PromptConfigError`) rather than ever silently choosing
+between rows or falling back to hardcoded text -- see its own docstring.
 """
 from __future__ import annotations
+
+from dataclasses import dataclass
 
 import httpx
 
@@ -105,3 +118,72 @@ async def get_active_prompt(client: httpx.AsyncClient, headers: dict, *, prompt_
         )
     rows = response.json()
     return rows[0] if rows else None
+
+
+class PromptConfigError(Exception):
+    """Raised when an agent requires a canonical production prompt and
+    none can be resolved -- no active `prompt_registry` row for its
+    `prompt_name` (Milestone 4.8 convention: `prompt_name = agent_name`),
+    or (defense in depth) more than one active row, which
+    `idx_prompt_registry_one_active_per_name` should already make
+    impossible to write. Never silently rescued with hardcoded text --
+    mirrors `app.models.router.UnknownProviderError`'s "fail loud rather
+    than silently defaulting" precedent."""
+
+
+@dataclass(frozen=True)
+class ResolvedPrompt:
+    """The exact, already-versioned prompt actually resolved for one
+    agent's execution -- `prompt_name`/`version` are persisted verbatim
+    as `recommendation_agent_outputs.prompt_name`/`.prompt_version`
+    (Milestone 4.8), so this is the Time Machine provenance record for
+    "which prompt produced this specific output", not just an
+    implementation detail."""
+
+    prompt_name: str
+    version: int
+    prompt_text: str
+
+
+async def resolve_active_prompt(client: httpx.AsyncClient, headers: dict, *, prompt_name: str) -> ResolvedPrompt:
+    """The canonical production prompt-resolution call (Milestone 4.8) --
+    every agent's system prompt is resolved through this function at the
+    orchestration/harness boundary (never inside an agent class itself,
+    per Mac's explicit Option C direction). Deterministic: the live
+    `idx_prompt_registry_one_active_per_name` partial unique index
+    already makes more than one active row per `prompt_name` impossible
+    to write, but this function still defensively checks for it rather
+    than trusting the constraint alone -- "do not silently choose between
+    multiple active prompts if invalid configuration somehow exists" is
+    enforced here, not assumed from the schema.
+
+    Raises `PromptConfigError` (never returns `None`, never falls back to
+    any hardcoded template) when zero or more than one active row exists
+    for `prompt_name` -- a caller with a real, configured agent should
+    never see this in production; a caller in a test supplies its own
+    prompt text directly to `build_messages` instead of calling this at
+    all, so this failure mode is exclusively a production-configuration
+    signal, never a test-determinism concern (FakeModelAdapter ignores
+    prompt content entirely)."""
+    response = await client.get(
+        "/rest/v1/prompt_registry",
+        params={"prompt_name": f"eq.{prompt_name}", "status": "eq.active", "select": "prompt_name,version,prompt_text"},
+        headers=headers,
+    )
+    if response.status_code != 200:
+        raise ConfigReadError(
+            f"failed to read prompt_registry for {prompt_name!r}: {response.status_code} {response.text}"
+        )
+    rows = response.json()
+    if not rows:
+        raise PromptConfigError(
+            f"no active prompt_registry row for prompt_name={prompt_name!r} -- cannot execute this agent "
+            f"without a configured canonical production prompt"
+        )
+    if len(rows) > 1:
+        raise PromptConfigError(
+            f"invalid prompt_registry configuration: {len(rows)} active rows found for "
+            f"prompt_name={prompt_name!r}, expected exactly one"
+        )
+    row = rows[0]
+    return ResolvedPrompt(prompt_name=row["prompt_name"], version=row["version"], prompt_text=row["prompt_text"])

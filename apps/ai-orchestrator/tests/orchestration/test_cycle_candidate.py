@@ -18,6 +18,7 @@ from app.models.errors import ModelTimeoutError
 from app.models.fake_adapter import FakeModelAdapter, ScriptedFailure, ScriptedSuccess
 from app.models.router import AdapterRegistry
 from app.orchestration.cycle import run_candidate_evaluation
+from tests.conftest import mock_prompt_registry_route
 
 SUPABASE_URL = "https://test-project.supabase.co"
 
@@ -92,6 +93,7 @@ def _valid_agent_output_json(agent_name: str) -> str:
 
 def _mock_agents():
     respx.get(f"{SUPABASE_URL}/rest/v1/agents").mock(return_value=httpx.Response(200, json=[{"id": "a1", "current_weight": 1.0}]))
+    mock_prompt_registry_route(SUPABASE_URL)
 
 
 @pytest.mark.asyncio

@@ -35,7 +35,19 @@ weight_applied` stores `agents.current_weight` as it existed at the
 moment that specific output was persisted -- a frozen historical copy,
 read once and written as a plain value, never re-derived through a live
 join. A later change to `agents.current_weight` cannot retroactively
-alter an already-persisted `weight_applied`."""
+alter an already-persisted `weight_applied`.
+
+**Milestone 4.8 (Prompt Provenance decision):** `persist_agent_output`/
+`persist_candidate_agent_output` now also accept `prompt_name`/
+`prompt_version` -- the exact `prompt_registry` row
+(`app.persistence.model_config.resolve_active_prompt`) actually resolved
+and used to build that specific agent's system prompt, supplied by the
+orchestration layer (`app.orchestration.fanout`/`.sequential`), never
+guessed or re-derived here. Frozen exactly like `weight_applied`: a later
+change to which prompt version is active cannot retroactively alter an
+already-persisted row. `recommendations.prompt_version` remains a
+separate, legacy/non-authoritative field (see Volume 3) -- these
+per-output columns are the canonical per-agent Time Machine provenance."""
 from __future__ import annotations
 
 import httpx
@@ -105,13 +117,25 @@ async def resolve_agent(client: httpx.AsyncClient, headers: dict, *, agent_name:
 
 
 async def persist_agent_output(
-    client: httpx.AsyncClient, headers: dict, *, recommendation_id: str, agent_name: str, output: AgentOutput
+    client: httpx.AsyncClient,
+    headers: dict,
+    *,
+    recommendation_id: str,
+    agent_name: str,
+    output: AgentOutput,
+    prompt_name: str | None = None,
+    prompt_version: int | None = None,
 ) -> None:
     """Persists exactly one `recommendation_agent_outputs` row for a
     successful agent output. Never called for a failed agent -- callers
     (`app.orchestration.cycle`) iterate only `FanOutResult.successes`.
     `candidate_key` stays `NULL` -- this is the game-level fan-out path
-    (Milestones 4.4/4.5), not a candidate-specific evaluation."""
+    (Milestones 4.4/4.5), not a candidate-specific evaluation.
+    `prompt_name`/`prompt_version` (Milestone 4.8) are the exact resolved
+    prompt identity the caller's orchestration layer used for this
+    agent's system prompt -- `None` only for a caller that genuinely has
+    none (there is no other legitimate reason to omit them for a real
+    agent run)."""
     agent = await resolve_agent(client, headers, agent_name=agent_name)
     payload = {
         "recommendation_id": recommendation_id,
@@ -119,6 +143,8 @@ async def persist_agent_output(
         "raw_output": output.model_dump(mode="json"),
         "agent_confidence": output.confidence,
         "weight_applied": agent["current_weight"],
+        "prompt_name": prompt_name,
+        "prompt_version": prompt_version,
     }
     response = await client.post(
         "/rest/v1/recommendation_agent_outputs",
@@ -141,6 +167,8 @@ async def persist_candidate_agent_output(
     candidate_key: str,
     raw_output: dict,
     agent_confidence: float | None,
+    prompt_name: str | None = None,
+    prompt_version: int | None = None,
 ) -> None:
     """Persists one candidate-level `recommendation_agent_outputs` row
     for the sequential Decision & Advisory chain (Milestone 4.6, Decision
@@ -155,7 +183,8 @@ async def persist_candidate_agent_output(
     No uniqueness check against an existing `(recommendation_id,
     agent_id, candidate_key)` row -- multiple evaluations of the same
     candidate may legitimately exist over time (Decision G, no
-    uniqueness constraint approved)."""
+    uniqueness constraint approved). `prompt_name`/`prompt_version`
+    (Milestone 4.8): see `persist_agent_output`'s identical note."""
     agent = await resolve_agent(client, headers, agent_name=agent_name)
     payload = {
         "recommendation_id": recommendation_id,
@@ -164,6 +193,8 @@ async def persist_candidate_agent_output(
         "agent_confidence": agent_confidence,
         "weight_applied": agent["current_weight"],
         "candidate_key": candidate_key,
+        "prompt_name": prompt_name,
+        "prompt_version": prompt_version,
     }
     response = await client.post(
         "/rest/v1/recommendation_agent_outputs",

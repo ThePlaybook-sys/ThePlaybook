@@ -16,6 +16,7 @@ from app.models.errors import ModelTimeoutError
 from app.models.fake_adapter import FakeModelAdapter, ScriptedFailure, ScriptedSuccess
 from app.models.router import AdapterRegistry
 from app.orchestration.cycle import run_recommendation_cycle
+from tests.conftest import mock_prompt_registry_route
 
 SUPABASE_URL = "https://test-project.supabase.co"
 
@@ -66,6 +67,7 @@ def _mock_context_reads(*, odds_rows: list | None = None):
         )
     )
     respx.get(f"{SUPABASE_URL}/rest/v1/odds_snapshots").mock(return_value=httpx.Response(200, json=odds_rows or []))
+    mock_prompt_registry_route(SUPABASE_URL)
 
 
 @pytest.mark.asyncio

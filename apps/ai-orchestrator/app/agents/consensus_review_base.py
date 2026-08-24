@@ -4,6 +4,14 @@ Elite Reconciliation Agent) -- parallels `ContextDataAgent`/
 `ConsensusReviewContext`. Both review the committee's already-computed
 output rather than reasoning about the game or a betting decision
 directly, so neither fits the two existing agent bases.
+
+**Milestone 4.8, Option C:** `build_messages` takes an already-resolved
+`system_prompt` string (see `app.agents.base_agent`'s identical note).
+Neither Meta Agent's nor Elite Reconciliation Agent's output is persisted
+as a `recommendation_agent_outputs` row today (unchanged by Milestone
+4.8 -- out of its approved scope), so their resolved prompt provenance is
+used to build the model call but has no persisted home yet, same as
+their raw output itself.
 """
 from __future__ import annotations
 
@@ -16,7 +24,10 @@ from app.agents.contract import MetaAgentOutput
 from app.agents.consensus_review_context import ConsensusReviewContext
 from app.models.types import ModelMessage
 
-_SYSTEM_PROMPT_TEMPLATE = """You are the {agent_name}, reviewing The Playbook's committee output for one \
+#: Preserved verbatim -- source wording for the Milestone 4.8
+#: prompt_registry seed rows (meta_agent, consensus_reconciliation_agent).
+#: No longer read at runtime.
+_LEGACY_SYSTEM_PROMPT_TEMPLATE = """You are the {agent_name}, reviewing The Playbook's committee output for one \
 specific betting candidate -- you do not analyze the game or the candidate directly, only the \
 committee's already-computed findings and consensus result given to you.
 
@@ -32,10 +43,10 @@ failed this cycle -- weigh only the findings actually present.
 Return ONLY a JSON object matching this exact shape, with no other text:
 {schema}"""
 
-_META_HARD_RULE = "Hard rule: confidence_adjustment can only ever be zero or negative -- you may only hold or lower confidence, never raise it."
-_ELITE_HARD_RULE = "Hard rule: confidence_adjustment can only ever be zero or negative -- reconciliation may preserve or reduce confidence, never increase it."
+_LEGACY_META_HARD_RULE = "Hard rule: confidence_adjustment can only ever be zero or negative -- you may only hold or lower confidence, never raise it."
+_LEGACY_ELITE_HARD_RULE = "Hard rule: confidence_adjustment can only ever be zero or negative -- reconciliation may preserve or reduce confidence, never increase it."
 
-_META_SCHEMA = """{
+_LEGACY_META_SCHEMA = """{
   "agent_name": "<this agent's name>",
   "polarization_score": 0.0,
   "uncertainty_flag": false,
@@ -43,7 +54,7 @@ _META_SCHEMA = """{
   "reasoning": "plain-language summary of committee health for this candidate"
 }"""
 
-_ELITE_SCHEMA = """{
+_LEGACY_ELITE_SCHEMA = """{
   "agent_name": "<this agent's name>",
   "candidate_key": "<the candidate key, exactly as given>",
   "reasoning": "reconciliation reasoning",
@@ -62,10 +73,11 @@ class ConsensusReviewAgent(ABC):
     def build_evidence(self, context: ConsensusReviewContext) -> dict:
         raise NotImplementedError
 
-    def build_messages(self, context: ConsensusReviewContext) -> list[ModelMessage]:
+    def build_messages(self, context: ConsensusReviewContext, *, system_prompt: str) -> list[ModelMessage]:
+        """`system_prompt` is this agent's exact, already-resolved
+        canonical text (see `app.agents.base_agent.ContextDataAgent.
+        build_messages`'s identical note) -- required keyword arg, no
+        default, no implicit fallback."""
         evidence = self.build_evidence(context)
-        hard_rule = _META_HARD_RULE if self.response_model is MetaAgentOutput else _ELITE_HARD_RULE
-        schema = _META_SCHEMA if self.response_model is MetaAgentOutput else _ELITE_SCHEMA
-        system = _SYSTEM_PROMPT_TEMPLATE.format(agent_name=self.agent_name, hard_rule=hard_rule, schema=schema)
         user = json.dumps(evidence, default=str)
-        return [ModelMessage(role="system", content=system), ModelMessage(role="user", content=user)]
+        return [ModelMessage(role="system", content=system_prompt), ModelMessage(role="user", content=user)]

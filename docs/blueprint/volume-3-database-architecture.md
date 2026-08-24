@@ -1,8 +1,10 @@
 # The Playbook — Volume 3
 ## Database Architecture: Tables, Relationships, Indexes, Triggers, Migrations, RLS
 
-**Version:** v4.15
-**Last updated:** 2026-08-22
+**Version:** v4.16
+**Last updated:** 2026-08-24
+
+**v4.16 note (MINOR):** `recommendation_agent_outputs` gains two nullable columns, `prompt_name`/`prompt_version` (Milestone 4.8, Phase 4 Closeout Remediation, 2026-08-24), plus a composite FK to `prompt_registry(prompt_name, version)` — the canonical per-agent-output prompt provenance, since `recommendations.prompt_version` (§5) cannot truthfully represent independently-versioned per-agent prompts once `prompt_registry` became the production source of agent system prompts. `recommendations.prompt_version` itself is unchanged in shape but is now documented as legacy/non-authoritative for per-agent reconstruction — see both sections below. `prompt_registry` also gains a partial unique index enforcing at most one active version per `prompt_name`. See `CHANGELOG.md` v4.16 entry for full reasoning.
 **v4.15 note (MINOR):** `consensus_snapshots` gains four nullable columns (Milestone 4.7, 2026-08-22): `candidate_key` (mirrors `recommendation_agent_outputs.candidate_key`, v4.14, exactly), `final_aggregate_confidence` (distinct from the existing `aggregate_confidence`), `below_confidence_floor` (the internal 0.55-threshold result, never a Phase-5 recommendation decision), and `participation_metadata` (the only durable record of what was attempted/failed/deferred for a historical run, since a failed/deferred agent leaves no row elsewhere). See `CHANGELOG.md` v4.15 entry for full reasoning.
 **v4.14 note (MINOR):** `recommendation_agent_outputs` gains a nullable `candidate_key text` column + partial index (Milestone 4.6, Decision G, 2026-08-22) — makes the identity of a specific evaluated wager (e.g. "KC moneyline -125") a first-class, queryable part of a row, instead of existing only inside `raw_output` JSON. `NULL` for every existing game-level fan-out output; populated only for the new sequential Decision & Advisory chain's candidate-level outputs. Deliberately no uniqueness constraint. See `CHANGELOG.md` v4.14 entry for full reasoning.
 **v4.13 note (MINOR):** §8's `model_registry` gains a `provider text not null` column (Milestone 4.4 pre-check, 2026-08-21) — closes a real gap Milestone 4.3 found: neither `model_registry` nor `model_routing_rules` stored explicit vendor identity, forcing `ModelRouter` to infer provider from model-name string prefixes. Deliberately not a `check (provider in ('openai','anthropic'))` constraint, unlike `game_provider_ids`/`team_provider_ids`/`player_provider_ids.provider_name`'s existing rigid-CHECK convention — adding a future model provider is a plain data insert, never a schema migration. Validated at the application layer instead (`app.models.router`'s adapter registry). Dev's 2 existing rows backfilled `'anthropic'` (both Anthropic-family models, confirmed before migrating). See `CHANGELOG.md` v4.13 (Volume 3) entry for full reasoning.
@@ -517,6 +519,8 @@ create index idx_recs_created on recommendations(created_at desc);
 
 **Why five separate versioning columns instead of one `version` field (v2.0):** the AI architecture doesn't move as one unit — a prompt can change without the consensus math changing, agent weights recalculate on their own schedule independent of either. Collapsing these into a single version number would hide exactly the kind of information the Time Machine principle exists to preserve: months later, "what changed" needs to be answerable at the level of *which specific thing* changed, not just "something changed." `prompt_version` and `agent_version` are populated by the Orchestrator at the moment of creation from whatever `prompt_registry` and `agents.current_weight` state was actually in effect — frozen at write time, same pattern as `weight_applied` on `recommendation_agent_outputs` below.
 
+**`prompt_version` is legacy/non-authoritative for per-agent reconstruction (v4.16, Milestone 4.8).** This column was written when `prompt_registry` modeled one prompt per recommendation cycle (the `nfl_single_v1.0`/`nfl_parlay_v1.0` recommendation-generation-prompt concept it still refers to) — a concept that predates Milestone 4.6's candidate-anchored architecture and Milestone 4.7's per-agent committee entirely. Once `prompt_registry` became the production source of each of the 12+ real agents' own system prompts (`prompt_name = agent_name`, each independently versioned — e.g. `injury_intelligence_agent → v3`, `weather_agent → v2` legitimately coexisting in the same cycle), a single scalar column on `recommendations` can no longer truthfully represent which prompt produced which finding. **`recommendation_agent_outputs.prompt_name`/`.prompt_version` (below) are the canonical per-agent Time Machine provenance going forward.** This column remains in place, unmodified in shape, for backward compatibility — not repurposed, not removed, per Mac's explicit instruction — but a future reader should not treat it as sufficient to reconstruct which prompt any individual agent used.
+
 **`display_id` (v3.0):** generated at creation time by a simple sequence-per-sport-per-year function, format `PB-{year}-{sport}-{sequence}`. Purely a UX/support convenience — `id` (the UUID) remains the actual primary key and foreign key target everywhere; `display_id` is what a user sees and what support references, so nobody's pasting UUIDs into a support ticket.
 
 ### `recommendation_agent_outputs`
@@ -529,14 +533,20 @@ create table recommendation_agent_outputs (
   agent_confidence numeric(5,4),
   weight_applied numeric(5,4) not null,      -- snapshot of the agent's weight AT THIS MOMENT
   candidate_key text,                        -- v4.14: identity of the specific wager evaluated, when applicable
-  created_at timestamptz default now()
+  prompt_name text,                          -- v4.16: canonical per-agent prompt provenance, = agent_name
+  prompt_version integer,                    -- v4.16: the exact prompt_registry.version actually used
+  created_at timestamptz default now(),
+  foreign key (prompt_name, prompt_version) references prompt_registry(prompt_name, version)
 );
 create index idx_rao_recommendation on recommendation_agent_outputs(recommendation_id);
 create index idx_recommendation_agent_outputs_candidate_key on recommendation_agent_outputs(recommendation_id, candidate_key) where candidate_key is not null;
+create index idx_recommendation_agent_outputs_prompt on recommendation_agent_outputs(prompt_name, prompt_version) where prompt_name is not null;
 ```
 **`weight_applied` is a frozen copy of `agents.current_weight`, not a join.** This is a direct Time Machine requirement: if we only stored a reference to `agents.current_weight`, reconstructing a recommendation from three months ago would show *today's* weight, not the weight that was actually used to compute the consensus at the time — silently rewriting history. Every place this pattern applies (odds, weights, anything mutable) uses the same frozen-copy approach.
 
 **`candidate_key` (v4.14, Phase 4 Milestone 4.6, Decision G):** a nullable text column identifying *the specific wager being evaluated* (e.g. `"g1:DraftKings:moneyline:Kansas City Chiefs:none"`) — distinct from, and not interchangeable with, `recommendation_id` (the overall recommendation-analysis cycle). Added because the sequential Decision & Advisory chain (Probability Modeling → Expected Value → Risk Manager → Bankroll Coach) evaluates a specific market/selection, not "the game" abstractly — `AgentOutput.directional_lean` can only speak to one side at a time, so one committee run must be scoped to one concrete candidate. `NULL` for every game-level fan-out output (Milestones 4.4/4.5, unchanged); populated only for candidate-level sequential outputs. **Deliberately no uniqueness constraint** — multiple evaluations of the same candidate over time are legitimate history, not an error; retry/versioning semantics for this identity aren't yet designed strongly enough to justify enforcing uniqueness at the database level. The partial index (`where candidate_key is not null`) supports the expected Phase 5 lookup pattern ("every candidate evaluated within this cycle") without indexing the majority of rows that have no candidate at all.
+
+**`prompt_name`/`prompt_version` (v4.16, Phase 4 Milestone 4.8, Prompt Provenance decision):** the canonical, queryable, per-agent-output record of which exact `prompt_registry` row (`prompt_name = agent_name`, its own independently-incrementing `version`) produced this specific output — frozen at persist time, same pattern as `weight_applied`: a later change to which prompt version is currently active can never retroactively alter an already-persisted row. Nullable and backward-compatible — the pre-Milestone-4.8 rows this table already held stay `NULL` on both columns, and remain valid, queryable history exactly as before. Populated from the exact resolved `prompt_registry` row the orchestration layer used to build that agent's system prompt (`app.persistence.model_config.resolve_active_prompt`) — never a caller-supplied guess, never the currently-active prompt read again after the fact, never `agent_name` plus an assumed version, and never copied from `recommendations.prompt_version`. The composite foreign key to `prompt_registry(prompt_name, version)` is `MATCH SIMPLE` (Postgres default): a row with either column `NULL` is never checked against it, so the existing NULL-provenance rows are unaffected; a non-NULL pair must reference a real, once-registered prompt version. `prompt_registry` rows are never deleted by any code path (deprecation is a `status` update, not a `DELETE`), so this FK does not put historical provenance at risk of being orphaned under current application behavior.
 
 ### `consensus_snapshots`
 ```sql
@@ -733,7 +743,7 @@ create table model_routing_rules (
 ```
 This directly resolves the open item flagged at the end of Volume 2: model routing is data, read by the Orchestrator at request time, not hardcoded logic — updating this table changes behavior without a deploy, satisfying the master spec's "swap models without redesign" requirement at the schema level.
 
-### `prompt_registry` (v2.0)
+### `prompt_registry` (v2.0; production wiring + active-version integrity v4.16)
 ```sql
 create table prompt_registry (
   id uuid primary key default gen_random_uuid(),
@@ -745,8 +755,13 @@ create table prompt_registry (
   updated_at timestamptz default now(),
   unique(prompt_name, version)
 );
+create unique index idx_prompt_registry_one_active_per_name on prompt_registry(prompt_name) where status = 'active';
 ```
-Every agent (Volume 4 §2) loads its prompt from this table by `(prompt_name, status='active')` rather than embedding prompt text in code. This is the mechanism that makes `prompt_version` on `recommendations` (§5 above) meaningful — without a registry, "prompt version" would have nothing to point to.
+Every agent (Volume 4 §2) loads its prompt from this table by `(prompt_name, status='active')` rather than embedding prompt text in code — as of Milestone 4.8, this is genuinely true in production, not aspirational: each of the 12 built agents' full canonical system prompt is a row here (`prompt_name = agent_name`), resolved once per execution at the orchestration/harness boundary (never inside an agent class, never via the agent's own I/O) and passed in already-built. A missing active row for a required agent fails that agent's run clearly (`PromptConfigError`) — production never silently substitutes hardcoded text.
+
+**`idx_prompt_registry_one_active_per_name` (v4.16, Milestone 4.8):** enforces at the database level that at most one row may be `status='active'` per `prompt_name` at a time — deterministic active-version resolution was explicitly required to not depend on an application-side "highest version wins" convention alone, since that would silently tolerate an invalid multi-active-row state rather than refusing to create one.
+
+This registry is no longer the mechanism that makes `recommendations.prompt_version` (§5 above) meaningful — see that column's own v4.16 note for why a single scalar can't represent per-agent versions once this table moved from a single-recommendation-prompt concept to a per-agent one. `recommendation_agent_outputs.prompt_name`/`.prompt_version` (above) are the mechanism now.
 
 ### `model_registry` (v2.0; `provider` added v4.13)
 ```sql

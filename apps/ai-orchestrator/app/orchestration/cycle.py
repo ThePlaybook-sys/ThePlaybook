@@ -73,6 +73,8 @@ async def run_recommendation_cycle(
     fan_out_result = await run_fan_out(
         agents,
         context,
+        client=client,
+        headers=headers,
         routing_rules=routing_rules,
         model_providers=model_providers,
         adapter_registry=adapter_registry,
@@ -81,7 +83,13 @@ async def run_recommendation_cycle(
 
     for result in fan_out_result.successes:
         await persist_agent_output(
-            client, headers, recommendation_id=recommendation_id, agent_name=result.agent_name, output=result.output
+            client,
+            headers,
+            recommendation_id=recommendation_id,
+            agent_name=result.agent_name,
+            output=result.output,
+            prompt_name=result.prompt_name,
+            prompt_version=result.prompt_version,
         )
 
     return recommendation_id, fan_out_result
@@ -148,6 +156,8 @@ async def run_candidate_evaluation(
 
     chain_result = await run_sequential_chain(
         context,
+        client=client,
+        headers=headers,
         routing_rules=routing_rules,
         model_providers=model_providers,
         adapter_registry=adapter_registry,
@@ -173,6 +183,8 @@ async def run_candidate_evaluation(
             candidate_key=key,
             raw_output=raw_output,
             agent_confidence=agent_confidence,
+            prompt_name=result.prompt_name,
+            prompt_version=result.prompt_version,
         )
 
     return chain_result

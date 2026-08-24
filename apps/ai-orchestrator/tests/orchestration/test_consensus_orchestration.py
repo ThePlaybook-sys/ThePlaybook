@@ -15,6 +15,7 @@ from app.models.fake_adapter import FakeModelAdapter, ScriptedSuccess
 from app.models.router import AdapterRegistry
 from app.orchestration import consensus as consensus_module
 from app.orchestration.consensus import run_candidate_consensus
+from tests.conftest import mock_prompt_registry_route
 
 SUPABASE_URL = "https://test-project.supabase.co"
 
@@ -125,6 +126,7 @@ async def test_computed_consensus_full_flow_persists_expected_values():
         _agent_output_row("weather_agent", category="context", confidence=0.6, weight_applied=0.5, directional_lean="away", evidence_classification="assumption"),
     ]
     _mock_agent_outputs(rows)
+    mock_prompt_registry_route(SUPABASE_URL)
     snapshot_route = respx.post(f"{SUPABASE_URL}/rest/v1/consensus_snapshots").mock(return_value=httpx.Response(201, json=[{}]))
     adapter = FakeModelAdapter(provider="anthropic", script=[ScriptedSuccess(raw_text=_meta_json(adjustment=-0.05))])
     registry = AdapterRegistry(adapters={"anthropic": adapter})
@@ -155,6 +157,7 @@ async def test_computed_consensus_full_flow_persists_expected_values():
 async def test_weight_source_is_persisted_weight_applied_never_fresh_agents_query():
     rows = [_agent_output_row("injury_intelligence_agent", category="context", confidence=0.7, weight_applied=1.0, directional_lean="home")]
     _mock_agent_outputs(rows)
+    mock_prompt_registry_route(SUPABASE_URL)
     respx.post(f"{SUPABASE_URL}/rest/v1/consensus_snapshots").mock(return_value=httpx.Response(201, json=[{}]))
     agents_route = respx.get(f"{SUPABASE_URL}/rest/v1/agents").mock(return_value=httpx.Response(200, json=[{"id": "a1", "current_weight": 99.0}]))
     adapter = FakeModelAdapter(provider="anthropic", script=[ScriptedSuccess(raw_text=_meta_json())])
@@ -176,6 +179,7 @@ async def test_weight_source_is_persisted_weight_applied_never_fresh_agents_quer
 async def test_meta_positive_adjustment_rejected_treated_as_no_adjustment():
     rows = [_agent_output_row("injury_intelligence_agent", category="context", confidence=0.7, weight_applied=1.0, directional_lean="home")]
     _mock_agent_outputs(rows)
+    mock_prompt_registry_route(SUPABASE_URL)
     respx.post(f"{SUPABASE_URL}/rest/v1/consensus_snapshots").mock(return_value=httpx.Response(201, json=[{}]))
     malformed_meta = json.dumps({"agent_name": "meta_agent", "polarization_score": 0.2, "uncertainty_flag": False, "confidence_adjustment": 0.5, "reasoning": "r"})
     adapter = FakeModelAdapter(provider="anthropic", script=[ScriptedSuccess(raw_text=malformed_meta)])
@@ -196,6 +200,7 @@ async def test_meta_positive_adjustment_rejected_treated_as_no_adjustment():
 async def test_final_confidence_floors_at_zero():
     rows = [_agent_output_row("injury_intelligence_agent", category="context", confidence=0.05, weight_applied=1.0, directional_lean="home")]
     _mock_agent_outputs(rows)
+    mock_prompt_registry_route(SUPABASE_URL)
     respx.post(f"{SUPABASE_URL}/rest/v1/consensus_snapshots").mock(return_value=httpx.Response(201, json=[{}]))
     adapter = FakeModelAdapter(provider="anthropic", script=[ScriptedSuccess(raw_text=_meta_json(adjustment=-0.5))])
     registry = AdapterRegistry(adapters={"anthropic": adapter})
@@ -217,6 +222,7 @@ async def test_candidate_specific_consensus_no_cross_contamination():
         _agent_output_row("injury_intelligence_agent", category="context", confidence=0.7, weight_applied=1.0, directional_lean="home"),
     ]
     _mock_agent_outputs(rows)
+    mock_prompt_registry_route(SUPABASE_URL)
     respx.post(f"{SUPABASE_URL}/rest/v1/consensus_snapshots").mock(return_value=httpx.Response(201, json=[{}]))
     adapter = FakeModelAdapter(provider="anthropic", script=[ScriptedSuccess(raw_text=_meta_json(adjustment=0.0)), ScriptedSuccess(raw_text=_meta_json(adjustment=0.0))])
     registry = AdapterRegistry(adapters={"anthropic": adapter})
@@ -245,6 +251,7 @@ async def test_candidate_specific_consensus_no_cross_contamination():
 async def test_elite_second_pass_never_triggers_without_user_id_never_reads_subscriptions():
     rows = [_agent_output_row("injury_intelligence_agent", category="context", confidence=0.7, weight_applied=1.0, directional_lean="home")]
     _mock_agent_outputs(rows)
+    mock_prompt_registry_route(SUPABASE_URL)
     respx.post(f"{SUPABASE_URL}/rest/v1/consensus_snapshots").mock(return_value=httpx.Response(201, json=[{}]))
     subscriptions_route = respx.get(f"{SUPABASE_URL}/rest/v1/subscriptions").mock(return_value=httpx.Response(200, json=[{"tier": "elite"}]))
     adapter = FakeModelAdapter(provider="anthropic", script=[ScriptedSuccess(raw_text=_meta_json())])
@@ -275,6 +282,7 @@ async def test_elite_trigger_wiring_when_variance_exceeds_threshold_and_tier_is_
     monkeypatch.setattr(consensus_module, "compute_consensus", lambda *a, **k: fabricated_high_variance_result)
 
     _mock_agent_outputs([_agent_output_row("injury_intelligence_agent", category="context", confidence=0.7, weight_applied=1.0, directional_lean="home")])
+    mock_prompt_registry_route(SUPABASE_URL)
     snapshot_route = respx.post(f"{SUPABASE_URL}/rest/v1/consensus_snapshots").mock(return_value=httpx.Response(201, json=[{}]))
     respx.get(f"{SUPABASE_URL}/rest/v1/subscriptions").mock(return_value=httpx.Response(200, json=[{"tier": "elite"}]))
     adapter = FakeModelAdapter(provider="anthropic", script=[ScriptedSuccess(raw_text=_meta_json(adjustment=-0.05)), ScriptedSuccess(raw_text=_elite_json(adjustment=-0.08))])
@@ -302,6 +310,7 @@ async def test_elite_not_triggered_for_free_tier_even_with_high_variance(monkeyp
     monkeypatch.setattr(consensus_module, "compute_consensus", lambda *a, **k: fabricated_high_variance_result)
 
     _mock_agent_outputs([_agent_output_row("injury_intelligence_agent", category="context", confidence=0.7, weight_applied=1.0, directional_lean="home")])
+    mock_prompt_registry_route(SUPABASE_URL)
     respx.post(f"{SUPABASE_URL}/rest/v1/consensus_snapshots").mock(return_value=httpx.Response(201, json=[{}]))
     respx.get(f"{SUPABASE_URL}/rest/v1/subscriptions").mock(return_value=httpx.Response(200, json=[{"tier": "free"}]))
     adapter = FakeModelAdapter(provider="anthropic", script=[ScriptedSuccess(raw_text=_meta_json())])
@@ -325,6 +334,7 @@ async def test_elite_positive_adjustment_rejected_treated_as_no_adjustment(monke
     monkeypatch.setattr(consensus_module, "compute_consensus", lambda *a, **k: fabricated_high_variance_result)
 
     _mock_agent_outputs([_agent_output_row("injury_intelligence_agent", category="context", confidence=0.7, weight_applied=1.0, directional_lean="home")])
+    mock_prompt_registry_route(SUPABASE_URL)
     respx.post(f"{SUPABASE_URL}/rest/v1/consensus_snapshots").mock(return_value=httpx.Response(201, json=[{}]))
     respx.get(f"{SUPABASE_URL}/rest/v1/subscriptions").mock(return_value=httpx.Response(200, json=[{"tier": "elite"}]))
     malformed_elite = json.dumps({"agent_name": "consensus_reconciliation_agent", "candidate_key": "k", "reasoning": "r", "confidence_adjustment": 0.2, "supporting_evidence": [], "would_change_mind_if": "x"})

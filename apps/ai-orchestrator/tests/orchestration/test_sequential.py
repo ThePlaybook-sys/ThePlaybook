@@ -1,10 +1,13 @@
-"""Tests for app.orchestration.sequential (Milestone 4.6)."""
+"""Tests for app.orchestration.sequential (Milestone 4.6; client/headers +
+prompt resolution added Milestone 4.8)."""
 from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
 
+import httpx
 import pytest
+import respx
 
 from app.agents.bankroll_coach import BankrollCoachAgent
 from app.agents.committee_context import ParticipationMetadata, SequentialDecisionContext
@@ -16,6 +19,13 @@ from app.models.errors import ModelTimeoutError
 from app.models.fake_adapter import FakeModelAdapter, ScriptedFailure, ScriptedSuccess
 from app.models.router import AdapterRegistry
 from app.orchestration.sequential import run_sequential_chain
+from tests.conftest import mock_prompt_registry_route
+
+SUPABASE_URL = "https://test-project.supabase.co"
+
+
+def _headers() -> dict:
+    return {"Authorization": "Bearer test-key", "apikey": "test-key"}
 
 _VALID_AGENT_OUTPUT = json.dumps(
     {
@@ -91,7 +101,9 @@ def _agent_output_json(agent_name: str) -> str:
 
 
 @pytest.mark.asyncio
+@respx.mock
 async def test_chain_full_when_all_four_succeed():
+    mock_prompt_registry_route(SUPABASE_URL)
     adapter = FakeModelAdapter(
         provider="anthropic",
         script=[
@@ -101,9 +113,14 @@ async def test_chain_full_when_all_four_succeed():
             ScriptedSuccess(raw_text=_agent_output_json("bankroll_coach_agent")),
         ],
     )
-    result = await run_sequential_chain(
-        _context(), routing_rules=_routing_rules(), adapter_registry=AdapterRegistry(adapters={"anthropic": adapter})
-    )
+    async with httpx.AsyncClient(base_url=SUPABASE_URL) as client:
+        result = await run_sequential_chain(
+            _context(),
+            client=client,
+            headers=_headers(),
+            routing_rules=_routing_rules(),
+            adapter_registry=AdapterRegistry(adapters={"anthropic": adapter}),
+        )
     assert result.status == "full"
     assert len(result.successes) == 4
     assert result.probability.modeled_probability == 0.57
@@ -114,14 +131,21 @@ async def test_chain_full_when_all_four_succeed():
 
 
 @pytest.mark.asyncio
+@respx.mock
 async def test_chain_failed_when_probability_modeling_fails_blocks_everything():
+    mock_prompt_registry_route(SUPABASE_URL)
     adapter = FakeModelAdapter(
         provider="anthropic",
         script=[ScriptedFailure(error=ModelTimeoutError("t1")), ScriptedFailure(error=ModelTimeoutError("t2"))],
     )
-    result = await run_sequential_chain(
-        _context(), routing_rules=_routing_rules(), adapter_registry=AdapterRegistry(adapters={"anthropic": adapter})
-    )
+    async with httpx.AsyncClient(base_url=SUPABASE_URL) as client:
+        result = await run_sequential_chain(
+            _context(),
+            client=client,
+            headers=_headers(),
+            routing_rules=_routing_rules(),
+            adapter_registry=AdapterRegistry(adapters={"anthropic": adapter}),
+        )
     assert result.status == "failed"
     assert len(result.results) == 1  # EV/Risk/Bankroll never attempted
     assert result.probability is None
@@ -131,7 +155,10 @@ async def test_chain_failed_when_probability_modeling_fails_blocks_everything():
 
 
 @pytest.mark.asyncio
+@respx.mock
 async def test_chain_partial_when_probability_succeeds_but_one_downstream_agent_fails():
+    mock_prompt_registry_route(SUPABASE_URL)
+
     class _MixedAdapter:
         def __init__(self):
             self.calls = 0
@@ -151,7 +178,8 @@ async def test_chain_partial_when_probability_succeeds_but_one_downstream_agent_
             )
 
     registry = AdapterRegistry(adapters={"anthropic": _MixedAdapter()})
-    result = await run_sequential_chain(_context(), routing_rules=_routing_rules(), adapter_registry=registry)
+    async with httpx.AsyncClient(base_url=SUPABASE_URL) as client:
+        result = await run_sequential_chain(_context(), client=client, headers=_headers(), routing_rules=_routing_rules(), adapter_registry=registry)
 
     assert result.status == "partial"
     assert len(result.successes) == 3
@@ -165,7 +193,9 @@ async def test_chain_partial_when_probability_succeeds_but_one_downstream_agent_
 
 
 @pytest.mark.asyncio
+@respx.mock
 async def test_missing_bankroll_profile_yields_null_stake_but_chain_still_full():
+    mock_prompt_registry_route(SUPABASE_URL)
     context = SequentialDecisionContext(
         game_id="g1",
         correlation_id="corr-1",
@@ -183,9 +213,14 @@ async def test_missing_bankroll_profile_yields_null_stake_but_chain_still_full()
             ScriptedSuccess(raw_text=_agent_output_json("bankroll_coach_agent")),
         ],
     )
-    result = await run_sequential_chain(
-        context, routing_rules=_routing_rules(), adapter_registry=AdapterRegistry(adapters={"anthropic": adapter})
-    )
+    async with httpx.AsyncClient(base_url=SUPABASE_URL) as client:
+        result = await run_sequential_chain(
+            context,
+            client=client,
+            headers=_headers(),
+            routing_rules=_routing_rules(),
+            adapter_registry=AdapterRegistry(adapters={"anthropic": adapter}),
+        )
     assert result.status == "full"
     assert result.kelly.stake is None
     assert result.kelly.full_kelly_fraction is not None  # Kelly fractions still computed

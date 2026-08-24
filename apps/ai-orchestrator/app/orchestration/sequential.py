@@ -16,11 +16,19 @@ deterministic computation for the remaining steps -- their own
 LLM-narration failure is isolated exactly like `run_agent` isolates a
 fan-out agent's failure, since the deterministic numbers themselves don't
 depend on any LLM call succeeding.
+
+**Milestone 4.8:** `run_sequential_agent` resolves each agent's canonical
+system prompt via `resolve_active_prompt` at this orchestration boundary,
+exactly mirroring `app.orchestration.fanout.run_agent` -- see that
+module's docstring for the full rationale (Option C, fail-loud isolation,
+never a hardcoded fallback).
 """
 from __future__ import annotations
 
 import dataclasses
 from dataclasses import dataclass
+
+import httpx
 
 from app.agents.bankroll_coach import BankrollCoachAgent
 from app.agents.committee_context import SequentialDecisionContext
@@ -34,6 +42,7 @@ from app.features.risk import RiskAssessment, build_risk_assessment
 from app.models.retry_policy import RetryEngine
 from app.models.router import AdapterRegistry, ModelRouter
 from app.models.types import ModelRequest
+from app.persistence.model_config import resolve_active_prompt
 
 
 @dataclass
@@ -42,6 +51,8 @@ class SequentialAgentRunResult:
     status: str  # "success" | "failed"
     output: object | None = None  # AgentOutput or ProbabilityModelOutput
     error: str | None = None
+    prompt_name: str | None = None
+    prompt_version: int | None = None
 
 
 @dataclass
@@ -66,6 +77,8 @@ async def run_sequential_agent(
     agent: SequentialDecisionAgent,
     context: SequentialDecisionContext,
     *,
+    client: httpx.AsyncClient,
+    headers: dict,
     routing_rule: dict,
     model_providers: dict[str, str] | None,
     adapter_registry: AdapterRegistry,
@@ -77,12 +90,13 @@ async def run_sequential_agent(
     the agent declares (`AgentOutput` for three of the four,
     `ProbabilityModelOutput` for Probability Modeling)."""
     try:
+        resolved_prompt = await resolve_active_prompt(client, headers, prompt_name=agent.agent_name)
         decision = ModelRouter.route(routing_rule, model_providers=model_providers)
         primary = adapter_registry.get(decision.primary_provider)
         fallback = adapter_registry.get(decision.fallback_provider) if decision.fallback_provider else None
         request = ModelRequest(
             model=decision.primary_model,
-            messages=agent.build_messages(context),
+            messages=agent.build_messages(context, system_prompt=resolved_prompt.prompt_text),
             task_type=agent.task_type,
             agent_name=agent.agent_name,
             correlation_id=context.correlation_id,
@@ -97,12 +111,20 @@ async def run_sequential_agent(
         )
     except Exception as exc:  # noqa: BLE001 -- deliberate: isolate this one agent, never abort the chain
         return SequentialAgentRunResult(agent_name=agent.agent_name, status="failed", error=str(exc))
-    return SequentialAgentRunResult(agent_name=agent.agent_name, status="success", output=response.parsed)
+    return SequentialAgentRunResult(
+        agent_name=agent.agent_name,
+        status="success",
+        output=response.parsed,
+        prompt_name=resolved_prompt.prompt_name,
+        prompt_version=resolved_prompt.version,
+    )
 
 
 async def run_sequential_chain(
     context: SequentialDecisionContext,
     *,
+    client: httpx.AsyncClient,
+    headers: dict,
     routing_rules: dict[str, dict],
     model_providers: dict[str, str] | None = None,
     adapter_registry: AdapterRegistry,
@@ -111,7 +133,8 @@ async def run_sequential_chain(
     """Runs the full 4-step chain against one already-built
     `SequentialDecisionContext` (one game, one `MarketCandidate`,
     upstream fan-out outputs + participation metadata already attached).
-    `routing_rules` is keyed by each agent's `task_type`."""
+    `routing_rules` is keyed by each agent's `task_type`. `client`/
+    `headers` are used only for `resolve_active_prompt` (Milestone 4.8)."""
     retry_engine = retry_engine or RetryEngine()
     results: list[SequentialAgentRunResult] = []
 
@@ -119,6 +142,8 @@ async def run_sequential_chain(
     probability_result = await run_sequential_agent(
         probability_agent,
         context,
+        client=client,
+        headers=headers,
         routing_rule=routing_rules[probability_agent.task_type],
         model_providers=model_providers,
         adapter_registry=adapter_registry,
@@ -138,6 +163,8 @@ async def run_sequential_chain(
         await run_sequential_agent(
             ev_agent,
             context,
+            client=client,
+            headers=headers,
             routing_rule=routing_rules[ev_agent.task_type],
             model_providers=model_providers,
             adapter_registry=adapter_registry,
@@ -152,6 +179,8 @@ async def run_sequential_chain(
         await run_sequential_agent(
             risk_agent,
             context,
+            client=client,
+            headers=headers,
             routing_rule=routing_rules[risk_agent.task_type],
             model_providers=model_providers,
             adapter_registry=adapter_registry,
@@ -172,6 +201,8 @@ async def run_sequential_chain(
         await run_sequential_agent(
             bankroll_agent,
             context,
+            client=client,
+            headers=headers,
             routing_rule=routing_rules[bankroll_agent.task_type],
             model_providers=model_providers,
             adapter_registry=adapter_registry,
