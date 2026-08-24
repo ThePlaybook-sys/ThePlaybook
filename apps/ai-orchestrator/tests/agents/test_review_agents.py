@@ -7,6 +7,13 @@ import json
 import pytest
 
 from app.agents.committee_context import ParticipationMetadata
+from app.agents.consensus_review_base import (
+    _LEGACY_ELITE_HARD_RULE,
+    _LEGACY_ELITE_SCHEMA,
+    _LEGACY_META_HARD_RULE,
+    _LEGACY_META_SCHEMA,
+    _LEGACY_SYSTEM_PROMPT_TEMPLATE,
+)
 from app.agents.consensus_review_context import ConsensusReviewContext
 from app.agents.contract import MetaAgentOutput
 from app.agents.elite_reconciliation_agent import EliteReconciliationAgent
@@ -15,6 +22,14 @@ from app.agents.meta_agent import MetaAgent
 from app.models.fake_adapter import FakeModelAdapter, ScriptedSuccess
 from app.models.retry_policy import RetryEngine
 from app.models.types import ModelRequest
+
+
+def _meta_prompt(agent) -> str:
+    return _LEGACY_SYSTEM_PROMPT_TEMPLATE.format(agent_name=agent.agent_name, hard_rule=_LEGACY_META_HARD_RULE, schema=_LEGACY_META_SCHEMA)
+
+
+def _elite_prompt(agent) -> str:
+    return _LEGACY_SYSTEM_PROMPT_TEMPLATE.format(agent_name=agent.agent_name, hard_rule=_LEGACY_ELITE_HARD_RULE, schema=_LEGACY_ELITE_SCHEMA)
 
 
 def _participation() -> ParticipationMetadata:
@@ -67,7 +82,8 @@ def test_meta_agent_evidence_groups_findings_by_category():
 
 
 def test_meta_agent_prompt_states_hard_rule():
-    messages = MetaAgent().build_messages(_context())
+    agent = MetaAgent()
+    messages = agent.build_messages(_context(), system_prompt=_meta_prompt(agent))
     assert "zero or negative" in messages[0].content
 
 
@@ -78,7 +94,7 @@ async def test_meta_agent_produces_contract_valid_output_via_fake_adapter():
     raw = json.dumps({"agent_name": "meta_agent", "polarization_score": 0.2, "uncertainty_flag": False, "confidence_adjustment": -0.05, "reasoning": "r"})
     adapter = FakeModelAdapter(provider="anthropic", script=[ScriptedSuccess(raw_text=raw)])
     request = ModelRequest(
-        model="claude-sonnet-5", messages=agent.build_messages(context), task_type=agent.task_type,
+        model="claude-sonnet-5", messages=agent.build_messages(context, system_prompt=_meta_prompt(agent)), task_type=agent.task_type,
         agent_name=agent.agent_name, correlation_id=context.correlation_id, response_model=agent.response_model,
     )
     response = await RetryEngine().execute(primary=adapter, primary_provider="anthropic", request=request)
@@ -122,7 +138,7 @@ async def test_elite_agent_produces_contract_valid_output_via_fake_adapter():
     )
     adapter = FakeModelAdapter(provider="anthropic", script=[ScriptedSuccess(raw_text=raw)])
     request = ModelRequest(
-        model="claude-opus-5", messages=agent.build_messages(context), task_type=agent.task_type,
+        model="claude-opus-5", messages=agent.build_messages(context, system_prompt=_elite_prompt(agent)), task_type=agent.task_type,
         agent_name=agent.agent_name, correlation_id=context.correlation_id, response_model=agent.response_model,
     )
     response = await RetryEngine().execute(primary=adapter, primary_provider="anthropic", request=request)

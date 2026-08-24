@@ -167,36 +167,49 @@ def test_confidence_floor_exact_boundary():
 
 
 # --- should_trigger_elite_second_pass ---
-# NOTE: real compute_consensus output can never naturally exceed
-# agreement_variance=0.1225 given the {1.0, 0.3} lean_factor scheme (see
-# should_trigger_elite_second_pass's own docstring) -- these tests
-# exercise the trigger LOGIC in isolation with directly-supplied
-# variance values, since no real computed input can reach the threshold
-# today. Flagged prominently in the Milestone 4.7 completion report.
+# Milestone 4.8, Decision L: ELITE_VARIANCE_THRESHOLD corrected from the
+# structurally-unreachable 0.25 (Volume 4 Section 4.3's original value)
+# to 0.10 -- reachable from real compute_consensus output. A 70/30
+# voting split (agreement_variance = 0.1029, hand-calculated) is the
+# smallest real-world split that now triggers; 75/25 (0.0919) does not.
+# These tests exercise the trigger LOGIC directly with supplied variance
+# values (both boundary values and the real hand-calculated 70/30 figure).
 
 
 def test_exactly_at_threshold_does_not_trigger():
-    assert should_trigger_elite_second_pass(0.25, "elite") is False
+    assert should_trigger_elite_second_pass(0.10, "elite") is False
 
 
 def test_above_threshold_and_elite_triggers():
-    assert should_trigger_elite_second_pass(0.30, "elite") is True
+    assert should_trigger_elite_second_pass(0.11, "elite") is True
+
+
+def test_70_30_split_variance_triggers_for_elite_tier():
+    # p=0.7: agreement_variance = 0.49 * 0.7 * 0.3 = 0.1029 -- the
+    # smallest real head-count split that now crosses the threshold.
+    assert should_trigger_elite_second_pass(0.1029, "elite") is True
+
+
+def test_75_25_split_variance_does_not_trigger():
+    # p=0.75: agreement_variance = 0.49 * 0.75 * 0.25 = 0.091875 --
+    # ordinary disagreement, deliberately below the threshold.
+    assert should_trigger_elite_second_pass(0.091875, "elite") is False
 
 
 def test_above_threshold_but_free_tier_does_not_trigger():
-    assert should_trigger_elite_second_pass(0.30, "free") is False
+    assert should_trigger_elite_second_pass(0.11, "free") is False
 
 
 def test_above_threshold_but_pro_tier_does_not_trigger():
-    assert should_trigger_elite_second_pass(0.30, "pro") is False
+    assert should_trigger_elite_second_pass(0.11, "pro") is False
 
 
 def test_above_threshold_but_syndicate_tier_does_not_trigger():
-    assert should_trigger_elite_second_pass(0.30, "syndicate") is False
+    assert should_trigger_elite_second_pass(0.11, "syndicate") is False
 
 
 def test_above_threshold_but_none_tier_does_not_trigger():
-    assert should_trigger_elite_second_pass(0.30, None) is False
+    assert should_trigger_elite_second_pass(0.11, None) is False
 
 
 def test_none_variance_never_triggers_even_with_elite_tier():
@@ -204,4 +217,4 @@ def test_none_variance_never_triggers_even_with_elite_tier():
 
 
 def test_below_threshold_elite_tier_does_not_trigger():
-    assert should_trigger_elite_second_pass(0.10, "elite") is False
+    assert should_trigger_elite_second_pass(0.05, "elite") is False

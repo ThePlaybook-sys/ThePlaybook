@@ -8,6 +8,7 @@ import json
 
 import pytest
 
+from app.agents.base_agent import _LEGACY_SYSTEM_PROMPT_TEMPLATE
 from app.agents.context import AgentContext
 from app.agents.injury_intelligence import InjuryIntelligenceAgent
 from app.agents.rest_days import RestDaysAgent
@@ -16,6 +17,15 @@ from app.agents.weather import WeatherAgent
 from app.features.travel import TravelFeatures
 from app.models.fake_adapter import FakeModelAdapter, ScriptedSuccess
 from app.models.retry_policy import RetryEngine
+
+
+def _system_prompt(agent) -> str:
+    """Milestone 4.8: build_messages no longer builds its own system
+    prompt -- tests supply one explicitly, exactly as the orchestration
+    layer's resolve_active_prompt result would in production. Uses the
+    same legacy template the prompt_registry seed rows were generated
+    from, so these tests still exercise the real production wording."""
+    return _LEGACY_SYSTEM_PROMPT_TEMPLATE.format(agent_name=agent.agent_name)
 
 _VALID_OUTPUT = json.dumps(
     {
@@ -142,7 +152,7 @@ def test_travel_fatigue_agent_missing_travel_data_stays_none_never_zero():
 def test_build_messages_includes_agent_name_in_system_prompt(agent_cls):
     agent = agent_cls()
     context = _context()
-    messages = agent.build_messages(context)
+    messages = agent.build_messages(context, system_prompt=_system_prompt(agent))
     assert messages[0].role == "system"
     assert agent.agent_name in messages[0].content
 
@@ -151,7 +161,7 @@ def test_build_messages_includes_agent_name_in_system_prompt(agent_cls):
 def test_build_messages_user_content_is_exact_json_of_evidence(agent_cls):
     agent = agent_cls()
     context = _context(injuries={"value": [{"status": "out"}], "status": "fresh"}, weather={"value": {}, "status": "fresh"})
-    messages = agent.build_messages(context)
+    messages = agent.build_messages(context, system_prompt=_system_prompt(agent))
     assert messages[1].role == "user"
     parsed_back = json.loads(messages[1].content)
     assert parsed_back == agent.build_evidence(context)
@@ -159,14 +169,14 @@ def test_build_messages_user_content_is_exact_json_of_evidence(agent_cls):
 
 def test_system_prompt_instructs_never_treat_null_as_neutral():
     agent = InjuryIntelligenceAgent()
-    messages = agent.build_messages(_context())
+    messages = agent.build_messages(_context(), system_prompt=_system_prompt(agent))
     assert "null" in messages[0].content.lower()
     assert "never" in messages[0].content.lower()
 
 
 def test_system_prompt_instructs_staleness_affects_confidence():
     agent = WeatherAgent()
-    messages = agent.build_messages(_context())
+    messages = agent.build_messages(_context(), system_prompt=_system_prompt(agent))
     assert "stale" in messages[0].content.lower()
     assert "confidence" in messages[0].content.lower()
 
@@ -186,7 +196,7 @@ async def test_agent_produces_contract_valid_agent_output_via_fake_adapter(agent
     adapter = FakeModelAdapter(provider="anthropic", script=[ScriptedSuccess(raw_text=valid_output)])
     request = ModelRequest(
         model="claude-sonnet-5",
-        messages=agent.build_messages(context),
+        messages=agent.build_messages(context, system_prompt=_system_prompt(agent)),
         task_type=agent.task_type,
         agent_name=agent.agent_name,
         correlation_id=context.correlation_id,

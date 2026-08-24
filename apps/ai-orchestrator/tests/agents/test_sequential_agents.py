@@ -18,6 +18,11 @@ from app.agents.expected_value_agent import ExpectedValueAgent
 from app.agents.probability_modeling import ProbabilityModelingAgent
 from app.agents.probability_output import ProbabilityModelOutput
 from app.agents.risk_manager import RiskManagerAgent
+from app.agents.sequential_base import (
+    _LEGACY_AGENT_OUTPUT_INSTRUCTIONS,
+    _LEGACY_PROBABILITY_OUTPUT_INSTRUCTIONS,
+    _LEGACY_SEQUENTIAL_SYSTEM_PROMPT_TEMPLATE,
+)
 from app.features.candidate import MarketCandidate
 from app.features.expected_value import EVResult
 from app.features.kelly import KellyResult
@@ -25,6 +30,13 @@ from app.features.risk import RiskAssessment
 from app.models.fake_adapter import FakeModelAdapter, ScriptedSuccess
 from app.models.retry_policy import RetryEngine
 from app.models.types import ModelRequest
+
+
+def _sequential_prompt(agent) -> str:
+    instructions = (
+        _LEGACY_PROBABILITY_OUTPUT_INSTRUCTIONS if agent.response_model is ProbabilityModelOutput else _LEGACY_AGENT_OUTPUT_INSTRUCTIONS
+    )
+    return _LEGACY_SEQUENTIAL_SYSTEM_PROMPT_TEMPLATE.format(agent_name=agent.agent_name, output_instructions=instructions)
 
 _VALID_AGENT_OUTPUT = json.dumps(
     {
@@ -134,7 +146,7 @@ async def test_probability_modeling_produces_contract_valid_output_via_fake_adap
     adapter = FakeModelAdapter(provider="anthropic", script=[ScriptedSuccess(raw_text=_VALID_PROBABILITY_OUTPUT)])
     request = ModelRequest(
         model="claude-opus-5",
-        messages=agent.build_messages(context),
+        messages=agent.build_messages(context, system_prompt=_sequential_prompt(agent)),
         task_type=agent.task_type,
         agent_name=agent.agent_name,
         correlation_id=context.correlation_id,
@@ -204,7 +216,7 @@ async def test_agent_output_agents_produce_contract_valid_output_via_fake_adapte
     adapter = FakeModelAdapter(provider="anthropic", script=[ScriptedSuccess(raw_text=valid_output)])
     request = ModelRequest(
         model="claude-sonnet-5",
-        messages=agent.build_messages(context),
+        messages=agent.build_messages(context, system_prompt=_sequential_prompt(agent)),
         task_type=agent.task_type,
         agent_name=agent.agent_name,
         correlation_id=context.correlation_id,

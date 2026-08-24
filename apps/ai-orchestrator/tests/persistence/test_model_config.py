@@ -1,4 +1,5 @@
-"""Tests for app.persistence.model_config (Milestone 4.1)."""
+"""Tests for app.persistence.model_config (Milestone 4.1;
+resolve_active_prompt/PromptConfigError/ResolvedPrompt added Milestone 4.8)."""
 from __future__ import annotations
 
 import httpx
@@ -7,11 +8,14 @@ import respx
 
 from app.persistence.model_config import (
     ConfigReadError,
+    PromptConfigError,
+    ResolvedPrompt,
     get_active_prompt,
     get_model,
     get_model_routing_rule,
     list_active_agents,
     list_active_model_routing_rules,
+    resolve_active_prompt,
 )
 
 SUPABASE_URL = "https://test-project.supabase.co"
@@ -137,3 +141,80 @@ async def test_get_active_prompt_raises_on_malformed_response():
     async with httpx.AsyncClient(base_url=SUPABASE_URL) as client:
         with pytest.raises(Exception):
             await get_active_prompt(client, _headers(), prompt_name="whatever")
+
+
+# --- resolve_active_prompt (Milestone 4.8) ---
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_resolve_active_prompt_returns_resolved_prompt():
+    respx.get(f"{SUPABASE_URL}/rest/v1/prompt_registry").mock(
+        return_value=httpx.Response(
+            200, json=[{"prompt_name": "weather_agent", "version": 3, "prompt_text": "You are the weather_agent..."}]
+        )
+    )
+    async with httpx.AsyncClient(base_url=SUPABASE_URL) as client:
+        result = await resolve_active_prompt(client, _headers(), prompt_name="weather_agent")
+    assert result == ResolvedPrompt(prompt_name="weather_agent", version=3, prompt_text="You are the weather_agent...")
+    request = respx.calls.last.request
+    assert request.url.params["prompt_name"] == "eq.weather_agent"
+    assert request.url.params["status"] == "eq.active"
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_resolve_active_prompt_raises_prompt_config_error_when_missing():
+    """Production must fail clearly, never silently fall back to
+    hardcoded text -- an agent with no active prompt_registry row raises
+    PromptConfigError, distinct from ConfigReadError (a transport/DB
+    failure)."""
+    respx.get(f"{SUPABASE_URL}/rest/v1/prompt_registry").mock(return_value=httpx.Response(200, json=[]))
+    async with httpx.AsyncClient(base_url=SUPABASE_URL) as client:
+        with pytest.raises(PromptConfigError, match="no active prompt_registry row"):
+            await resolve_active_prompt(client, _headers(), prompt_name="nonexistent_agent")
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_resolve_active_prompt_raises_on_multiple_active_rows_defense_in_depth():
+    """idx_prompt_registry_one_active_per_name should already make this
+    impossible to write live, but resolve_active_prompt does not trust
+    the constraint alone -- it never silently picks one row when more
+    than one is returned."""
+    respx.get(f"{SUPABASE_URL}/rest/v1/prompt_registry").mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                {"prompt_name": "weather_agent", "version": 1, "prompt_text": "old"},
+                {"prompt_name": "weather_agent", "version": 2, "prompt_text": "new"},
+            ],
+        )
+    )
+    async with httpx.AsyncClient(base_url=SUPABASE_URL) as client:
+        with pytest.raises(PromptConfigError, match="invalid prompt_registry configuration"):
+            await resolve_active_prompt(client, _headers(), prompt_name="weather_agent")
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_resolve_active_prompt_never_returns_a_deprecated_or_draft_row():
+    """The live GET filters status=eq.active server-side -- a
+    draft/deprecated row for the same prompt_name is never returned to
+    this function even if other versions exist. Simulated here exactly
+    like get_active_prompt's own precedent: an empty result stands in
+    for "filtered out by PostgREST," not "table is empty." """
+    route = respx.get(f"{SUPABASE_URL}/rest/v1/prompt_registry").mock(return_value=httpx.Response(200, json=[]))
+    async with httpx.AsyncClient(base_url=SUPABASE_URL) as client:
+        with pytest.raises(PromptConfigError):
+            await resolve_active_prompt(client, _headers(), prompt_name="weather_agent")
+    assert route.calls.last.request.url.params["status"] == "eq.active"
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_resolve_active_prompt_raises_config_read_error_on_transport_failure():
+    respx.get(f"{SUPABASE_URL}/rest/v1/prompt_registry").mock(return_value=httpx.Response(500, text="db error"))
+    async with httpx.AsyncClient(base_url=SUPABASE_URL) as client:
+        with pytest.raises(ConfigReadError):
+            await resolve_active_prompt(client, _headers(), prompt_name="weather_agent")

@@ -9,6 +9,7 @@ import json
 
 import pytest
 
+from app.agents.base_agent import _LEGACY_SYSTEM_PROMPT_TEMPLATE
 from app.agents.closing_line_movement import ClosingLineMovementAgent
 from app.agents.context import AgentContext
 from app.agents.vegas_line import VegasLineAgent
@@ -16,6 +17,10 @@ from app.features.market import LineMovementFeatures
 from app.features.travel import TravelFeatures
 from app.models.fake_adapter import FakeModelAdapter, ScriptedSuccess
 from app.models.retry_policy import RetryEngine
+
+
+def _system_prompt(agent) -> str:
+    return _LEGACY_SYSTEM_PROMPT_TEMPLATE.format(agent_name=agent.agent_name)
 
 _VALID_OUTPUT = json.dumps(
     {
@@ -123,7 +128,7 @@ def test_closing_line_movement_agent_does_not_expose_raw_odds_history():
 @pytest.mark.parametrize("agent_cls", AGENT_CLASSES)
 def test_build_messages_includes_agent_name_in_system_prompt(agent_cls):
     agent = agent_cls()
-    messages = agent.build_messages(_context())
+    messages = agent.build_messages(_context(), system_prompt=_system_prompt(agent))
     assert messages[0].role == "system"
     assert agent.agent_name in messages[0].content
 
@@ -132,7 +137,7 @@ def test_build_messages_includes_agent_name_in_system_prompt(agent_cls):
 def test_build_messages_user_content_is_exact_json_of_evidence(agent_cls):
     agent = agent_cls()
     context = _context(odds_history=[{"a": 1}], line_movement=[_movement()])
-    messages = agent.build_messages(context)
+    messages = agent.build_messages(context, system_prompt=_system_prompt(agent))
     assert messages[1].role == "user"
     parsed_back = json.loads(messages[1].content)
     assert parsed_back == agent.build_evidence(context)
@@ -153,7 +158,7 @@ async def test_agent_produces_contract_valid_agent_output_via_fake_adapter(agent
     adapter = FakeModelAdapter(provider="anthropic", script=[ScriptedSuccess(raw_text=valid_output)])
     request = ModelRequest(
         model="claude-sonnet-5",
-        messages=agent.build_messages(context),
+        messages=agent.build_messages(context, system_prompt=_system_prompt(agent)),
         task_type=agent.task_type,
         agent_name=agent.agent_name,
         correlation_id=context.correlation_id,

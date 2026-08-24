@@ -193,38 +193,54 @@ def is_below_confidence_floor(final_aggregate_confidence: float, *, floor: float
     return final_aggregate_confidence < floor
 
 
-#: CONFIRMED FROM VOLUME 4 Section 4.3 -- exact threshold, exclusive
-#: ("> 0.25", not ">="). See `should_trigger_elite_second_pass`'s
-#: docstring for a real, freshly-discovered mathematical tension this
-#: threshold has against this module's `agreement_variance` formula.
-ELITE_VARIANCE_THRESHOLD = 0.25
+#: Milestone 4.8, Decision L (approved 2026-08-24) -- corrects the
+#: unreachable Volume 4 Section 4.3 threshold (`0.25`, structurally
+#: unreachable given this module's two-valued {1.0, 0.3} lean_factor
+#: scheme -- see `should_trigger_elite_second_pass`'s docstring for the
+#: full derivation this replaces). `0.10` is the smallest defensible
+#: threshold that reads as "a meaningful minority of the voting
+#: committee is in confident, same-axis opposition": it fires at a
+#: 70/30 split (agreement_variance = 0.1029) and every split closer to
+#: even (67/33 = 0.1083, 60/40 = 0.1176, 50/50 = 0.1225, the ceiling),
+#: while a 75/25 split (0.0919) or looser remains ordinary disagreement,
+#: not Elite-worthy. Kept exclusive ("> 0.10", not ">=") for consistency
+#: with the original Volume 4 formula's own comparison.
+ELITE_VARIANCE_THRESHOLD = 0.10
 ELITE_TIER = "elite"
 
 
 def should_trigger_elite_second_pass(agreement_variance: float | None, tier: str | None) -> bool:
-    """`agreement_variance > 0.25` AND `tier == "elite"` -- exact match,
+    """`agreement_variance > 0.10` AND `tier == "elite"` -- exact match,
     never a substring/case-insensitive comparison. `None` for either
     argument (no computable variance, or no/unknown/non-elite tier)
     never triggers.
 
-    **A real mathematical tension, discovered while testing this
-    milestone, flagged rather than silently worked around:** this
-    module's `agreement_variance` is the population variance of
-    `lean_factor` values, which only ever take one of two values (`1.0`
-    supports, `0.3` opposes) once non-voters are excluded. The maximum
-    possible population variance of a two-valued {1.0, 0.3} distribution
-    is `p(1-p)(1.0-0.3)^2`, maximized at a 50/50 split: `0.25 * 0.49 =
-    0.1225` -- meaning `agreement_variance` computed by this module can
-    NEVER exceed `0.1225` for any real input, so `> 0.25` can never fire
-    naturally. This ceiling is a property of Volume 4's own specified
-    `0.3` fractional disagreement penalty applied to ANY binary
-    agreement scheme (this predates Milestone 4.7's candidate-anchoring
-    redesign entirely -- the original game-level majority-vote formula
-    has the exact same two-value ceiling). This function's LOGIC is
-    still implemented and tested correctly in isolation; whether the
-    fractional penalty, the 0.25 threshold, or the variance formula
-    itself needs to change is a real, open architecture question
-    surfaced for Mac's decision, not resolved here."""
+    **`agreement_variance` is an unweighted committee-polarization
+    signal, by design, unchanged in Milestone 4.8** -- it is the
+    population variance of raw `lean_factor` values among voting agents
+    only (a pure head-count statistic); `weight_applied`/
+    `evidence_classification`-derived `effective_weight` never enters
+    this calculation (they do drive `aggregate_confidence`, a different
+    number). A split where 2 heavily-weighted agents oppose 10
+    lightly-weighted ones therefore reads as an ordinary ~83/17
+    head-count split here, not a polarized one, even though the
+    opposing voice may be disproportionately trusted. Whether
+    `agreement_variance` should eventually become weight-aware is an
+    open, explicitly deferred question (Mac's instruction, Milestone
+    4.8) -- not redesigned here.
+
+    **Threshold history, for context:** Volume 4 Section 4.3 originally
+    specified `agreement_variance > 0.25`. Milestone 4.7 testing proved
+    this was structurally unreachable -- the maximum possible population
+    variance of a two-valued {1.0, 0.3} distribution is
+    `p(1-p)(1.0-0.3)^2`, maximized at a 50/50 split: `0.25 * 0.49 =
+    0.1225`, so `agreement_variance` computed by this module could never
+    exceed `0.1225`, meaning `> 0.25` could never fire from any real
+    input. Milestone 4.8, Decision L corrected `ELITE_VARIANCE_THRESHOLD`
+    to `0.10` (see its own comment above for the full derivation) rather
+    than changing the `1.0`/`0.3` factors, `aggregate_confidence`'s
+    semantics, or the variance formula itself -- all three were
+    explicitly preserved unchanged per Mac's instruction."""
     if agreement_variance is None or tier is None:
         return False
     return agreement_variance > ELITE_VARIANCE_THRESHOLD and tier == ELITE_TIER

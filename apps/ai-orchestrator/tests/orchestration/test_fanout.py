@@ -1,11 +1,14 @@
-"""Tests for app.orchestration.fanout (Milestone 4.4, Decision 8)."""
+"""Tests for app.orchestration.fanout (Milestone 4.4, Decision 8; client/
+headers + prompt resolution added Milestone 4.8)."""
 from __future__ import annotations
 
 import asyncio
 import json
 import time
 
+import httpx
 import pytest
+import respx
 
 from app.agents.base_agent import ContextDataAgent
 from app.agents.context import AgentContext
@@ -16,6 +19,13 @@ from app.models.fake_adapter import FakeModelAdapter, ScriptedFailure, ScriptedS
 from app.models.router import AdapterRegistry
 from app.models.types import ModelResponse, UsageMetadata
 from app.orchestration.fanout import run_agent, run_fan_out
+from tests.conftest import mock_prompt_registry_route
+
+SUPABASE_URL = "https://test-project.supabase.co"
+
+
+def _headers() -> dict:
+    return {"Authorization": "Bearer test-key", "apikey": "test-key"}
 
 
 class _StubAgent(ContextDataAgent):
@@ -67,67 +77,115 @@ def _routing_rule(task_type: str, model: str = "claude-sonnet-5") -> dict:
 
 
 @pytest.mark.asyncio
+@respx.mock
 async def test_run_agent_success():
+    mock_prompt_registry_route(SUPABASE_URL)
     agent = _StubAgent("agent_a", "task_a")
     adapter = FakeModelAdapter(provider="anthropic", script=[ScriptedSuccess(raw_text=_valid_output_json("agent_a"))])
     registry = AdapterRegistry(adapters={"anthropic": adapter})
-    result = await run_agent(
-        agent,
-        _context(),
-        routing_rule=_routing_rule("task_a"),
-        model_providers={"claude-sonnet-5": "anthropic"},
-        adapter_registry=registry,
-        retry_engine=__import__("app.models.retry_policy", fromlist=["RetryEngine"]).RetryEngine(),
-    )
+    async with httpx.AsyncClient(base_url=SUPABASE_URL) as client:
+        result = await run_agent(
+            agent,
+            _context(),
+            client=client,
+            headers=_headers(),
+            routing_rule=_routing_rule("task_a"),
+            model_providers={"claude-sonnet-5": "anthropic"},
+            adapter_registry=registry,
+            retry_engine=__import__("app.models.retry_policy", fromlist=["RetryEngine"]).RetryEngine(),
+        )
     assert result.status == "success"
     assert result.output.agent_name == "agent_a"
     assert result.error is None
+    assert result.prompt_name == "agent_a"
+    assert result.prompt_version == 1
 
 
 @pytest.mark.asyncio
+@respx.mock
 async def test_run_agent_never_raises_on_total_failure_reports_failed_instead():
     from app.models.retry_policy import RetryEngine
 
+    mock_prompt_registry_route(SUPABASE_URL)
     agent = _StubAgent("agent_a", "task_a")
     adapter = FakeModelAdapter(
         provider="anthropic", script=[ScriptedFailure(error=ModelTimeoutError("t1")), ScriptedFailure(error=ModelTimeoutError("t2"))]
     )
     registry = AdapterRegistry(adapters={"anthropic": adapter})
-    result = await run_agent(
-        agent,
-        _context(),
-        routing_rule=_routing_rule("task_a"),
-        model_providers={"claude-sonnet-5": "anthropic"},
-        adapter_registry=registry,
-        retry_engine=RetryEngine(),
-    )
+    async with httpx.AsyncClient(base_url=SUPABASE_URL) as client:
+        result = await run_agent(
+            agent,
+            _context(),
+            client=client,
+            headers=_headers(),
+            routing_rule=_routing_rule("task_a"),
+            model_providers={"claude-sonnet-5": "anthropic"},
+            adapter_registry=registry,
+            retry_engine=RetryEngine(),
+        )
     assert result.status == "failed"
     assert result.output is None
     assert result.error is not None
 
 
 @pytest.mark.asyncio
+@respx.mock
 async def test_run_agent_missing_adapter_registration_reported_as_failed_not_raised():
     from app.models.retry_policy import RetryEngine
 
+    mock_prompt_registry_route(SUPABASE_URL)
     agent = _StubAgent("agent_a", "task_a")
     registry = AdapterRegistry(adapters={})  # nothing registered
-    result = await run_agent(
-        agent,
-        _context(),
-        routing_rule=_routing_rule("task_a"),
-        model_providers={"claude-sonnet-5": "anthropic"},
-        adapter_registry=registry,
-        retry_engine=RetryEngine(),
-    )
+    async with httpx.AsyncClient(base_url=SUPABASE_URL) as client:
+        result = await run_agent(
+            agent,
+            _context(),
+            client=client,
+            headers=_headers(),
+            routing_rule=_routing_rule("task_a"),
+            model_providers={"claude-sonnet-5": "anthropic"},
+            adapter_registry=registry,
+            retry_engine=RetryEngine(),
+        )
     assert result.status == "failed"
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_run_agent_missing_prompt_configuration_reported_as_failed_not_raised():
+    """Milestone 4.8: no active prompt_registry row for this agent_name
+    -- resolve_active_prompt raises PromptConfigError, caught by the same
+    blanket isolation every other per-agent failure uses. Never a silent
+    hardcoded-text fallback."""
+    from app.models.retry_policy import RetryEngine
+
+    respx.get(f"{SUPABASE_URL}/rest/v1/prompt_registry").mock(return_value=httpx.Response(200, json=[]))
+    agent = _StubAgent("agent_with_no_prompt", "task_a")
+    adapter = FakeModelAdapter(provider="anthropic", script=[ScriptedSuccess(raw_text=_valid_output_json("agent_with_no_prompt"))])
+    registry = AdapterRegistry(adapters={"anthropic": adapter})
+    async with httpx.AsyncClient(base_url=SUPABASE_URL) as client:
+        result = await run_agent(
+            agent,
+            _context(),
+            client=client,
+            headers=_headers(),
+            routing_rule=_routing_rule("task_a"),
+            model_providers={"claude-sonnet-5": "anthropic"},
+            adapter_registry=registry,
+            retry_engine=RetryEngine(),
+        )
+    assert result.status == "failed"
+    assert "no active prompt_registry row" in result.error
+    assert adapter.call_count == 0  # never reached the model call at all
 
 
 # --- run_fan_out: FULL/PARTIAL/FAILED ---
 
 
 @pytest.mark.asyncio
+@respx.mock
 async def test_fan_out_full_when_all_agents_succeed():
+    mock_prompt_registry_route(SUPABASE_URL)
     agents = [_StubAgent("agent_a", "task_a"), _StubAgent("agent_b", "task_b")]
     adapters = {
         "anthropic": FakeModelAdapter(
@@ -135,22 +193,28 @@ async def test_fan_out_full_when_all_agents_succeed():
             script=[ScriptedSuccess(raw_text=_valid_output_json("agent_a")), ScriptedSuccess(raw_text=_valid_output_json("agent_b"))],
         )
     }
-    result = await run_fan_out(
-        agents,
-        _context(),
-        routing_rules={"task_a": _routing_rule("task_a"), "task_b": _routing_rule("task_b")},
-        model_providers={"claude-sonnet-5": "anthropic"},
-        adapter_registry=AdapterRegistry(adapters=adapters),
-    )
+    async with httpx.AsyncClient(base_url=SUPABASE_URL) as client:
+        result = await run_fan_out(
+            agents,
+            _context(),
+            client=client,
+            headers=_headers(),
+            routing_rules={"task_a": _routing_rule("task_a"), "task_b": _routing_rule("task_b")},
+            model_providers={"claude-sonnet-5": "anthropic"},
+            adapter_registry=AdapterRegistry(adapters=adapters),
+        )
     assert result.status == "full"
     assert len(result.successes) == 2
     assert len(result.failures) == 0
 
 
 @pytest.mark.asyncio
+@respx.mock
 async def test_fan_out_partial_when_one_agent_fails_and_one_succeeds():
     from app.models.structured_output import parse_structured_output
     from app.agents.contract import AgentOutput
+
+    mock_prompt_registry_route(SUPABASE_URL)
 
     class _MixedAdapterReal(ModelAdapter):
         """One shared adapter whose behavior depends on which agent's
@@ -169,13 +233,16 @@ async def test_fan_out_partial_when_one_agent_fails_and_one_succeeds():
 
     agents = [_StubAgent("agent_fails", "task_fail"), _StubAgent("agent_succeeds", "task_ok")]
     registry = AdapterRegistry(adapters={"anthropic": _MixedAdapterReal()})
-    result = await run_fan_out(
-        agents,
-        _context(),
-        routing_rules={"task_fail": _routing_rule("task_fail"), "task_ok": _routing_rule("task_ok")},
-        model_providers={"claude-sonnet-5": "anthropic"},
-        adapter_registry=registry,
-    )
+    async with httpx.AsyncClient(base_url=SUPABASE_URL) as client:
+        result = await run_fan_out(
+            agents,
+            _context(),
+            client=client,
+            headers=_headers(),
+            routing_rules={"task_fail": _routing_rule("task_fail"), "task_ok": _routing_rule("task_ok")},
+            model_providers={"claude-sonnet-5": "anthropic"},
+            adapter_registry=registry,
+        )
     assert result.status == "partial"
     assert len(result.successes) == 1
     assert len(result.failures) == 1
@@ -186,7 +253,9 @@ async def test_fan_out_partial_when_one_agent_fails_and_one_succeeds():
 
 
 @pytest.mark.asyncio
+@respx.mock
 async def test_fan_out_failed_when_every_agent_fails():
+    mock_prompt_registry_route(SUPABASE_URL)
     agents = [_StubAgent("agent_a", "task_a"), _StubAgent("agent_b", "task_b")]
     adapter = FakeModelAdapter(
         provider="anthropic",
@@ -197,24 +266,29 @@ async def test_fan_out_failed_when_every_agent_fails():
             ScriptedFailure(error=ModelTimeoutError("t4")),
         ],
     )
-    result = await run_fan_out(
-        agents,
-        _context(),
-        routing_rules={"task_a": _routing_rule("task_a"), "task_b": _routing_rule("task_b")},
-        model_providers={"claude-sonnet-5": "anthropic"},
-        adapter_registry=AdapterRegistry(adapters={"anthropic": adapter}),
-    )
+    async with httpx.AsyncClient(base_url=SUPABASE_URL) as client:
+        result = await run_fan_out(
+            agents,
+            _context(),
+            client=client,
+            headers=_headers(),
+            routing_rules={"task_a": _routing_rule("task_a"), "task_b": _routing_rule("task_b")},
+            model_providers={"claude-sonnet-5": "anthropic"},
+            adapter_registry=AdapterRegistry(adapters={"anthropic": adapter}),
+        )
     assert result.status == "failed"
     assert len(result.successes) == 0
     assert len(result.failures) == 2
 
 
 @pytest.mark.asyncio
+@respx.mock
 async def test_fan_out_is_actually_concurrent_not_sequential():
     """Four agents, each with a real 0.05s delay via a test-only slow
     adapter -- if execution were sequential, total elapsed would be
     ~0.20s; concurrent execution keeps it close to the single slowest
     agent's own delay."""
+    mock_prompt_registry_route(SUPABASE_URL)
 
     class _SlowAdapter(ModelAdapter):
         async def complete(self, request):
@@ -234,9 +308,16 @@ async def test_fan_out_is_actually_concurrent_not_sequential():
     registry = AdapterRegistry(adapters={"anthropic": _SlowAdapter()})
 
     started = time.monotonic()
-    result = await run_fan_out(
-        agents, _context(), routing_rules=routing_rules, model_providers={"claude-sonnet-5": "anthropic"}, adapter_registry=registry
-    )
+    async with httpx.AsyncClient(base_url=SUPABASE_URL) as client:
+        result = await run_fan_out(
+            agents,
+            _context(),
+            client=client,
+            headers=_headers(),
+            routing_rules=routing_rules,
+            model_providers={"claude-sonnet-5": "anthropic"},
+            adapter_registry=registry,
+        )
     elapsed = time.monotonic() - started
 
     assert result.status == "full"

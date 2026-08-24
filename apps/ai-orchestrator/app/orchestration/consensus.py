@@ -43,6 +43,7 @@ from app.models.retry_policy import RetryEngine
 from app.models.router import AdapterRegistry, ModelRouter
 from app.models.types import ModelRequest
 from app.persistence.consensus_snapshots import persist_consensus_snapshot, read_game_level_agent_outputs
+from app.persistence.model_config import resolve_active_prompt
 from app.persistence.subscriptions import read_subscription_tier
 
 @dataclass
@@ -51,20 +52,29 @@ class ReviewAgentRunResult:
     status: str  # "success" | "failed"
     output: object | None = None
     error: str | None = None
+    prompt_name: str | None = None
+    prompt_version: int | None = None
 
 
 async def _run_review_agent(
-    agent, context: ConsensusReviewContext, *, routing_rule: dict, model_providers, adapter_registry: AdapterRegistry, retry_engine: RetryEngine
+    agent, context: ConsensusReviewContext, *, client, headers: dict, routing_rule: dict, model_providers, adapter_registry: AdapterRegistry, retry_engine: RetryEngine
 ) -> ReviewAgentRunResult:
     """Never raises -- mirrors `app.orchestration.fanout.run_agent`'s
-    isolation guarantee exactly."""
+    isolation guarantee exactly, including Milestone 4.8's
+    `resolve_active_prompt` call at this orchestration boundary. Neither
+    Meta Agent's nor Elite Reconciliation Agent's output is persisted as
+    a `recommendation_agent_outputs` row (unchanged, out of Milestone
+    4.8's approved scope) -- `prompt_name`/`.prompt_version` are still
+    resolved and returned here for consistency/testability, they simply
+    have no persisted destination yet."""
     try:
+        resolved_prompt = await resolve_active_prompt(client, headers, prompt_name=agent.agent_name)
         decision = ModelRouter.route(routing_rule, model_providers=model_providers)
         primary = adapter_registry.get(decision.primary_provider)
         fallback = adapter_registry.get(decision.fallback_provider) if decision.fallback_provider else None
         request = ModelRequest(
             model=decision.primary_model,
-            messages=agent.build_messages(context),
+            messages=agent.build_messages(context, system_prompt=resolved_prompt.prompt_text),
             task_type=agent.task_type,
             agent_name=agent.agent_name,
             correlation_id=context.correlation_id,
@@ -75,7 +85,13 @@ async def _run_review_agent(
         )
     except Exception as exc:  # noqa: BLE001 -- deliberate: isolate this one review agent
         return ReviewAgentRunResult(agent_name=agent.agent_name, status="failed", error=str(exc))
-    return ReviewAgentRunResult(agent_name=agent.agent_name, status="success", output=response.parsed)
+    return ReviewAgentRunResult(
+        agent_name=agent.agent_name,
+        status="success",
+        output=response.parsed,
+        prompt_name=resolved_prompt.prompt_name,
+        prompt_version=resolved_prompt.version,
+    )
 
 
 @dataclass
@@ -148,6 +164,8 @@ async def run_candidate_consensus(
     meta_result = await _run_review_agent(
         meta_agent,
         review_context,
+        client=client,
+        headers=headers,
         routing_rule=routing_rules[meta_agent.task_type],
         model_providers=model_providers,
         adapter_registry=adapter_registry,
@@ -170,6 +188,8 @@ async def run_candidate_consensus(
         elite_result = await _run_review_agent(
             elite_agent,
             elite_context,
+            client=client,
+            headers=headers,
             routing_rule=routing_rules[elite_agent.task_type],
             model_providers=model_providers,
             adapter_registry=adapter_registry,

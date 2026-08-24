@@ -1,10 +1,11 @@
 """The shared Decision & Advisory (sequential) agent base (Milestone 4.6,
-Decision A). Parallels `app.agents.base_agent.ContextDataAgent`'s
-prompt-construction pattern exactly, but over `SequentialDecisionContext`
-instead of `AgentContext` -- these four agents reason over the
-committee's own outputs and deterministic downstream math, never raw
-per-game facts, so forcing them into `ContextDataAgent` would be
-structurally wrong (Mac's explicit instruction).
+Decision A; `build_messages` reworked Milestone 4.8). Parallels
+`app.agents.base_agent.ContextDataAgent`'s prompt-construction pattern
+exactly, but over `SequentialDecisionContext` instead of `AgentContext`
+-- these four agents reason over the committee's own outputs and
+deterministic downstream math, never raw per-game facts, so forcing them
+into `ContextDataAgent` would be structurally wrong (Mac's explicit
+instruction).
 
 `response_model` defaults to `AgentOutput` (Expected Value/Risk
 Manager/Bankroll Coach all use the ordinary shared contract -- their own
@@ -13,7 +14,15 @@ interpretation," which is not the corruption Decision B addresses).
 `ProbabilityModelingAgent` overrides it to `ProbabilityModelOutput`
 (Decision B) -- the one agent whose numeric output is not
 confidence-shaped.
-"""
+
+**Milestone 4.8, Option C:** `build_messages` takes an already-resolved
+`system_prompt` string (see `app.agents.base_agent`'s identical note) --
+`_LEGACY_SEQUENTIAL_SYSTEM_PROMPT_TEMPLATE`/`_LEGACY_*_INSTRUCTIONS`
+below are preserved verbatim only as the source wording for each
+concrete agent's Milestone 4.8 `prompt_registry` seed row (`{agent_name}`
+and `{output_instructions}` both fully baked in per agent at
+seed-authoring time -- neither is a runtime variable once a prompt is
+scoped to one agent with one fixed `response_model`)."""
 from __future__ import annotations
 
 import json
@@ -25,7 +34,7 @@ from app.agents.committee_context import SequentialDecisionContext
 from app.agents.contract import AgentOutput
 from app.models.types import ModelMessage
 
-_SEQUENTIAL_SYSTEM_PROMPT_TEMPLATE = """You are the {agent_name}, part of The Playbook's sequential \
+_LEGACY_SEQUENTIAL_SYSTEM_PROMPT_TEMPLATE = """You are the {agent_name}, part of The Playbook's sequential \
 decision chain -- you reason over the committee's own findings and already-computed deterministic \
 numbers, never raw game facts directly.
 
@@ -42,7 +51,7 @@ opinion.
 
 {output_instructions}"""
 
-_AGENT_OUTPUT_INSTRUCTIONS = """Return ONLY a JSON object matching this exact shape, with no other text:
+_LEGACY_AGENT_OUTPUT_INSTRUCTIONS = """Return ONLY a JSON object matching this exact shape, with no other text:
 {
   "agent_name": "<this agent's name>",
   "finding": "short plain-language summary",
@@ -53,7 +62,7 @@ _AGENT_OUTPUT_INSTRUCTIONS = """Return ONLY a JSON object matching this exact sh
   "would_change_mind_if": "explicit invalidation condition"
 }"""
 
-_PROBABILITY_OUTPUT_INSTRUCTIONS = """Return ONLY a JSON object matching this exact shape, with no other text:
+_LEGACY_PROBABILITY_OUTPUT_INSTRUCTIONS = """Return ONLY a JSON object matching this exact shape, with no other text:
 {
   "agent_name": "<this agent's name>",
   "candidate_key": "<the evaluated candidate's key, exactly as given>",
@@ -82,9 +91,11 @@ class SequentialDecisionAgent(ABC):
         summarized or recomputed here."""
         raise NotImplementedError
 
-    def build_messages(self, context: SequentialDecisionContext) -> list[ModelMessage]:
+    def build_messages(self, context: SequentialDecisionContext, *, system_prompt: str) -> list[ModelMessage]:
+        """`system_prompt` is this agent's exact, already-resolved
+        canonical text (see `app.agents.base_agent.ContextDataAgent.
+        build_messages`'s identical note) -- required keyword arg, no
+        default, no implicit fallback."""
         evidence = self.build_evidence(context)
-        instructions = _PROBABILITY_OUTPUT_INSTRUCTIONS if self.response_model is not AgentOutput else _AGENT_OUTPUT_INSTRUCTIONS
-        system = _SEQUENTIAL_SYSTEM_PROMPT_TEMPLATE.format(agent_name=self.agent_name, output_instructions=instructions)
         user = json.dumps(evidence, default=str)
-        return [ModelMessage(role="system", content=system), ModelMessage(role="user", content=user)]
+        return [ModelMessage(role="system", content=system_prompt), ModelMessage(role="user", content=user)]
