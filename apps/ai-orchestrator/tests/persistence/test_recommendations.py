@@ -92,6 +92,72 @@ async def test_create_recommendation_cycle_raises_on_empty_return():
             await create_recommendation_cycle(client, _headers(), game_id="g1", prompt_version="v1", agent_version="v1")
 
 
+# --- create_recommendation_cycle: correlation_id create-or-get (Milestone 4.9) ---
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_create_recommendation_cycle_without_correlation_id_is_a_plain_insert_unchanged():
+    """Omitting correlation_id (the default) must behave exactly as
+    before Milestone 4.9 -- no on_conflict param, no merge-duplicates."""
+    route = respx.post(f"{SUPABASE_URL}/rest/v1/recommendations").mock(
+        return_value=httpx.Response(201, json=[{"id": "r1"}])
+    )
+    async with httpx.AsyncClient(base_url=SUPABASE_URL) as client:
+        await create_recommendation_cycle(client, _headers(), game_id="g1", prompt_version="v1", agent_version="v1")
+    request = route.calls.last.request
+    assert "on_conflict" not in request.url.params
+    assert request.headers["Prefer"] == "return=representation"
+    sent = json.loads(request.content)
+    assert "correlation_id" not in sent
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_create_recommendation_cycle_with_correlation_id_upserts_on_conflict():
+    route = respx.post(f"{SUPABASE_URL}/rest/v1/recommendations").mock(
+        return_value=httpx.Response(201, json=[{"id": "r1"}])
+    )
+    async with httpx.AsyncClient(base_url=SUPABASE_URL) as client:
+        recommendation_id = await create_recommendation_cycle(
+            client, _headers(), game_id="g1", prompt_version="v1", agent_version="v1", correlation_id="mrr-1:g1"
+        )
+    assert recommendation_id == "r1"
+    request = route.calls.last.request
+    assert request.url.params["on_conflict"] == "correlation_id"
+    assert "resolution=merge-duplicates" in request.headers["Prefer"]
+    assert "return=representation" in request.headers["Prefer"]
+    sent = json.loads(request.content)
+    assert sent["correlation_id"] == "mrr-1:g1"
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_create_recommendation_cycle_retry_with_same_correlation_id_recovers_same_row():
+    """A retry supplying the identical correlation_id must recover the
+    SAME row's id -- proven here by having the mock echo back a fixed id
+    regardless of call count, then asserting both calls agree and only
+    one distinct id was ever seen (the honest proof this module can offer
+    from its own boundary -- the actual dedup guarantee comes from the
+    live `unique(correlation_id)` constraint plus PostgREST's upsert,
+    exercised for real in the live DEV proof, not re-derivable from a
+    mocked unit test alone)."""
+    route = respx.post(f"{SUPABASE_URL}/rest/v1/recommendations").mock(
+        return_value=httpx.Response(201, json=[{"id": "r1"}])
+    )
+    async with httpx.AsyncClient(base_url=SUPABASE_URL) as client:
+        first_id = await create_recommendation_cycle(
+            client, _headers(), game_id="g1", prompt_version="v1", agent_version="v1", correlation_id="mrr-1:g1"
+        )
+        second_id = await create_recommendation_cycle(
+            client, _headers(), game_id="g1", prompt_version="v1", agent_version="v1", correlation_id="mrr-1:g1"
+        )
+    assert first_id == second_id == "r1"
+    assert route.call_count == 2  # both calls went through the upsert path
+    for call in route.calls:
+        assert call.request.url.params["on_conflict"] == "correlation_id"
+
+
 # --- resolve_agent: fail clearly, never silently skip ---
 
 

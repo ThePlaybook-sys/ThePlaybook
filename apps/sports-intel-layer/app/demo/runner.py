@@ -242,6 +242,7 @@ class ScenarioRunner:
                 sportsdataio_api_key=UNUSED_PLACEHOLDER_KEY,
                 cache_backend=InMemoryCacheBackend(),
                 today=self.virtual_now.date(),
+                now=self.virtual_now,
                 schedule_adapter=self._build_schedule_adapter(step),
                 roster_adapter=self._build_roster_adapter(step),
                 **step.worker_kwargs,

@@ -19,16 +19,22 @@ non-fabricated choice rather than misusing `active`. `user_facing` is
 explicitly set `False` (overriding the column's `true` default) --
 nothing exists yet that should be shown to a user.
 
-**Decision A (idempotency, A1 approved for 4.5):** this module creates
-exactly one row per call -- no lookup-before-insert, no dedup. Callers
-(`app.orchestration.cycle`) are responsible for calling
-`create_recommendation_cycle` exactly once per in-memory orchestration
-run and reusing the returned id for every output write in that run. A
-crashed-and-retried run may create a second cycle row -- an accepted
-limitation for 4.5 (Mac's own words: "acceptable ONLY because the real
-Recommendation Worker / scheduled retry path does not exist yet"),
-carried forward as a REQUIRED Milestone 4.9 design checkpoint before any
-real Recommendation Worker exists.
+**Decision A (idempotency, A1 approved for 4.5) -- superseded by Milestone
+4.9's durable `correlation_id` design.** `create_recommendation_cycle` now
+accepts an optional `correlation_id`. When supplied, the write becomes a
+PostgREST upsert keyed on `correlation_id` (`Prefer:
+resolution=merge-duplicates` + `on_conflict=correlation_id`) -- a retry
+that reuses the same `correlation_id` recovers the SAME row's `id`
+instead of creating a second cycle, closing the gap Milestone 4.5
+explicitly carried forward. `correlation_id` is stable-derived by the
+caller (Milestone 4.9: `stable(master_refresh_run_id, game_id)`, never a
+random UUID a crash couldn't reproduce) -- this module has no opinion on
+how it's built, only that reusing the same value reuses the same row.
+Omitting `correlation_id` (the default, `None`) preserves the exact
+pre-4.9 blind-insert behavior unchanged, for any caller that doesn't yet
+have a stable identity to key on (e.g. existing tests, on-demand NL
+Engine requests in a future phase that may use a different idempotency
+strategy).
 
 **Decision C (weight_applied):** `recommendation_agent_outputs.
 weight_applied` stores `agents.current_weight` as it existed at the
@@ -67,12 +73,24 @@ class AgentConfigError(Exception):
 
 
 async def create_recommendation_cycle(
-    client: httpx.AsyncClient, headers: dict, *, game_id: str, prompt_version: str, agent_version: str
+    client: httpx.AsyncClient,
+    headers: dict,
+    *,
+    game_id: str,
+    prompt_version: str,
+    agent_version: str,
+    correlation_id: str | None = None,
 ) -> str:
-    """Creates one `recommendations` row representing a new
-    recommendation-analysis cycle (Option C). Populates ONLY the fields
-    Phase 4 owns at this point -- see module docstring. Returns the new
-    row's `id`."""
+    """Creates (or, when `correlation_id` is supplied and already exists,
+    RECOVERS) one `recommendations` row representing a recommendation-
+    analysis cycle (Option C). Populates ONLY the fields Phase 4 owns at
+    this point -- see module docstring. Returns the row's `id`.
+
+    Milestone 4.9: with `correlation_id` supplied, this is a PostgREST
+    upsert keyed on that column's `unique` constraint -- a retry that
+    passes the SAME `correlation_id` gets back the SAME `id`, never a
+    second row. Without it (the default), behaves exactly as it always
+    has: a blind insert, one new row per call."""
     payload = {
         "game_id": game_id,
         "prompt_version": prompt_version,
@@ -80,10 +98,17 @@ async def create_recommendation_cycle(
         "user_facing": False,
         "status": None,
     }
+    params = {}
+    prefer = "return=representation"
+    if correlation_id is not None:
+        payload["correlation_id"] = correlation_id
+        params["on_conflict"] = "correlation_id"
+        prefer = "resolution=merge-duplicates," + prefer
     response = await client.post(
         "/rest/v1/recommendations",
         json=payload,
-        headers={**headers, "Content-Type": "application/json", "Prefer": "return=representation"},
+        params=params,
+        headers={**headers, "Content-Type": "application/json", "Prefer": prefer},
     )
     if response.status_code not in (200, 201):
         raise RecommendationsError(

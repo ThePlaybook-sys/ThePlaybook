@@ -49,6 +49,7 @@ from app.master_refresh.game_refresh import refresh_daily_game_intelligence_for_
 from app.master_refresh.slate import filter_slate_window
 from app.persistence.daily_game_intelligence import DailyGameIntelligenceError
 from app.persistence.games import GamesQueryError, list_games_in_window
+from app.persistence.master_refresh_runs import complete_master_refresh_run, start_master_refresh_run
 from app.persistence.player_identity import PlayerIdentityError, resolve_player_ids
 from app.persistence.roster_ingestion import RosterIngestionError, persist_roster
 from app.persistence.schedule import PersistenceError, persist_schedule_entries
@@ -73,6 +74,12 @@ class MasterRefreshResult:
     daily_game_intelligence_written: int = 0
     daily_game_intelligence_failures: list[str] = field(default_factory=list)
     error: str | None = None
+    #: Milestone 4.9 -- the `master_refresh_runs.id` this execution wrote
+    #: to. `None` only if the run couldn't even be started (a
+    #: `MasterRefreshRunsError` at the very first step, before any other
+    #: work begins) -- every other exit path, including every existing
+    #: "failed" branch above, still has a real run_id to finalize.
+    run_id: str | None = None
 
 
 def _auth_headers() -> dict:
@@ -85,6 +92,60 @@ def _auth_headers() -> dict:
 
 
 async def run_master_refresh(
+    *,
+    supabase_client: httpx.AsyncClient,
+    sportsdataio_client: httpx.AsyncClient,
+    sportsdataio_api_key: str,
+    cache_backend: CacheBackend | None = None,
+    today: date | None = None,
+    now: datetime | None = None,
+    league_code: str = "nfl",
+    schedule_adapter: ScheduleAdapter | None = None,
+    roster_adapter: RosterAdapter | None = None,
+) -> MasterRefreshResult:
+    """Milestone 4.9: creates a durable `master_refresh_runs` row BEFORE
+    any crash-prone work begins, delegates to `_execute_master_refresh`
+    (the unchanged Phase 3E-2/3F body -- every existing failure-isolation
+    behavior, return path, and status derivation is untouched), then
+    finalizes that same row with the actual outcome exactly once. A
+    `MasterRefreshRunsError` starting the run is NOT caught here -- a
+    refresh that can't even establish its own durable marker should fail
+    loudly at the entry point, not proceed and silently produce
+    unattributable work.
+
+    `now` (injectable, defaults to real wall-clock only when omitted)
+    stamps `completed_at` -- mirrors every worker's own established
+    `now = now or datetime.now(timezone.utc)` seam (Odds/Injury/Weather/
+    News/Player Props/Postgame/Pregame Workers all already follow this
+    pattern) so Demo Mode's virtual clock can drive this timestamp too,
+    exactly as it already drives `today`."""
+    headers = _auth_headers()
+    now = now or datetime.now(timezone.utc)
+    run_id = await start_master_refresh_run(supabase_client, headers)
+    result = await _execute_master_refresh(
+        supabase_client=supabase_client,
+        sportsdataio_client=sportsdataio_client,
+        sportsdataio_api_key=sportsdataio_api_key,
+        cache_backend=cache_backend,
+        today=today,
+        league_code=league_code,
+        schedule_adapter=schedule_adapter,
+        roster_adapter=roster_adapter,
+    )
+    result.run_id = run_id
+    await complete_master_refresh_run(
+        supabase_client,
+        headers,
+        run_id=run_id,
+        status=result.status,
+        season_string=result.season_string,
+        games_in_slate=result.games_in_slate,
+        completed_at_iso=now.isoformat(),
+    )
+    return result
+
+
+async def _execute_master_refresh(
     *,
     supabase_client: httpx.AsyncClient,
     sportsdataio_client: httpx.AsyncClient,

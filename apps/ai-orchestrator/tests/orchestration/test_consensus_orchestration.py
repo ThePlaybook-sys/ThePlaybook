@@ -1,4 +1,6 @@
-"""Tests for app.orchestration.consensus (Milestone 4.7)."""
+"""Tests for app.orchestration.consensus (Milestone 4.7; split into
+run_shared_consensus / run_elite_reconciliation / finalize_consensus in
+Milestone 4.9, Decision 2)."""
 from __future__ import annotations
 
 import json
@@ -14,7 +16,7 @@ from app.features.consensus import ConsensusResult
 from app.models.fake_adapter import FakeModelAdapter, ScriptedSuccess
 from app.models.router import AdapterRegistry
 from app.orchestration import consensus as consensus_module
-from app.orchestration.consensus import run_candidate_consensus
+from app.orchestration.consensus import finalize_consensus, run_elite_reconciliation, run_shared_consensus
 from tests.conftest import mock_prompt_registry_route
 
 SUPABASE_URL = "https://test-project.supabase.co"
@@ -81,6 +83,9 @@ def _routing_rules() -> dict:
     }
 
 
+# --- run_shared_consensus: no user/tier concept, never persists ---
+
+
 @pytest.mark.asyncio
 @respx.mock
 async def test_no_consensus_when_zero_agent_rows_and_nothing_persisted():
@@ -89,33 +94,30 @@ async def test_no_consensus_when_zero_agent_rows_and_nothing_persisted():
     registry = AdapterRegistry(adapters={"anthropic": FakeModelAdapter(provider="anthropic", script=[])})
 
     async with httpx.AsyncClient(base_url=SUPABASE_URL) as client:
-        result = await run_candidate_consensus(
+        result = await run_shared_consensus(
             client, _headers(), recommendation_id="r1", correlation_id="corr-1", game_id="g1", candidate=_candidate(),
             home_team="KC", away_team="BAL", participation=_participation(), routing_rules=_routing_rules(), adapter_registry=registry,
         )
 
     assert result.status == "no_consensus"
-    assert result.final_aggregate_confidence is None
-    assert result.below_confidence_floor is None
-    assert snapshot_route.call_count == 0
+    assert result.after_meta_confidence is None
+    assert snapshot_route.call_count == 0  # run_shared_consensus never persists at all
 
 
 @pytest.mark.asyncio
 @respx.mock
 async def test_no_consensus_for_prop_candidate_not_fabricated():
     _mock_agent_outputs([_agent_output_row("injury_intelligence_agent", category="context", confidence=0.7, weight_applied=1.0, directional_lean="home")])
-    snapshot_route = respx.post(f"{SUPABASE_URL}/rest/v1/consensus_snapshots").mock(return_value=httpx.Response(201, json=[{}]))
     registry = AdapterRegistry(adapters={"anthropic": FakeModelAdapter(provider="anthropic", script=[])})
 
     async with httpx.AsyncClient(base_url=SUPABASE_URL) as client:
-        result = await run_candidate_consensus(
+        result = await run_shared_consensus(
             client, _headers(), recommendation_id="r1", correlation_id="corr-1", game_id="g1",
             candidate=_candidate(market_type="prop", selection="Mahomes Over 1.5 TDs"),
             home_team="KC", away_team="BAL", participation=_participation(), routing_rules=_routing_rules(), adapter_registry=registry,
         )
 
     assert result.status == "no_consensus"
-    assert snapshot_route.call_count == 0
 
 
 @pytest.mark.asyncio
@@ -132,18 +134,23 @@ async def test_computed_consensus_full_flow_persists_expected_values():
     registry = AdapterRegistry(adapters={"anthropic": adapter})
 
     async with httpx.AsyncClient(base_url=SUPABASE_URL) as client:
-        result = await run_candidate_consensus(
+        shared = await run_shared_consensus(
             client, _headers(), recommendation_id="r1", correlation_id="corr-1", game_id="g1", candidate=_candidate(),
             home_team="KC", away_team="BAL", participation=_participation(), routing_rules=_routing_rules(), adapter_registry=registry,
         )
+        assert snapshot_route.call_count == 0  # not yet finalized
+        finalize_result = await finalize_consensus(
+            client, _headers(), recommendation_id="r1", candidate=_candidate(), participation=_participation(), shared=shared,
+        )
 
-    assert result.status == "computed"
+    assert shared.status == "computed"
     # aggregate = (0.7*1.0*1.0 + 0.6*0.25*0.3) / 1.25 = 0.596
-    assert result.consensus.aggregate_confidence == pytest.approx(0.596)
-    assert result.final_aggregate_confidence == pytest.approx(0.596 - 0.05)
-    assert result.second_pass_triggered is False
-    assert result.below_confidence_floor is True  # 0.546 < 0.55
+    assert shared.consensus.aggregate_confidence == pytest.approx(0.596)
+    assert finalize_result.final_aggregate_confidence == pytest.approx(0.596 - 0.05)
+    assert finalize_result.second_pass_triggered is False
+    assert finalize_result.below_confidence_floor is True  # 0.546 < 0.55
 
+    assert snapshot_route.call_count == 1  # exactly one persist call, ever
     sent = json.loads(snapshot_route.calls.last.request.content)
     assert sent["candidate_key"] == "g1:DraftKings:moneyline:KC:none"
     assert sent["aggregate_confidence"] == pytest.approx(0.596)
@@ -158,20 +165,19 @@ async def test_weight_source_is_persisted_weight_applied_never_fresh_agents_quer
     rows = [_agent_output_row("injury_intelligence_agent", category="context", confidence=0.7, weight_applied=1.0, directional_lean="home")]
     _mock_agent_outputs(rows)
     mock_prompt_registry_route(SUPABASE_URL)
-    respx.post(f"{SUPABASE_URL}/rest/v1/consensus_snapshots").mock(return_value=httpx.Response(201, json=[{}]))
     agents_route = respx.get(f"{SUPABASE_URL}/rest/v1/agents").mock(return_value=httpx.Response(200, json=[{"id": "a1", "current_weight": 99.0}]))
     adapter = FakeModelAdapter(provider="anthropic", script=[ScriptedSuccess(raw_text=_meta_json())])
     registry = AdapterRegistry(adapters={"anthropic": adapter})
 
     async with httpx.AsyncClient(base_url=SUPABASE_URL) as client:
-        result = await run_candidate_consensus(
+        shared = await run_shared_consensus(
             client, _headers(), recommendation_id="r1", correlation_id="corr-1", game_id="g1", candidate=_candidate(),
             home_team="KC", away_team="BAL", participation=_participation(), routing_rules=_routing_rules(), adapter_registry=registry,
         )
 
     assert agents_route.call_count == 0  # never re-reads agents.current_weight
     # confirms weight_applied=1.0 (persisted), not the mocked-but-unused current_weight=99.0
-    assert result.consensus.aggregate_confidence == pytest.approx(0.7)
+    assert shared.consensus.aggregate_confidence == pytest.approx(0.7)
 
 
 @pytest.mark.asyncio
@@ -180,19 +186,18 @@ async def test_meta_positive_adjustment_rejected_treated_as_no_adjustment():
     rows = [_agent_output_row("injury_intelligence_agent", category="context", confidence=0.7, weight_applied=1.0, directional_lean="home")]
     _mock_agent_outputs(rows)
     mock_prompt_registry_route(SUPABASE_URL)
-    respx.post(f"{SUPABASE_URL}/rest/v1/consensus_snapshots").mock(return_value=httpx.Response(201, json=[{}]))
     malformed_meta = json.dumps({"agent_name": "meta_agent", "polarization_score": 0.2, "uncertainty_flag": False, "confidence_adjustment": 0.5, "reasoning": "r"})
     adapter = FakeModelAdapter(provider="anthropic", script=[ScriptedSuccess(raw_text=malformed_meta)])
     registry = AdapterRegistry(adapters={"anthropic": adapter})
 
     async with httpx.AsyncClient(base_url=SUPABASE_URL) as client:
-        result = await run_candidate_consensus(
+        shared = await run_shared_consensus(
             client, _headers(), recommendation_id="r1", correlation_id="corr-1", game_id="g1", candidate=_candidate(),
             home_team="KC", away_team="BAL", participation=_participation(), routing_rules=_routing_rules(), adapter_registry=registry,
         )
 
-    assert result.meta_result.status == "failed"  # Pydantic validator rejected the positive adjustment
-    assert result.final_aggregate_confidence == pytest.approx(result.consensus.aggregate_confidence)  # no adjustment applied
+    assert shared.meta_result.status == "failed"  # Pydantic validator rejected the positive adjustment
+    assert shared.after_meta_confidence == pytest.approx(shared.consensus.aggregate_confidence)  # no adjustment applied
 
 
 @pytest.mark.asyncio
@@ -206,13 +211,16 @@ async def test_final_confidence_floors_at_zero():
     registry = AdapterRegistry(adapters={"anthropic": adapter})
 
     async with httpx.AsyncClient(base_url=SUPABASE_URL) as client:
-        result = await run_candidate_consensus(
+        shared = await run_shared_consensus(
             client, _headers(), recommendation_id="r1", correlation_id="corr-1", game_id="g1", candidate=_candidate(),
             home_team="KC", away_team="BAL", participation=_participation(), routing_rules=_routing_rules(), adapter_registry=registry,
         )
+        finalize_result = await finalize_consensus(
+            client, _headers(), recommendation_id="r1", candidate=_candidate(), participation=_participation(), shared=shared,
+        )
 
-    assert result.final_aggregate_confidence == 0.0
-    assert result.final_aggregate_confidence <= result.consensus.aggregate_confidence
+    assert finalize_result.final_aggregate_confidence == 0.0
+    assert finalize_result.final_aggregate_confidence <= shared.consensus.aggregate_confidence
 
 
 @pytest.mark.asyncio
@@ -223,17 +231,16 @@ async def test_candidate_specific_consensus_no_cross_contamination():
     ]
     _mock_agent_outputs(rows)
     mock_prompt_registry_route(SUPABASE_URL)
-    respx.post(f"{SUPABASE_URL}/rest/v1/consensus_snapshots").mock(return_value=httpx.Response(201, json=[{}]))
     adapter = FakeModelAdapter(provider="anthropic", script=[ScriptedSuccess(raw_text=_meta_json(adjustment=0.0)), ScriptedSuccess(raw_text=_meta_json(adjustment=0.0))])
     registry = AdapterRegistry(adapters={"anthropic": adapter})
 
     async with httpx.AsyncClient(base_url=SUPABASE_URL) as client:
-        moneyline_result = await run_candidate_consensus(
+        moneyline_result = await run_shared_consensus(
             client, _headers(), recommendation_id="r1", correlation_id="corr-1", game_id="g1",
             candidate=_candidate(market_type="moneyline", selection="KC"),
             home_team="KC", away_team="BAL", participation=_participation(), routing_rules=_routing_rules(), adapter_registry=registry,
         )
-        totals_result = await run_candidate_consensus(
+        totals_result = await run_shared_consensus(
             client, _headers(), recommendation_id="r1", correlation_id="corr-1", game_id="g1",
             candidate=_candidate(market_type="total", selection="Over", point=47.5),
             home_team="KC", away_team="BAL", participation=_participation(), routing_rules=_routing_rules(), adapter_registry=registry,
@@ -246,25 +253,49 @@ async def test_candidate_specific_consensus_no_cross_contamination():
     assert totals_result.status == "no_consensus"
 
 
+# --- run_elite_reconciliation: caller-resolved tier, at most once per candidate ---
+
+
 @pytest.mark.asyncio
 @respx.mock
-async def test_elite_second_pass_never_triggers_without_user_id_never_reads_subscriptions():
+async def test_elite_reconciliation_is_a_noop_when_shared_consensus_never_computed():
+    elite_route = respx.post(f"{SUPABASE_URL}/rest/v1/consensus_reconciliation").mock(return_value=httpx.Response(201, json=[{}]))
+    shared = consensus_module.SharedConsensusResult(
+        status="no_consensus", consensus=None, meta_result=None, review_context=None, after_meta_confidence=None, model_routing_used={}
+    )
+
+    async with httpx.AsyncClient(base_url=SUPABASE_URL) as client:
+        result = await run_elite_reconciliation(
+            shared, client, _headers(), tier="elite", routing_rules=_routing_rules(), adapter_registry=AdapterRegistry(adapters={}),
+        )
+
+    assert result.triggered is False
+    assert result.elite_result is None
+    assert elite_route.call_count == 0  # never reaches any I/O -- nothing to reconcile
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_elite_reconciliation_never_triggers_when_tier_is_none():
     rows = [_agent_output_row("injury_intelligence_agent", category="context", confidence=0.7, weight_applied=1.0, directional_lean="home")]
     _mock_agent_outputs(rows)
     mock_prompt_registry_route(SUPABASE_URL)
-    respx.post(f"{SUPABASE_URL}/rest/v1/consensus_snapshots").mock(return_value=httpx.Response(201, json=[{}]))
-    subscriptions_route = respx.get(f"{SUPABASE_URL}/rest/v1/subscriptions").mock(return_value=httpx.Response(200, json=[{"tier": "elite"}]))
     adapter = FakeModelAdapter(provider="anthropic", script=[ScriptedSuccess(raw_text=_meta_json())])
     registry = AdapterRegistry(adapters={"anthropic": adapter})
 
     async with httpx.AsyncClient(base_url=SUPABASE_URL) as client:
-        result = await run_candidate_consensus(
+        shared = await run_shared_consensus(
             client, _headers(), recommendation_id="r1", correlation_id="corr-1", game_id="g1", candidate=_candidate(),
             home_team="KC", away_team="BAL", participation=_participation(), routing_rules=_routing_rules(), adapter_registry=registry,
         )
+        # No user resolved this cycle -- caller passes tier=None, exactly
+        # as if it never even checked subscriptions:
+        elite = await run_elite_reconciliation(
+            shared, client, _headers(), tier=None, routing_rules=_routing_rules(), adapter_registry=registry,
+        )
 
-    assert subscriptions_route.call_count == 0
-    assert result.second_pass_triggered is False
+    assert elite.triggered is False
+    assert elite.final_aggregate_confidence == pytest.approx(shared.after_meta_confidence)
 
 
 @pytest.mark.asyncio
@@ -284,20 +315,26 @@ async def test_elite_trigger_wiring_when_variance_exceeds_threshold_and_tier_is_
     _mock_agent_outputs([_agent_output_row("injury_intelligence_agent", category="context", confidence=0.7, weight_applied=1.0, directional_lean="home")])
     mock_prompt_registry_route(SUPABASE_URL)
     snapshot_route = respx.post(f"{SUPABASE_URL}/rest/v1/consensus_snapshots").mock(return_value=httpx.Response(201, json=[{}]))
-    respx.get(f"{SUPABASE_URL}/rest/v1/subscriptions").mock(return_value=httpx.Response(200, json=[{"tier": "elite"}]))
     adapter = FakeModelAdapter(provider="anthropic", script=[ScriptedSuccess(raw_text=_meta_json(adjustment=-0.05)), ScriptedSuccess(raw_text=_elite_json(adjustment=-0.08))])
     registry = AdapterRegistry(adapters={"anthropic": adapter})
 
     async with httpx.AsyncClient(base_url=SUPABASE_URL) as client:
-        result = await run_candidate_consensus(
+        shared = await run_shared_consensus(
             client, _headers(), recommendation_id="r1", correlation_id="corr-1", game_id="g1", candidate=_candidate(),
             home_team="KC", away_team="BAL", participation=_participation(), routing_rules=_routing_rules(), adapter_registry=registry,
-            user_id="u1",
+        )
+        elite = await run_elite_reconciliation(
+            shared, client, _headers(), tier="elite", routing_rules=_routing_rules(), adapter_registry=registry,
+        )
+        finalize_result = await finalize_consensus(
+            client, _headers(), recommendation_id="r1", candidate=_candidate(), participation=_participation(), shared=shared, elite=elite,
         )
 
-    assert result.second_pass_triggered is True
-    assert result.elite_result.status == "success"
-    assert result.final_aggregate_confidence == pytest.approx(0.7 - 0.05 - 0.08)
+    assert elite.triggered is True
+    assert elite.elite_result.status == "success"
+    assert finalize_result.second_pass_triggered is True
+    assert finalize_result.final_aggregate_confidence == pytest.approx(0.7 - 0.05 - 0.08)
+    assert snapshot_route.call_count == 1  # exactly one persist call, even with Elite reconciliation
     sent = json.loads(snapshot_route.calls.last.request.content)
     assert sent["second_pass_triggered"] is True
     assert set(sent["model_routing_used"].keys()) == {"meta_agent", "consensus_reconciliation_agent"}
@@ -311,20 +348,20 @@ async def test_elite_not_triggered_for_free_tier_even_with_high_variance(monkeyp
 
     _mock_agent_outputs([_agent_output_row("injury_intelligence_agent", category="context", confidence=0.7, weight_applied=1.0, directional_lean="home")])
     mock_prompt_registry_route(SUPABASE_URL)
-    respx.post(f"{SUPABASE_URL}/rest/v1/consensus_snapshots").mock(return_value=httpx.Response(201, json=[{}]))
-    respx.get(f"{SUPABASE_URL}/rest/v1/subscriptions").mock(return_value=httpx.Response(200, json=[{"tier": "free"}]))
     adapter = FakeModelAdapter(provider="anthropic", script=[ScriptedSuccess(raw_text=_meta_json())])
     registry = AdapterRegistry(adapters={"anthropic": adapter})
 
     async with httpx.AsyncClient(base_url=SUPABASE_URL) as client:
-        result = await run_candidate_consensus(
+        shared = await run_shared_consensus(
             client, _headers(), recommendation_id="r1", correlation_id="corr-1", game_id="g1", candidate=_candidate(),
             home_team="KC", away_team="BAL", participation=_participation(), routing_rules=_routing_rules(), adapter_registry=registry,
-            user_id="u1",
+        )
+        elite = await run_elite_reconciliation(
+            shared, client, _headers(), tier="free", routing_rules=_routing_rules(), adapter_registry=registry,
         )
 
-    assert result.second_pass_triggered is False
-    assert result.elite_result is None
+    assert elite.triggered is False
+    assert elite.elite_result is None
 
 
 @pytest.mark.asyncio
@@ -335,18 +372,18 @@ async def test_elite_positive_adjustment_rejected_treated_as_no_adjustment(monke
 
     _mock_agent_outputs([_agent_output_row("injury_intelligence_agent", category="context", confidence=0.7, weight_applied=1.0, directional_lean="home")])
     mock_prompt_registry_route(SUPABASE_URL)
-    respx.post(f"{SUPABASE_URL}/rest/v1/consensus_snapshots").mock(return_value=httpx.Response(201, json=[{}]))
-    respx.get(f"{SUPABASE_URL}/rest/v1/subscriptions").mock(return_value=httpx.Response(200, json=[{"tier": "elite"}]))
     malformed_elite = json.dumps({"agent_name": "consensus_reconciliation_agent", "candidate_key": "k", "reasoning": "r", "confidence_adjustment": 0.2, "supporting_evidence": [], "would_change_mind_if": "x"})
     adapter = FakeModelAdapter(provider="anthropic", script=[ScriptedSuccess(raw_text=_meta_json(adjustment=-0.05)), ScriptedSuccess(raw_text=malformed_elite)])
     registry = AdapterRegistry(adapters={"anthropic": adapter})
 
     async with httpx.AsyncClient(base_url=SUPABASE_URL) as client:
-        result = await run_candidate_consensus(
+        shared = await run_shared_consensus(
             client, _headers(), recommendation_id="r1", correlation_id="corr-1", game_id="g1", candidate=_candidate(),
             home_team="KC", away_team="BAL", participation=_participation(), routing_rules=_routing_rules(), adapter_registry=registry,
-            user_id="u1",
+        )
+        elite = await run_elite_reconciliation(
+            shared, client, _headers(), tier="elite", routing_rules=_routing_rules(), adapter_registry=registry,
         )
 
-    assert result.elite_result.status == "failed"
-    assert result.final_aggregate_confidence == pytest.approx(0.7 - 0.05)  # only Meta's adjustment applied
+    assert elite.elite_result.status == "failed"
+    assert elite.final_aggregate_confidence == pytest.approx(0.7 - 0.05)  # only Meta's adjustment applied

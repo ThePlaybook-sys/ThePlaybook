@@ -92,6 +92,25 @@ async def list_active_model_routing_rules(client: httpx.AsyncClient, headers: di
     return response.json()
 
 
+async def list_active_models(client: httpx.AsyncClient, headers: dict) -> list[dict]:
+    """Every active `model_registry` row's `model_name`/`provider` --
+    the exact `model_providers: dict[str, str]` lookup
+    `app.models.router.ModelRouter.route` expects (Milestone 4.4
+    pre-check, Decision 2; `provider` column added Milestone 4.8-adjacent
+    migration `20260821150000_model_registry_provider.sql`). First real
+    caller is Milestone 4.9's internal Recommendation Worker endpoint --
+    every prior caller built its own `model_providers` dict directly in
+    a test."""
+    response = await client.get(
+        "/rest/v1/model_registry",
+        params={"status": "eq.active", "select": "model_name,provider", "order": "model_name.asc"},
+        headers=headers,
+    )
+    if response.status_code != 200:
+        raise ConfigReadError(f"failed to list active model_registry rows: {response.status_code} {response.text}")
+    return response.json()
+
+
 async def get_model(client: httpx.AsyncClient, headers: dict, *, model_name: str) -> dict | None:
     response = await client.get(
         "/rest/v1/model_registry",

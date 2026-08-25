@@ -44,7 +44,19 @@ def _game_row(game_key, home, away, dt, week=1, stadium="Lumen Field"):
     }
 
 
+def _mock_master_refresh_runs():
+    """Milestone 4.9: every `run_master_refresh` call now creates+
+    finalizes a `master_refresh_runs` row -- mocked here rather than
+    per-test, since every existing test already calls `_mock_season()`
+    first regardless of what it's actually testing."""
+    respx.post(f"{SUPABASE_URL}/rest/v1/master_refresh_runs").mock(
+        return_value=httpx.Response(201, json=[{"id": "mrr-1"}])
+    )
+    respx.patch(f"{SUPABASE_URL}/rest/v1/master_refresh_runs").mock(return_value=httpx.Response(204))
+
+
 def _mock_season(seasons_response=None):
+    _mock_master_refresh_runs()
     respx.get(f"{SUPABASE_URL}/rest/v1/leagues").mock(
         return_value=httpx.Response(200, json=[{"id": "league-nfl"}])
     )
@@ -188,6 +200,7 @@ async def test_normal_master_refresh(monkeypatch):
     assert result.games_in_slate == 1
     assert result.games_created == 1
     assert result.daily_game_intelligence_written == 1
+    assert result.run_id == "mrr-1"  # Milestone 4.9: the durable run row's id, not fabricated
     assert dgi_route.called
     body = _json.loads(dgi_route.calls.last.request.content)
     assert set(body.keys()).isdisjoint(
@@ -342,6 +355,52 @@ async def test_schedule_provider_failure_blocks_the_run(monkeypatch):
 
     assert result.status == "failed"
     assert "Schedule fetch failed" in result.error
+    assert result.run_id == "mrr-1"  # the durable marker still exists and is finalized even on failure
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_master_refresh_run_created_before_work_begins_and_finalized_once_with_actual_status(monkeypatch):
+    """Milestone 4.9: the run row must exist BEFORE any crash-prone work
+    starts (so a crash mid-refresh still leaves a discoverable 'running'
+    row a retry could reason about), and must be finalized with whatever
+    status the refresh actually produced -- never silently upgraded."""
+    _headers_env(monkeypatch)
+    start_route = respx.post(f"{SUPABASE_URL}/rest/v1/master_refresh_runs").mock(
+        return_value=httpx.Response(201, json=[{"id": "mrr-1"}])
+    )
+    complete_route = respx.patch(f"{SUPABASE_URL}/rest/v1/master_refresh_runs").mock(
+        return_value=httpx.Response(204)
+    )
+    respx.get(f"{SUPABASE_URL}/rest/v1/leagues").mock(return_value=httpx.Response(200, json=[{"id": "league-nfl"}]))
+    respx.get(f"{SUPABASE_URL}/rest/v1/seasons").mock(
+        return_value=httpx.Response(200, json=[{"year": 2026, "start_date": "2026-09-04", "end_date": "2027-02-14"}])
+    )
+    respx.get(f"{SPORTSDATAIO_URL}/v3/nfl/scores/json/Schedules/2026REG").mock(return_value=httpx.Response(503))
+
+    async with (
+        httpx.AsyncClient(base_url=SUPABASE_URL) as supabase_client,
+        httpx.AsyncClient(base_url=SPORTSDATAIO_URL) as sdio_client,
+    ):
+        result = await run_master_refresh(
+            supabase_client=supabase_client, sportsdataio_client=sdio_client,
+            sportsdataio_api_key="test-key", today=TODAY,
+        )
+
+    assert result.status == "failed"
+    # The run-creation POST happened before the season-resolution GET,
+    # which happened before the schedule-fetch failure -- chronological
+    # order in respx's global call log, not just "both were called":
+    all_calls = list(respx.calls)
+    start_index = next(i for i, c in enumerate(all_calls) if c.request.url.path == "/rest/v1/master_refresh_runs" and c.request.method == "POST")
+    season_index = next(i for i, c in enumerate(all_calls) if c.request.url.path == "/rest/v1/seasons")
+    assert start_index < season_index
+    assert start_route.call_count == 1
+    assert complete_route.call_count == 1
+    import json
+
+    completed_body = json.loads(complete_route.calls.last.request.content)
+    assert completed_body["status"] == "failed"  # transcribed exactly, never upgraded to success/partial
 
 
 @pytest.mark.asyncio

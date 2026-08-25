@@ -1,8 +1,11 @@
-"""Tests for app.orchestration.cycle.run_candidate_evaluation (Milestone
-4.6, Decision G): the sequential Decision & Advisory chain for one
-`MarketCandidate` against an already-existing `recommendation_id` --
+"""Tests for app.orchestration.cycle.run_candidate_evaluation and
+run_bankroll_coach_evaluation (Milestone 4.6, Decision G; split in
+Milestone 4.9, Decision 2): the sequential Decision & Advisory chain for
+one `MarketCandidate` against an already-existing `recommendation_id` --
 never creates a second `recommendations` row, tags every persisted row
-with `candidate_key`."""
+with `candidate_key`. `run_candidate_evaluation` is the shared,
+user-independent half (Probability -> EV -> Risk); `run_bankroll_coach_
+evaluation` is the separate per-user half."""
 from __future__ import annotations
 
 import json
@@ -17,7 +20,7 @@ from app.features.candidate import MarketCandidate
 from app.models.errors import ModelTimeoutError
 from app.models.fake_adapter import FakeModelAdapter, ScriptedFailure, ScriptedSuccess
 from app.models.router import AdapterRegistry
-from app.orchestration.cycle import run_candidate_evaluation
+from app.orchestration.cycle import run_bankroll_coach_evaluation, run_candidate_evaluation
 from tests.conftest import mock_prompt_registry_route
 
 SUPABASE_URL = "https://test-project.supabase.co"
@@ -96,21 +99,26 @@ def _mock_agents():
     mock_prompt_registry_route(SUPABASE_URL)
 
 
-@pytest.mark.asyncio
-@respx.mock
-async def test_run_candidate_evaluation_persists_one_row_per_successful_step_tagged_with_candidate_key():
-    _mock_agents()
-    output_route = respx.post(f"{SUPABASE_URL}/rest/v1/recommendation_agent_outputs").mock(return_value=httpx.Response(201, json=[{}]))
-    adapter = FakeModelAdapter(
+def _shared_chain_adapter() -> FakeModelAdapter:
+    return FakeModelAdapter(
         provider="anthropic",
         script=[
             ScriptedSuccess(raw_text=_valid_probability_json()),
             ScriptedSuccess(raw_text=_valid_agent_output_json("expected_value_agent")),
             ScriptedSuccess(raw_text=_valid_agent_output_json("risk_manager_agent")),
-            ScriptedSuccess(raw_text=_valid_agent_output_json("bankroll_coach_agent")),
         ],
     )
-    registry = AdapterRegistry(adapters={"anthropic": adapter})
+
+
+# --- run_candidate_evaluation: shared, user-independent half ---
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_run_candidate_evaluation_persists_one_row_per_successful_step_tagged_with_candidate_key():
+    _mock_agents()
+    output_route = respx.post(f"{SUPABASE_URL}/rest/v1/recommendation_agent_outputs").mock(return_value=httpx.Response(201, json=[{}]))
+    registry = AdapterRegistry(adapters={"anthropic": _shared_chain_adapter()})
 
     async with httpx.AsyncClient(base_url=SUPABASE_URL) as client:
         chain_result = await run_candidate_evaluation(
@@ -127,7 +135,7 @@ async def test_run_candidate_evaluation_persists_one_row_per_successful_step_tag
         )
 
     assert chain_result.status == "full"
-    assert output_route.call_count == 4
+    assert output_route.call_count == 3  # Probability, EV, Risk -- no Bankroll Coach here
     expected_key = "g1:DraftKings:moneyline:Kansas City Chiefs:none"
     for call in output_route.calls:
         sent = json.loads(call.request.content)
@@ -141,16 +149,7 @@ async def test_run_candidate_evaluation_never_creates_a_recommendations_row():
     _mock_agents()
     respx.post(f"{SUPABASE_URL}/rest/v1/recommendation_agent_outputs").mock(return_value=httpx.Response(201, json=[{}]))
     recommendations_route = respx.post(f"{SUPABASE_URL}/rest/v1/recommendations").mock(return_value=httpx.Response(201, json=[{"id": "should-not-be-called"}]))
-    adapter = FakeModelAdapter(
-        provider="anthropic",
-        script=[
-            ScriptedSuccess(raw_text=_valid_probability_json()),
-            ScriptedSuccess(raw_text=_valid_agent_output_json("expected_value_agent")),
-            ScriptedSuccess(raw_text=_valid_agent_output_json("risk_manager_agent")),
-            ScriptedSuccess(raw_text=_valid_agent_output_json("bankroll_coach_agent")),
-        ],
-    )
-    registry = AdapterRegistry(adapters={"anthropic": adapter})
+    registry = AdapterRegistry(adapters={"anthropic": _shared_chain_adapter()})
 
     async with httpx.AsyncClient(base_url=SUPABASE_URL) as client:
         await run_candidate_evaluation(
@@ -171,20 +170,11 @@ async def test_run_candidate_evaluation_never_creates_a_recommendations_row():
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_run_candidate_evaluation_without_user_id_never_reads_user_profiles():
+async def test_run_candidate_evaluation_has_no_user_concept_and_never_reads_user_profiles():
     _mock_agents()
     respx.post(f"{SUPABASE_URL}/rest/v1/recommendation_agent_outputs").mock(return_value=httpx.Response(201, json=[{}]))
     profile_route = respx.get(f"{SUPABASE_URL}/rest/v1/user_profiles").mock(return_value=httpx.Response(200, json=[]))
-    adapter = FakeModelAdapter(
-        provider="anthropic",
-        script=[
-            ScriptedSuccess(raw_text=_valid_probability_json()),
-            ScriptedSuccess(raw_text=_valid_agent_output_json("expected_value_agent")),
-            ScriptedSuccess(raw_text=_valid_agent_output_json("risk_manager_agent")),
-            ScriptedSuccess(raw_text=_valid_agent_output_json("bankroll_coach_agent")),
-        ],
-    )
-    registry = AdapterRegistry(adapters={"anthropic": adapter})
+    registry = AdapterRegistry(adapters={"anthropic": _shared_chain_adapter()})
 
     async with httpx.AsyncClient(base_url=SUPABASE_URL) as client:
         chain_result = await run_candidate_evaluation(
@@ -201,44 +191,7 @@ async def test_run_candidate_evaluation_without_user_id_never_reads_user_profile
         )
 
     assert profile_route.call_count == 0
-    assert chain_result.kelly.stake is None  # no bankroll profile at all -- never fabricated
-
-
-@pytest.mark.asyncio
-@respx.mock
-async def test_run_candidate_evaluation_with_user_id_reads_real_profile_and_uses_it():
-    _mock_agents()
-    respx.post(f"{SUPABASE_URL}/rest/v1/recommendation_agent_outputs").mock(return_value=httpx.Response(201, json=[{}]))
-    respx.get(f"{SUPABASE_URL}/rest/v1/user_profiles").mock(
-        return_value=httpx.Response(200, json=[{"id": "u1", "risk_tolerance": "moderate", "preferred_unit_size": 25.0, "optional_bankroll": 1000.0}])
-    )
-    adapter = FakeModelAdapter(
-        provider="anthropic",
-        script=[
-            ScriptedSuccess(raw_text=_valid_probability_json()),
-            ScriptedSuccess(raw_text=_valid_agent_output_json("expected_value_agent")),
-            ScriptedSuccess(raw_text=_valid_agent_output_json("risk_manager_agent")),
-            ScriptedSuccess(raw_text=_valid_agent_output_json("bankroll_coach_agent")),
-        ],
-    )
-    registry = AdapterRegistry(adapters={"anthropic": adapter})
-
-    async with httpx.AsyncClient(base_url=SUPABASE_URL) as client:
-        chain_result = await run_candidate_evaluation(
-            client,
-            _headers(),
-            recommendation_id="r1",
-            game_id="g1",
-            correlation_id="corr-1",
-            candidate=_candidate(),
-            upstream_outputs=(),
-            participation=_participation(),
-            routing_rules=_routing_rules(),
-            adapter_registry=registry,
-            user_id="u1",
-        )
-
-    assert chain_result.kelly.stake is not None  # a real (synthetic-for-this-test) complete profile -> a valid stake
+    assert chain_result.context.kelly is None  # no bankroll/Kelly concept at all in the shared chain
 
 
 @pytest.mark.asyncio
@@ -268,3 +221,163 @@ async def test_probability_modeling_failure_persists_nothing():
 
     assert chain_result.status == "failed"
     assert output_route.call_count == 0
+
+
+# --- run_bankroll_coach_evaluation: separate, per-user half ---
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_run_bankroll_coach_evaluation_persists_one_row_tagged_with_candidate_key():
+    _mock_agents()
+    output_route = respx.post(f"{SUPABASE_URL}/rest/v1/recommendation_agent_outputs").mock(return_value=httpx.Response(201, json=[{}]))
+    shared_registry = AdapterRegistry(adapters={"anthropic": _shared_chain_adapter()})
+
+    async with httpx.AsyncClient(base_url=SUPABASE_URL) as client:
+        chain_result = await run_candidate_evaluation(
+            client,
+            _headers(),
+            recommendation_id="r1",
+            game_id="g1",
+            correlation_id="corr-1",
+            candidate=_candidate(),
+            upstream_outputs=(),
+            participation=_participation(),
+            routing_rules=_routing_rules(),
+            adapter_registry=shared_registry,
+        )
+        assert output_route.call_count == 3
+
+        bankroll_adapter = FakeModelAdapter(provider="anthropic", script=[ScriptedSuccess(raw_text=_valid_agent_output_json("bankroll_coach_agent"))])
+        result = await run_bankroll_coach_evaluation(
+            client,
+            _headers(),
+            recommendation_id="r1",
+            candidate=_candidate(),
+            shared_chain_context=chain_result.context,
+            routing_rule=_routing_rules()["bankroll_coach_analysis"],
+            adapter_registry=AdapterRegistry(adapters={"anthropic": bankroll_adapter}),
+        )
+
+    assert result.status == "success"
+    assert output_route.call_count == 4  # 3 shared + 1 bankroll coach
+    last_call = output_route.calls[-1]
+    sent = json.loads(last_call.request.content)
+    assert sent["recommendation_id"] == "r1"
+    assert sent["candidate_key"] == "g1:DraftKings:moneyline:Kansas City Chiefs:none"
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_run_bankroll_coach_evaluation_without_user_id_never_reads_user_profiles_and_yields_null_stake():
+    _mock_agents()
+    respx.post(f"{SUPABASE_URL}/rest/v1/recommendation_agent_outputs").mock(return_value=httpx.Response(201, json=[{}]))
+    profile_route = respx.get(f"{SUPABASE_URL}/rest/v1/user_profiles").mock(return_value=httpx.Response(200, json=[]))
+    shared_registry = AdapterRegistry(adapters={"anthropic": _shared_chain_adapter()})
+
+    async with httpx.AsyncClient(base_url=SUPABASE_URL) as client:
+        chain_result = await run_candidate_evaluation(
+            client,
+            _headers(),
+            recommendation_id="r1",
+            game_id="g1",
+            correlation_id="corr-1",
+            candidate=_candidate(),
+            upstream_outputs=(),
+            participation=_participation(),
+            routing_rules=_routing_rules(),
+            adapter_registry=shared_registry,
+        )
+
+        bankroll_adapter = FakeModelAdapter(provider="anthropic", script=[ScriptedSuccess(raw_text=_valid_agent_output_json("bankroll_coach_agent"))])
+        result = await run_bankroll_coach_evaluation(
+            client,
+            _headers(),
+            recommendation_id="r1",
+            candidate=_candidate(),
+            shared_chain_context=chain_result.context,
+            routing_rule=_routing_rules()["bankroll_coach_analysis"],
+            adapter_registry=AdapterRegistry(adapters={"anthropic": bankroll_adapter}),
+        )
+
+    assert profile_route.call_count == 0  # user_id omitted entirely -- never fabricated
+    assert result.status == "success"
+    assert result.kelly.stake is None
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_run_bankroll_coach_evaluation_with_user_id_reads_real_profile_and_uses_it():
+    _mock_agents()
+    respx.post(f"{SUPABASE_URL}/rest/v1/recommendation_agent_outputs").mock(return_value=httpx.Response(201, json=[{}]))
+    respx.get(f"{SUPABASE_URL}/rest/v1/user_profiles").mock(
+        return_value=httpx.Response(200, json=[{"id": "u1", "risk_tolerance": "moderate", "preferred_unit_size": 25.0, "optional_bankroll": 1000.0}])
+    )
+    shared_registry = AdapterRegistry(adapters={"anthropic": _shared_chain_adapter()})
+
+    async with httpx.AsyncClient(base_url=SUPABASE_URL) as client:
+        chain_result = await run_candidate_evaluation(
+            client,
+            _headers(),
+            recommendation_id="r1",
+            game_id="g1",
+            correlation_id="corr-1",
+            candidate=_candidate(),
+            upstream_outputs=(),
+            participation=_participation(),
+            routing_rules=_routing_rules(),
+            adapter_registry=shared_registry,
+        )
+
+        bankroll_adapter = FakeModelAdapter(provider="anthropic", script=[ScriptedSuccess(raw_text=_valid_agent_output_json("bankroll_coach_agent"))])
+        result = await run_bankroll_coach_evaluation(
+            client,
+            _headers(),
+            recommendation_id="r1",
+            candidate=_candidate(),
+            shared_chain_context=chain_result.context,
+            routing_rule=_routing_rules()["bankroll_coach_analysis"],
+            adapter_registry=AdapterRegistry(adapters={"anthropic": bankroll_adapter}),
+            user_id="u1",
+        )
+
+    assert result.status == "success"
+    assert result.kelly.stake is not None  # a real (synthetic-for-this-test) complete profile -> a valid stake
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_run_bankroll_coach_evaluation_skipped_when_shared_chain_never_reached_a_probability():
+    _mock_agents()
+    output_route = respx.post(f"{SUPABASE_URL}/rest/v1/recommendation_agent_outputs").mock(return_value=httpx.Response(201, json=[{}]))
+    failing_registry = AdapterRegistry(
+        adapters={"anthropic": FakeModelAdapter(provider="anthropic", script=[ScriptedFailure(error=ModelTimeoutError("t1")), ScriptedFailure(error=ModelTimeoutError("t2"))])}
+    )
+
+    async with httpx.AsyncClient(base_url=SUPABASE_URL) as client:
+        chain_result = await run_candidate_evaluation(
+            client,
+            _headers(),
+            recommendation_id="r1",
+            game_id="g1",
+            correlation_id="corr-1",
+            candidate=_candidate(),
+            upstream_outputs=(),
+            participation=_participation(),
+            routing_rules=_routing_rules(),
+            adapter_registry=failing_registry,
+        )
+        assert chain_result.status == "failed"
+
+        result = await run_bankroll_coach_evaluation(
+            client,
+            _headers(),
+            recommendation_id="r1",
+            candidate=_candidate(),
+            shared_chain_context=chain_result.context,
+            routing_rule=_routing_rules()["bankroll_coach_analysis"],
+            adapter_registry=AdapterRegistry(adapters={}),
+        )
+
+    assert result.status == "skipped_no_probability"
+    assert output_route.call_count == 0  # never persisted -- nothing ran

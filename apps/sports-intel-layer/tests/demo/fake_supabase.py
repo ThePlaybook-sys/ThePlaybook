@@ -72,6 +72,7 @@ _GENERATED_ID_TABLES = frozenset(
         "games", "players", "game_provider_ids", "player_provider_ids", "team_provider_ids",
         "odds_snapshots", "injury_reports", "weather_snapshots", "depth_chart_snapshots",
         "roster_memberships", "team_stats", "player_stats",
+        "master_refresh_runs",  # Milestone 4.9
     }
 )
 

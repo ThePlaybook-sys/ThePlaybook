@@ -1,0 +1,12 @@
+-- Milestone 4.9 follow-up fix: master_refresh_runs was created (this
+-- same milestone) without RLS enabled -- unlike every sibling internal
+-- table (agents, model_routing_rules, consensus_snapshots,
+-- recommendation_agent_outputs, etc.), which all have RLS enabled with
+-- no policy (default-deny to anon/authenticated; the service role used
+-- by sports-intel-layer/ai-orchestrator/workers bypasses RLS entirely,
+-- unaffected). Caught by Supabase's own advisor lint
+-- (rls_disabled_in_public, ERROR level) immediately after applying the
+-- original migration -- fixed the same way every other internal-only
+-- config/state table in this schema already is, no policy added since
+-- none of these tables are ever queried by an end user's own JWT.
+alter table master_refresh_runs enable row level security;

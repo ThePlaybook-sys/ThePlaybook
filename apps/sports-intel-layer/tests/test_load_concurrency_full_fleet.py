@@ -354,6 +354,8 @@ async def test_master_refresh_full_slate_and_full_league_roster(monkeypatch):
     teams = _slate_teams()
     distinct_teams = sorted({t for pair in teams for t in pair})
 
+    respx.post(f"{SUPABASE_URL}/rest/v1/master_refresh_runs").mock(return_value=httpx.Response(201, json=[{"id": "mrr-1"}]))
+    respx.patch(f"{SUPABASE_URL}/rest/v1/master_refresh_runs").mock(return_value=httpx.Response(204))
     respx.get(f"{SUPABASE_URL}/rest/v1/leagues").mock(return_value=httpx.Response(200, json=[{"id": "l"}]))
     respx.get(f"{SUPABASE_URL}/rest/v1/seasons").mock(
         return_value=httpx.Response(200, json=[{"year": 2026, "start_date": "2026-09-04", "end_date": "2027-02-14"}])
