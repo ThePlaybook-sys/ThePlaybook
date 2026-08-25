@@ -5,7 +5,10 @@ from __future__ import annotations
 from app.features.strategy import (
     EvaluatedCandidate,
     GameCandidates,
+    RejectionReason,
     compute_strategy_decision,
+    partition_market_conflicts,
+    qualification_failure_reasons,
     qualifies,
     rank_key,
     resolve_market_conflicts,
@@ -173,3 +176,88 @@ def test_omitted_non_qualifying_candidates_do_not_appear_as_legs():
     result = compute_strategy_decision(games)
     assert result.outcome == "single"
     assert [c.candidate_key for c in result.legs] == ["q"]
+
+
+# --- qualification_failure_reasons: Milestone 5.2 addition ---
+
+
+def test_qualification_failure_reasons_empty_when_qualifying():
+    assert qualification_failure_reasons(_candidate(ev_per_dollar=0.01, final_aggregate_confidence=0.55)) == ()
+
+
+def test_qualification_failure_reasons_below_floor_only():
+    c = _candidate(ev_per_dollar=0.05, final_aggregate_confidence=0.40)
+    assert qualification_failure_reasons(c) == (RejectionReason.BELOW_CONFIDENCE_FLOOR,)
+
+
+def test_qualification_failure_reasons_non_positive_ev_only():
+    c = _candidate(ev_per_dollar=0.0, final_aggregate_confidence=0.90)
+    assert qualification_failure_reasons(c) == (RejectionReason.NON_POSITIVE_EV,)
+
+
+def test_qualification_failure_reasons_reports_both_when_both_fail():
+    c = _candidate(ev_per_dollar=-0.02, final_aggregate_confidence=0.10)
+    assert qualification_failure_reasons(c) == (RejectionReason.BELOW_CONFIDENCE_FLOOR, RejectionReason.NON_POSITIVE_EV)
+
+
+def test_qualification_failure_reasons_matches_qualifies_exactly():
+    # not(reasons) must always agree with qualifies() -- same two conditions.
+    for ev, conf in [(0.01, 0.55), (-0.01, 0.90), (0.10, 0.40), (-0.01, 0.40), (0.0, 0.99)]:
+        c = _candidate(ev_per_dollar=ev, final_aggregate_confidence=conf)
+        assert (not qualification_failure_reasons(c)) == qualifies(c)
+
+
+# --- partition_market_conflicts: Milestone 5.2 addition ---
+
+
+def test_partition_market_conflicts_winners_match_resolve_market_conflicts():
+    home = _candidate(candidate_key="home-ml", selection="Home Team", ev_per_dollar=0.08, final_aggregate_confidence=0.60)
+    away = _candidate(candidate_key="away-ml", selection="Away Team", ev_per_dollar=0.03, final_aggregate_confidence=0.90)
+    winners, rejected = partition_market_conflicts([home, away])
+    assert winners == resolve_market_conflicts([home, away]) == [home]
+    assert len(rejected) == 1
+    assert rejected[0].candidate == away
+    assert rejected[0].reasons == (RejectionReason.LOST_SAME_MARKET_CONFLICT,)
+
+
+def test_partition_market_conflicts_no_rejections_across_different_markets():
+    ml = _candidate(candidate_key="ml", market_type="moneyline")
+    total = _candidate(candidate_key="total", market_type="total", selection="Over")
+    winners, rejected = partition_market_conflicts([ml, total])
+    assert set(winners) == {ml, total}
+    assert rejected == []
+
+
+# --- compute_strategy_decision.rejected: Milestone 5.2 addition ---
+
+
+def test_no_bet_game_records_gate_failure_reasons():
+    below_floor = _candidate(candidate_key="c1", ev_per_dollar=0.05, final_aggregate_confidence=0.30)
+    games = [GameCandidates(game_id="g1", recommendation_id="r1", candidates=(below_floor,))]
+    result = compute_strategy_decision(games)
+    assert result.outcome == "bankroll_preservation"
+    decision = result.game_decisions[0]
+    assert decision.outcome == "no_bet"
+    assert len(decision.rejected) == 1
+    assert decision.rejected[0].candidate == below_floor
+    assert decision.rejected[0].reasons == (RejectionReason.BELOW_CONFIDENCE_FLOOR,)
+
+
+def test_qualified_game_records_same_market_conflict_loser():
+    home = _candidate(candidate_key="home-ml", selection="Home Team", ev_per_dollar=0.08, final_aggregate_confidence=0.60)
+    away = _candidate(candidate_key="away-ml", selection="Away Team", ev_per_dollar=0.03, final_aggregate_confidence=0.90)
+    games = [GameCandidates(game_id="g1", recommendation_id="r1", candidates=(home, away))]
+    result = compute_strategy_decision(games)
+    decision = result.game_decisions[0]
+    assert decision.outcome == "qualified"
+    assert [leg.candidate_key for leg in decision.legs] == ["home-ml"]
+    assert len(decision.rejected) == 1
+    assert decision.rejected[0].candidate == away
+    assert decision.rejected[0].reasons == (RejectionReason.LOST_SAME_MARKET_CONFLICT,)
+
+
+def test_default_rejected_field_is_empty_tuple_for_existing_construction():
+    from app.features.strategy import GameDecision
+
+    decision = GameDecision(game_id="g1", recommendation_id="r1", outcome="no_bet", legs=())
+    assert decision.rejected == ()

@@ -32,6 +32,7 @@ async def test_read_game_level_agent_outputs_flattens_embedded_agent():
             "finding": "finding",
             "directional_lean": "home",
             "evidence_classification": "data_backed",
+            "would_change_mind_if": "If the starting QB is ruled out.",
         },
         "agent_confidence": 0.6,
         "weight_applied": 1.05,
@@ -49,6 +50,7 @@ async def test_read_game_level_agent_outputs_flattens_embedded_agent():
             "directional_lean": "home",
             "evidence_classification": "data_backed",
             "weight_applied": 1.05,
+            "would_change_mind_if": "If the starting QB is ruled out.",
         }
     ]
 
