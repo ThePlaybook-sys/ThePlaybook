@@ -86,9 +86,11 @@ async def test_read_game_level_agent_outputs_raises_on_error():
 @pytest.mark.asyncio
 @respx.mock
 async def test_persist_consensus_snapshot_sends_all_fields():
-    route = respx.post(f"{SUPABASE_URL}/rest/v1/consensus_snapshots").mock(return_value=httpx.Response(201, json=[{}]))
+    route = respx.post(f"{SUPABASE_URL}/rest/v1/consensus_snapshots").mock(
+        return_value=httpx.Response(201, json=[{"id": "snap-1"}])
+    )
     async with httpx.AsyncClient(base_url=SUPABASE_URL) as client:
-        await persist_consensus_snapshot(
+        snapshot_id = await persist_consensus_snapshot(
             client,
             _headers(),
             recommendation_id="r1",
@@ -101,6 +103,8 @@ async def test_persist_consensus_snapshot_sends_all_fields():
             model_routing_used={"meta_agent": "claude-sonnet-5"},
             second_pass_triggered=False,
         )
+    assert snapshot_id == "snap-1"
+    assert route.calls.last.request.headers["Prefer"] == "return=representation"
     sent = json.loads(route.calls.last.request.content)
     assert sent["recommendation_id"] == "r1"
     assert sent["candidate_key"] == "g1:DraftKings:moneyline:KC:none"

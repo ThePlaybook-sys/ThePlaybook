@@ -166,6 +166,7 @@ class EliteReconciliationResult:
 
 @dataclass
 class ConsensusFinalizeResult:
+    consensus_snapshot_id: str
     final_aggregate_confidence: float
     below_confidence_floor: bool
     second_pass_triggered: bool
@@ -321,7 +322,7 @@ async def finalize_consensus(
     second_pass_triggered = elite.triggered if elite is not None else False
     model_routing_used = {**shared.model_routing_used, **(elite.model_routing_used if elite is not None else {})}
 
-    await persist_consensus_snapshot(
+    consensus_snapshot_id = await persist_consensus_snapshot(
         client,
         headers,
         recommendation_id=recommendation_id,
@@ -336,6 +337,7 @@ async def finalize_consensus(
     )
 
     return ConsensusFinalizeResult(
+        consensus_snapshot_id=consensus_snapshot_id,
         final_aggregate_confidence=final_aggregate_confidence,
         below_confidence_floor=below_confidence_floor,
         second_pass_triggered=second_pass_triggered,

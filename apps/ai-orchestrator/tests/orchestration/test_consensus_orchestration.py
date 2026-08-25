@@ -90,7 +90,7 @@ def _routing_rules() -> dict:
 @respx.mock
 async def test_no_consensus_when_zero_agent_rows_and_nothing_persisted():
     _mock_agent_outputs([])
-    snapshot_route = respx.post(f"{SUPABASE_URL}/rest/v1/consensus_snapshots").mock(return_value=httpx.Response(201, json=[{}]))
+    snapshot_route = respx.post(f"{SUPABASE_URL}/rest/v1/consensus_snapshots").mock(return_value=httpx.Response(201, json=[{"id": "snap-test-1"}]))
     registry = AdapterRegistry(adapters={"anthropic": FakeModelAdapter(provider="anthropic", script=[])})
 
     async with httpx.AsyncClient(base_url=SUPABASE_URL) as client:
@@ -129,7 +129,7 @@ async def test_computed_consensus_full_flow_persists_expected_values():
     ]
     _mock_agent_outputs(rows)
     mock_prompt_registry_route(SUPABASE_URL)
-    snapshot_route = respx.post(f"{SUPABASE_URL}/rest/v1/consensus_snapshots").mock(return_value=httpx.Response(201, json=[{}]))
+    snapshot_route = respx.post(f"{SUPABASE_URL}/rest/v1/consensus_snapshots").mock(return_value=httpx.Response(201, json=[{"id": "snap-test-1"}]))
     adapter = FakeModelAdapter(provider="anthropic", script=[ScriptedSuccess(raw_text=_meta_json(adjustment=-0.05))])
     registry = AdapterRegistry(adapters={"anthropic": adapter})
 
@@ -206,7 +206,7 @@ async def test_final_confidence_floors_at_zero():
     rows = [_agent_output_row("injury_intelligence_agent", category="context", confidence=0.05, weight_applied=1.0, directional_lean="home")]
     _mock_agent_outputs(rows)
     mock_prompt_registry_route(SUPABASE_URL)
-    respx.post(f"{SUPABASE_URL}/rest/v1/consensus_snapshots").mock(return_value=httpx.Response(201, json=[{}]))
+    respx.post(f"{SUPABASE_URL}/rest/v1/consensus_snapshots").mock(return_value=httpx.Response(201, json=[{"id": "snap-test-1"}]))
     adapter = FakeModelAdapter(provider="anthropic", script=[ScriptedSuccess(raw_text=_meta_json(adjustment=-0.5))])
     registry = AdapterRegistry(adapters={"anthropic": adapter})
 
@@ -314,7 +314,7 @@ async def test_elite_trigger_wiring_when_variance_exceeds_threshold_and_tier_is_
 
     _mock_agent_outputs([_agent_output_row("injury_intelligence_agent", category="context", confidence=0.7, weight_applied=1.0, directional_lean="home")])
     mock_prompt_registry_route(SUPABASE_URL)
-    snapshot_route = respx.post(f"{SUPABASE_URL}/rest/v1/consensus_snapshots").mock(return_value=httpx.Response(201, json=[{}]))
+    snapshot_route = respx.post(f"{SUPABASE_URL}/rest/v1/consensus_snapshots").mock(return_value=httpx.Response(201, json=[{"id": "snap-test-1"}]))
     adapter = FakeModelAdapter(provider="anthropic", script=[ScriptedSuccess(raw_text=_meta_json(adjustment=-0.05)), ScriptedSuccess(raw_text=_elite_json(adjustment=-0.08))])
     registry = AdapterRegistry(adapters={"anthropic": adapter})
 

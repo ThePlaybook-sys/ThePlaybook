@@ -1,3 +1,4 @@
+import dataclasses
 import os
 
 import httpx
@@ -11,7 +12,9 @@ from app.internal_auth import require_internal_token
 from app.models.anthropic_adapter import AnthropicModelAdapter
 from app.models.openai_adapter import OpenAIModelAdapter
 from app.models.router import AdapterRegistry
+from app.features.strategy import EvaluatedCandidate, GameCandidates
 from app.orchestration.recommendation_worker import RecommendationWorkerError, run_game_recommendation
+from app.orchestration.strategy_finalize import finalize_slate_strategy
 from app.persistence.model_config import list_active_model_routing_rules, list_active_models
 
 sentry_sdk.init(
@@ -49,6 +52,27 @@ class RunGameRecommendationRequest(BaseModel):
     agent_version: str
 
 
+class StrategyInputItem(BaseModel):
+    """Milestone 5.1 -- the frozen candidate fields `apps/workers` relays,
+    unmodified, into `/v1/internal/recommendation-worker/finalize-strategy`
+    once every game in a slate has been dispatched. `apps/workers` never
+    inspects or recomputes any of these fields -- see that endpoint's own
+    docstring for why this relay-not-recompute shape is required."""
+
+    game_id: str
+    recommendation_id: str
+    consensus_snapshot_id: str
+    candidate_key: str
+    market_type: str
+    selection: str
+    sportsbook: str
+    american_odds: int
+    point: float | None
+    decimal_odds: float
+    ev_per_dollar: float
+    final_aggregate_confidence: float
+
+
 class CandidateRunResponseItem(BaseModel):
     candidate_key: str
     status: str
@@ -57,6 +81,7 @@ class CandidateRunResponseItem(BaseModel):
     second_pass_triggered: bool
     bankroll_coach_user_count: int
     error: str | None
+    strategy_input: StrategyInputItem | None = None
 
 
 class RunGameRecommendationResponse(BaseModel):
@@ -139,9 +164,69 @@ async def internal_run_game_recommendation(payload: RunGameRecommendationRequest
                 second_pass_triggered=c.second_pass_triggered,
                 bankroll_coach_user_count=c.bankroll_coach_user_count,
                 error=c.error,
+                strategy_input=(StrategyInputItem(**dataclasses.asdict(c.strategy_input)) if c.strategy_input else None),
             )
             for c in result.candidates
         ],
+    )
+
+
+class FinalizeStrategyGameItem(BaseModel):
+    """One game's worth of `run-game` output, as `apps/workers` collected
+    it -- `candidates` is every candidate whose `strategy_input` came back
+    non-null from that game's own `run-game` response, relayed unmodified.
+    A game with zero qualifying/computable candidates still needs an
+    entry with `candidates=[]` -- omitting it entirely (vs. sending it
+    with an empty list) is reserved for a game that failed to dispatch at
+    all (see module docstring)."""
+
+    game_id: str
+    recommendation_id: str
+    candidates: list[StrategyInputItem]
+
+
+class FinalizeStrategyRequest(BaseModel):
+    master_refresh_run_id: str
+    games: list[FinalizeStrategyGameItem]
+
+
+class FinalizeStrategyResponse(BaseModel):
+    outcome: str
+    recommendation_product_ids: list[str]
+    leg_count: int
+    no_bet_game_count: int
+
+
+@app.post(
+    "/v1/internal/recommendation-worker/finalize-strategy",
+    dependencies=[Depends(require_internal_token)],
+    response_model=FinalizeStrategyResponse,
+)
+async def internal_finalize_strategy(payload: FinalizeStrategyRequest) -> FinalizeStrategyResponse:
+    """Milestone 5.1's Strategy Engine finalization entry point --
+    reachable only via `INTERNAL_SERVICE_TOKEN`, called by `apps/workers`
+    exactly once per Recommendation Worker cycle, after every eligible
+    game's `run-game` call has completed. See
+    `app.orchestration.strategy_finalize`'s module docstring for the full
+    slate-level rationale."""
+    games = [
+        GameCandidates(
+            game_id=g.game_id,
+            recommendation_id=g.recommendation_id,
+            candidates=tuple(EvaluatedCandidate(**c.model_dump()) for c in g.candidates),
+        )
+        for g in payload.games
+    ]
+    headers = supabase_client.auth_headers()
+    async with supabase_client.new_client(timeout=60.0) as client:
+        decision, created_ids = await finalize_slate_strategy(
+            client, headers, master_refresh_run_id=payload.master_refresh_run_id, games=games
+        )
+    return FinalizeStrategyResponse(
+        outcome=decision.outcome,
+        recommendation_product_ids=created_ids,
+        leg_count=len(decision.legs),
+        no_bet_game_count=sum(1 for d in decision.game_decisions if d.outcome == "no_bet"),
     )
 
 

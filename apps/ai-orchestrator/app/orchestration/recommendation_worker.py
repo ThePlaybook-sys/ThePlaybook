@@ -61,8 +61,9 @@ from app.agents.travel_fatigue import TravelFatigueAgent
 from app.agents.vegas_line import VegasLineAgent
 from app.agents.weather import WeatherAgent
 from app.config import reference_sportsbook_preference
-from app.features.candidate import MarketCandidate
+from app.features.candidate import MarketCandidate, candidate_key as compute_candidate_key
 from app.features.candidate_generation import generate_candidates_for_game
+from app.features.strategy import EvaluatedCandidate
 from app.models.retry_policy import RetryEngine
 from app.models.router import AdapterRegistry
 from app.orchestration.consensus import (
@@ -106,6 +107,14 @@ class CandidateRunResult:
     second_pass_triggered: bool = False
     bankroll_coach_user_count: int = 0
     error: str | None = None
+    #: Milestone 5.1 -- set only when this candidate reached a finalized
+    #: consensus_snapshots row AND has a computable EV (i.e. `candidate.
+    #: american_odds is not None`). This is the raw material the Strategy
+    #: Engine (`app.features.strategy`) needs -- qualification filtering
+    #: (Decision X) happens in the Strategy Engine itself, not here; this
+    #: module hands over every candidate that COULD be evaluated for
+    #: Strategy, not just the ones that ultimately qualify.
+    strategy_input: EvaluatedCandidate | None = None
 
 
 @dataclass
@@ -182,6 +191,7 @@ async def _evaluate_one_candidate(
     )
 
     second_pass_triggered = False
+    strategy_input: EvaluatedCandidate | None = None
     if shared_consensus.status == "computed":
         elite: EliteReconciliationResult | None = None
         if elite_tier_present:
@@ -205,6 +215,29 @@ async def _evaluate_one_candidate(
             elite=elite,
         )
         second_pass_triggered = finalize_result.second_pass_triggered
+
+        # Milestone 5.1: the Strategy Engine needs this candidate's frozen
+        # market fields + EV + final confidence. `candidate`/`shared_chain.ev`
+        # are the SAME in-memory objects this cycle already computed --
+        # never re-derived or re-read back from persistence, so what
+        # Strategy sees is exactly what was evaluated, not a later,
+        # possibly-moved price (Invariant 7's "never a live reference"
+        # discipline, applied one step earlier at the source).
+        if shared_chain.ev is not None and shared_chain.ev.ev_per_dollar is not None:
+            strategy_input = EvaluatedCandidate(
+                game_id=game_id,
+                recommendation_id=recommendation_id,
+                consensus_snapshot_id=finalize_result.consensus_snapshot_id,
+                candidate_key=compute_candidate_key(candidate),
+                market_type=candidate.market_type,
+                selection=candidate.selection,
+                sportsbook=candidate.sportsbook,
+                american_odds=candidate.american_odds,
+                point=candidate.point,
+                decimal_odds=shared_chain.ev.decimal_odds,
+                ev_per_dollar=shared_chain.ev.ev_per_dollar,
+                final_aggregate_confidence=finalize_result.final_aggregate_confidence,
+            )
 
     bankroll_coach_user_count = 0
     if shared_chain.probability is not None:
@@ -233,6 +266,7 @@ async def _evaluate_one_candidate(
         consensus_status=shared_consensus.status,
         second_pass_triggered=second_pass_triggered,
         bankroll_coach_user_count=bankroll_coach_user_count,
+        strategy_input=strategy_input,
     )
 
 

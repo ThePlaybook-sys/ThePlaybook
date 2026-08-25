@@ -117,7 +117,7 @@ async def test_game_skipped_when_no_odds_zero_candidates_and_no_downstream_persi
     _mock_common(game=_game_row(), odds_rows=[])
     respx.post(f"{SUPABASE_URL}/rest/v1/recommendations").mock(return_value=httpx.Response(201, json=[{"id": "r1"}]))
     output_route = respx.post(f"{SUPABASE_URL}/rest/v1/recommendation_agent_outputs").mock(return_value=httpx.Response(201, json=[{}]))
-    snapshot_route = respx.post(f"{SUPABASE_URL}/rest/v1/consensus_snapshots").mock(return_value=httpx.Response(201, json=[{}]))
+    snapshot_route = respx.post(f"{SUPABASE_URL}/rest/v1/consensus_snapshots").mock(return_value=httpx.Response(201, json=[{"id": "snap-test-1"}]))
     adapter = FakeModelAdapter(provider="anthropic", script=[])  # never called -- prompt_registry mock lets it isolate cleanly
     registry = AdapterRegistry(adapters={"anthropic": adapter})
 
@@ -159,7 +159,7 @@ async def test_full_wiring_one_candidate_consensus_and_bankroll_coach_per_subscr
             "agent_confidence": 0.6, "weight_applied": 1.0, "agents": {"name": "injury_intelligence_agent", "category": "context"},
         }])
     )
-    snapshot_route = respx.post(f"{SUPABASE_URL}/rest/v1/consensus_snapshots").mock(return_value=httpx.Response(201, json=[{}]))
+    snapshot_route = respx.post(f"{SUPABASE_URL}/rest/v1/consensus_snapshots").mock(return_value=httpx.Response(201, json=[{"id": "snap-test-1"}]))
 
     candidate_key = "g1:draftkings:moneyline:KC:none"
     script = (
@@ -191,6 +191,22 @@ async def test_full_wiring_one_candidate_consensus_and_bankroll_coach_per_subscr
     assert snapshot_route.call_count == 1  # exactly one persist per candidate
     assert output_route.call_count == 6 + 3 + 2  # game-level + shared chain + 2 bankroll coach rows
 
+    # Milestone 5.1: a computed-consensus candidate with a priced
+    # (american_odds is not None) EV yields a strategy_input carrying the
+    # SAME frozen market fields/EV/confidence this cycle just computed --
+    # never re-read back from persistence.
+    strategy_input = candidate_result.strategy_input
+    assert strategy_input is not None
+    assert strategy_input.game_id == "g1"
+    assert strategy_input.recommendation_id == "r1"
+    assert strategy_input.consensus_snapshot_id == "snap-test-1"
+    assert strategy_input.candidate_key == candidate_key
+    assert strategy_input.market_type == "moneyline"
+    assert strategy_input.selection == "KC"
+    assert strategy_input.american_odds == -150
+    assert strategy_input.final_aggregate_confidence is not None
+    assert strategy_input.ev_per_dollar is not None
+
 
 @pytest.mark.asyncio
 @respx.mock
@@ -221,7 +237,7 @@ async def test_elite_reconciliation_triggered_once_and_reused_never_per_subscrib
             "agent_confidence": 0.6, "weight_applied": 1.0, "agents": {"name": "injury_intelligence_agent", "category": "context"},
         }])
     )
-    snapshot_route = respx.post(f"{SUPABASE_URL}/rest/v1/consensus_snapshots").mock(return_value=httpx.Response(201, json=[{}]))
+    snapshot_route = respx.post(f"{SUPABASE_URL}/rest/v1/consensus_snapshots").mock(return_value=httpx.Response(201, json=[{"id": "snap-test-1"}]))
 
     candidate_key = "g1:draftkings:moneyline:KC:none"
     script = (
@@ -267,7 +283,7 @@ async def test_one_candidate_failure_is_isolated_from_the_others(monkeypatch):
     respx.post(f"{SUPABASE_URL}/rest/v1/recommendations").mock(return_value=httpx.Response(201, json=[{"id": "r1"}]))
     respx.post(f"{SUPABASE_URL}/rest/v1/recommendation_agent_outputs").mock(return_value=httpx.Response(201, json=[{}]))
     respx.get(f"{SUPABASE_URL}/rest/v1/recommendation_agent_outputs").mock(return_value=httpx.Response(200, json=[]))
-    respx.post(f"{SUPABASE_URL}/rest/v1/consensus_snapshots").mock(return_value=httpx.Response(201, json=[{}]))
+    respx.post(f"{SUPABASE_URL}/rest/v1/consensus_snapshots").mock(return_value=httpx.Response(201, json=[{"id": "snap-test-1"}]))
 
     call_count = {"n": 0}
     real_evaluate = worker_module._evaluate_one_candidate
@@ -313,7 +329,7 @@ async def test_one_subscriber_bankroll_coach_failure_does_not_block_the_next(mon
     respx.post(f"{SUPABASE_URL}/rest/v1/recommendations").mock(return_value=httpx.Response(201, json=[{"id": "r1"}]))
     respx.post(f"{SUPABASE_URL}/rest/v1/recommendation_agent_outputs").mock(return_value=httpx.Response(201, json=[{}]))
     respx.get(f"{SUPABASE_URL}/rest/v1/recommendation_agent_outputs").mock(return_value=httpx.Response(200, json=[]))
-    respx.post(f"{SUPABASE_URL}/rest/v1/consensus_snapshots").mock(return_value=httpx.Response(201, json=[{}]))
+    respx.post(f"{SUPABASE_URL}/rest/v1/consensus_snapshots").mock(return_value=httpx.Response(201, json=[{"id": "snap-test-1"}]))
 
     real_bankroll = worker_module.run_bankroll_coach_evaluation
 

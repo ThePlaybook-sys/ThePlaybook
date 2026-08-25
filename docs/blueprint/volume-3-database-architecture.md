@@ -1,7 +1,7 @@
 # The Playbook — Volume 3
 ## Database Architecture: Tables, Relationships, Indexes, Triggers, Migrations, RLS
 
-**Version:** v4.17
+**Version:** v4.18
 **Last updated:** 2026-08-25
 
 **v4.17 note (MINOR):** New table `master_refresh_runs` (Milestone 4.9, 2026-08-25) — the durable bridge between "Master Refresh completed" and "the Recommendation Worker may safely process this slate," created before work begins and finalized once with the actual outcome (`running`/`success`/`partial`/`failed`, mirroring `MasterRefreshResult.status` exactly). `recommendations` gains `correlation_id text unique`, nullable and backward-compatible — the crash-safe idempotency identity flagged as an open gap since Milestone 4.5, now resolved: a retried Recommendation Worker call against the same `(master_refresh_run_id, game_id)` pair recovers the same row via upsert rather than creating a duplicate. See `CHANGELOG.md` v4.17 entry for full reasoning.
@@ -47,7 +47,7 @@ auth.users (Supabase-managed)
    │        │
    │        └── subscriptions
    │
-   ├── conversations ──── conversation_messages
+   ├── conversations (v5.0, §5A) ──── conversation_messages (Phase 6, not yet built)
    ├── bet_slips
    └── notifications
 
@@ -55,10 +55,17 @@ games ──── odds_snapshots
    │
    └── recommendations ──── recommendation_agent_outputs ──── agents
             │                                                    │
-            ├── consensus_snapshots                    agent_performance_scores
+            ├── consensus_snapshots ──── recommendation_legs   agent_performance_scores
+            │                                   │
+            │                        recommendation_products (v5.0, §5A)
+            │                                   │
+            │                        user_recommendation_selections
             ├── explainability_payloads
             ├── recommendation_snapshots (Time Machine)
             └── postgame_reviews
+
+display_id_counters (standalone counter, §5A)
+master_refresh_runs ──── recommendation_products (v5.0, §5A)
 
 verified_bets ──── recommendations (nullable link)
 projected_performance ──── recommendations + user_profiles
@@ -603,6 +610,125 @@ create table recommendation_snapshots (
 );
 ```
 **Why this table duplicates data that already exists in normalized form elsewhere:** reconstructing a recommendation by joining across `odds_snapshots`, `recommendation_agent_outputs`, `consensus_snapshots`, and `explainability_payloads` works, but it's slow and fragile — a future schema change to any of those tables risks silently breaking historical reconstruction. This table is a deliberate denormalization: one flat JSON blob captured at creation time, guaranteed never to change, that the `/v1/recommendations/{id}/snapshot` endpoint (Volume 2, Section 6) can read directly without joins. Storage cost is cheap; reproducibility risk is not.
+
+---
+
+## 5A. Phase 5 Recommendation Product Layer (v5.0, Phase 5 Milestone 5.1, 2026-08-25)
+
+**Resolves the load-bearing conflict between §5's `recommendations` (one row per game, frozen from Phase 4 Milestone 4.5's "Option C") and Volume 4 §9's Recommendation Strategy Engine, which needs shapes `recommendations` was never built to hold** — a `multiple_singles` product spanning several games, or a slate-wide `bankroll_preservation` verdict with no single game at all. Resolution (Mac's explicit decision): **preserve `recommendations`, `recommendation_agent_outputs`, and `consensus_snapshots` exactly as §5 already documents them — zero columns changed, zero semantics changed — and add a distinct product layer above them**, with first-class leg provenance back into that unchanged Phase 4 layer, never opaque JSON.
+
+### `recommendation_products`
+```sql
+create table recommendation_products (
+  id uuid primary key default uuid_generate_v7(),
+  display_id text not null unique,           -- "{year}-{counter}", e.g. "2026-00007" — see display_id_counters below
+  recommendation_type text not null check (recommendation_type in
+    ('single','player_prop','multiple_singles','no_bet','bankroll_preservation',
+     'same_game_parlay','multi_game_parlay')),
+  scope text not null check (scope in ('game','slate')),
+  game_id uuid references games(id),           -- set only when scope = 'game'
+  recommendation_id uuid references recommendations(id),  -- set only when scope = 'game'
+  master_refresh_run_id uuid not null references master_refresh_runs(id),  -- always set, both scopes
+  min_required_tier text not null default 'free',
+  status text not null default 'active' check (status in ('active','withdrawn')),
+  withdrawn_at timestamptz,
+  withdrawal_reason text,
+  deleted_at timestamptz,
+  created_at timestamptz not null default now()
+);
+```
+**`scope` splits the table into exactly the two grains Volume 4 §9 actually needs:** `single`/`player_prop`/`no_bet`/`same_game_parlay` are `scope='game'`, anchored to one `game_id`/`recommendation_id` pair; `multiple_singles`/`bankroll_preservation`/`multi_game_parlay` are `scope='slate'`, anchored only to the `master_refresh_run_id` that produced them (a CHECK constraint enforces this pairing — see the migration for the exact SQL). `single` vs. `multiple_singles` is decided purely by how many candidates qualified across the WHOLE slate after same-market conflict resolution (one → `single`, two-or-more → `multiple_singles`), not by game count — one game can legitimately contribute more than one leg (e.g. a qualifying moneyline and a qualifying total are different markets).
+
+**`no_bet` and `bankroll_preservation` carry zero `recommendation_legs` rows, by design — an explicit correction to an earlier draft of this schema that would have used fake `candidate_key = NULL` legs to represent "considered but not selected."** Their provenance is the `recommendation_id` (for a per-game `no_bet`) or `master_refresh_run_id` (for a slate-wide `bankroll_preservation`) columns above, directly — Milestone 5.2's Explainability Engine reconstructs "why nothing was recommended" by joining out from there to `recommendation_agent_outputs`/`consensus_snapshots`, never from a manufactured leg.
+
+**`min_required_tier`/`status`/`withdrawn_at`/`withdrawal_reason`/`deleted_at` mirror `recommendations`'s own existing pattern exactly** (see §5 above) — this is the user-facing object, so it needs the same tier-gated RLS shape `recommendations` already has. Unlike `recommendations`, every OTHER column here is DB-enforced immutable after insert via a trigger that permits only `status`/`withdrawn_at`/`withdrawal_reason`/`deleted_at` to change.
+
+**No `ev_per_dollar`/confidence column at this level, on purpose.** A `multiple_singles` product has no single scalar EV or confidence — inventing one would be exactly the "blended score" Mac's Decision Y explicitly forbade. Those numbers live only on `recommendation_legs`, per leg, where they're meaningful.
+
+### `recommendation_legs`
+```sql
+create table recommendation_legs (
+  id uuid primary key default uuid_generate_v7(),
+  recommendation_product_id uuid not null references recommendation_products(id) on delete cascade,
+  consensus_snapshot_id uuid not null references consensus_snapshots(id),  -- the EXACT frozen evaluation this leg came from
+  game_id uuid not null references games(id),
+  recommendation_id uuid not null references recommendations(id),
+  candidate_key text not null,
+  market_type text not null check (market_type in ('moneyline','spread','total','prop')),
+  selection text not null,
+  sportsbook text not null,
+  american_odds integer not null,
+  point numeric(6,2),
+  decimal_odds numeric(8,4) not null,
+  ev_per_dollar numeric(8,4) not null check (ev_per_dollar > 0),
+  final_aggregate_confidence numeric(5,4) not null check (final_aggregate_confidence >= 0.55),
+  leg_order integer not null default 1 check (leg_order > 0),
+  created_at timestamptz not null default now(),
+  unique (id, recommendation_product_id),
+  unique (recommendation_product_id, leg_order),
+  unique (recommendation_product_id, candidate_key)
+);
+create unique index idx_recommendation_legs_one_per_market
+  on recommendation_legs (recommendation_product_id, game_id, market_type)
+  where market_type in ('moneyline','spread','total');
+```
+**Represents only actually-selected wager legs** — never a placeholder for a candidate that was considered but not chosen (see `recommendation_products` above). Every market/odds/confidence field here is a frozen COPY taken directly from the same in-memory objects Phase 4's Recommendation Worker already computed for this exact cycle (never re-read back from persistence, never a live reference that could silently move) — the same Time Machine discipline `weight_applied`/`prompt_name`/`prompt_version` already established in §5. Fully append-only: no column here, including the withdrawal-adjacent ones, is ever legitimately updated after insert.
+
+**`consensus_snapshot_id`, not `(recommendation_id, candidate_key)`, is the provenance anchor** — `consensus_snapshots` (§5) has no uniqueness constraint on that pair, since an Elite second-pass writes a brand-new row rather than updating; anchoring to the specific snapshot row is the only way to unambiguously say which pass's numbers a leg claims.
+
+**`idx_recommendation_legs_one_per_market` is the DB-enforced version of the same-market mutual-exclusion rule** — at most one leg per `(product, game, market_type)` for moneyline/spread/total, since the two possible selections for one of those markets are opposing sides of the same wager and can never both be selected in one product. Player props are exempt: distinct props on the same game are independent markets, not opposing sides of one.
+
+### `user_recommendation_selections`
+```sql
+create table user_recommendation_selections (
+  id uuid primary key default uuid_generate_v7(),
+  recommendation_product_id uuid not null references recommendation_products(id) on delete cascade,
+  recommendation_leg_id uuid references recommendation_legs(id) on delete cascade,  -- null = product-level-only state
+  user_id uuid not null references auth.users(id) on delete cascade,
+  risk_tolerance text not null check (risk_tolerance in ('conservative','moderate','aggressive')),
+  bankroll_at_computation numeric(12,2),
+  excluded_by_session_preferences boolean not null default false,
+  full_kelly_fraction numeric(8,6),
+  quarter_kelly_fraction numeric(8,6),
+  risk_tolerance_multiplier numeric(5,4),
+  stake numeric(10,2),
+  created_at timestamptz not null default now(),
+  foreign key (recommendation_leg_id, recommendation_product_id)
+    references recommendation_legs(id, recommendation_product_id) on delete cascade
+);
+```
+The per-user personalization layer — Kelly stake and session-preference exclusions, computed against the shared `recommendation_legs` above rather than duplicating any of its frozen candidate data. **Append-only, never overwritten** — but a BEFORE INSERT trigger (`enforce_urs_materiality`) suppresses an insert that's identical to that user's own most-recent row for the same `(product, leg)` key, so a harmless repeat view/refresh never creates an unbounded number of rows. The comparison is against the LATEST row only, not "any row ever" — required so a genuine revert (e.g. `moderate → aggressive → moderate`) is still recorded as a new observation rather than silently suppressed against older history, which would break reconstructing "what was true as of time T" for any T after the real revert. The suppression itself is race-free: the trigger takes a `pg_advisory_xact_lock` scoped to the `(user, product, leg)` key before comparing, so two simultaneous writes for the same key are serialized, never racing against a stale read.
+
+### `display_id_counters`
+```sql
+create table display_id_counters (
+  bucket_key text primary key,   -- currently the 4-digit activation year, e.g. "2026"
+  counter integer not null default 0,
+  updated_at timestamptz not null default now()
+);
+
+create function next_display_id_counter(p_bucket_key text) returns integer as $$
+declare v_counter integer;
+begin
+  insert into display_id_counters (bucket_key, counter, updated_at) values (p_bucket_key, 1, now())
+  on conflict (bucket_key) do update set counter = display_id_counters.counter + 1, updated_at = now()
+  returning counter into v_counter;
+  return v_counter;
+end;
+$$ language plpgsql;
+```
+**Genuinely atomic, not a read-then-write race:** `next_display_id_counter` wraps a single `INSERT ... ON CONFLICT ... DO UPDATE ... RETURNING` statement — there is no separate prior read. The row lock backing the `ON CONFLICT`/`DO UPDATE` path is acquired as an intrinsic part of executing that one statement; a second concurrent caller for the same `bucket_key` blocks on that lock, then (Postgres's standard read-committed UPDATE re-check semantics) re-evaluates `counter + 1` against the value the FIRST transaction actually committed, never a value it cached before blocking. Two simultaneous activations therefore cannot receive the same counter. Exposed as an RPC (`/rest/v1/rpc/next_display_id_counter`) because PostgREST's table-level upsert support has no way to express a server-side increment expression — this is a transport wrapper around the same single atomic statement, not a different mechanism. A crash between generating a `display_id` and using it leaves a gap, never a collision — no-gaps was never a requirement.
+
+### `conversations` (v3.0's originally-specified shape, built now per Phase 5 rather than Phase 1)
+```sql
+create table conversations (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  session_preferences jsonb not null default '{}',
+  created_at timestamptz not null default now()
+);
+```
+Exactly Volume 4 §7's own originally-specified shape (`session_preferences` is a column here, not a separate table). `conversation_messages` is deliberately NOT built yet — deferred to Phase 6 — but nothing here forecloses adding it later; its FK will simply target `conversations(id)`, untouched by this migration. Built now, not in Phase 1 as the roadmap's v3.0 amendment originally scoped it, because Milestone 5.1's Strategy Engine is the first thing that actually needs to read a session-preference exclusion; a schema-only table with nothing reading it yet would have sat unused since Phase 1.
 
 ---
 

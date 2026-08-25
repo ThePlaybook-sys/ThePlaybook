@@ -83,10 +83,14 @@ async def persist_consensus_snapshot(
     participation_metadata: dict,
     model_routing_used: dict,
     second_pass_triggered: bool,
-) -> None:
+) -> str:
     """`aggregate_confidence` must already be a real number -- callers
     never invoke this when consensus could not be computed (see module
-    docstring)."""
+    docstring). Returns the persisted row's `id` (Milestone 5.1 addition
+    -- Strategy Engine provenance, `app.persistence.recommendation_products`,
+    needs the exact snapshot row a leg was selected from; requesting
+    `return=representation` here doesn't change what's written, only
+    what's read back)."""
     payload = {
         "recommendation_id": recommendation_id,
         "candidate_key": candidate_key,
@@ -101,10 +105,17 @@ async def persist_consensus_snapshot(
     response = await client.post(
         "/rest/v1/consensus_snapshots",
         json=payload,
-        headers={**headers, "Content-Type": "application/json"},
+        headers={**headers, "Content-Type": "application/json", "Prefer": "return=representation"},
     )
     if response.status_code not in (200, 201):
         raise ConsensusSnapshotsError(
             f"failed to persist consensus snapshot for recommendation_id={recommendation_id!r} "
             f"candidate_key={candidate_key!r}: {response.status_code} {response.text}"
         )
+    rows = response.json()
+    if not rows:
+        raise ConsensusSnapshotsError(
+            f"consensus snapshot insert for recommendation_id={recommendation_id!r} "
+            f"candidate_key={candidate_key!r} returned no row"
+        )
+    return rows[0]["id"]

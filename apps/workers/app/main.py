@@ -39,6 +39,8 @@ class RunRecommendationCycleResponse(BaseModel):
     status: str
     run_id: str | None
     games: list[GameCycleResponseItem]
+    strategy: dict | None = None
+    strategy_error: str | None = None
 
 
 @app.post(
@@ -74,6 +76,8 @@ async def internal_run_recommendation_cycle() -> RunRecommendationCycleResponse:
             GameCycleResponseItem(game_id=g.game_id, correlation_id=g.correlation_id, status=g.status, error=g.error)
             for g in result.games
         ],
+        strategy=result.strategy,
+        strategy_error=result.strategy_error,
     )
 
 
