@@ -40,12 +40,33 @@ re-decided):**
 No blended score, no new confidence thresholds, no risk_level mapping,
 and no synthetic parlay calculation are invented here -- exactly per
 Mac's explicit instruction accompanying Decisions X-AN.
+
+**Milestone 5.2 addition (additive only -- no decision logic changed):**
+`RejectedCandidate`/`RejectionReason` and `GameDecision.rejected` capture
+WHY a non-selected candidate didn't win, for the Explainability Engine's
+"why not the other bet?" requirement. This is purely new OUTPUT from the
+exact same computation `compute_strategy_decision` already performed --
+`qualifies()`/`resolve_market_conflicts()` are untouched, still directly
+tested, and still produce byte-identical winners/outcomes. Nothing here
+re-ranks, re-qualifies, or changes which candidate wins.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 
 _DIRECTIONAL_MARKET_TYPES = ("moneyline", "spread", "total")
+
+
+class RejectionReason:
+    """Canonical, extensible vocabulary (approved 2026-08-25) -- not
+    assumed to be the permanent exhaustive list for the lifetime of the
+    product. Every value written by this module corresponds to a real
+    deterministic condition already computed elsewhere in this module,
+    never an invented category."""
+
+    BELOW_CONFIDENCE_FLOOR = "BELOW_CONFIDENCE_FLOOR"
+    NON_POSITIVE_EV = "NON_POSITIVE_EV"
+    LOST_SAME_MARKET_CONFLICT = "LOST_SAME_MARKET_CONFLICT"
 
 
 @dataclass(frozen=True)
@@ -79,11 +100,28 @@ class GameCandidates:
 
 
 @dataclass(frozen=True)
+class RejectedCandidate:
+    """A candidate that did NOT become a leg, and why -- Milestone 5.2's
+    Explainability input. `reasons` is a non-empty tuple: a candidate can
+    fail both qualification gates simultaneously (both are reported, never
+    just the first), or lose a same-market conflict (exactly one reason)."""
+
+    candidate: EvaluatedCandidate
+    reasons: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class GameDecision:
     game_id: str
     recommendation_id: str
     outcome: str  # "no_bet" | "qualified"
     legs: tuple[EvaluatedCandidate, ...]
+    #: Every candidate considered for this game that did not become a leg --
+    #: both gate-failures (game outcome "no_bet" or "qualified" alike) and
+    #: same-market conflict losses (only possible when outcome="qualified").
+    #: Default `()` keeps every existing keyword-argument construction site
+    #: (tests, callers) valid unchanged -- purely additive.
+    rejected: tuple[RejectedCandidate, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -110,14 +148,36 @@ def rank_key(candidate: EvaluatedCandidate) -> tuple[float, float, str]:
     return (-candidate.ev_per_dollar, -candidate.final_aggregate_confidence, candidate.candidate_key)
 
 
-def resolve_market_conflicts(qualifying: list[EvaluatedCandidate]) -> list[EvaluatedCandidate]:
+def qualification_failure_reasons(candidate: EvaluatedCandidate, *, confidence_floor: float = 0.55) -> tuple[str, ...]:
+    """Milestone 5.2: the exact same two conditions `qualifies()` checks
+    (kept in sync deliberately, never delegated to avoid a subtle drift --
+    both are simple, stable, one-line comparisons), reported as WHICH
+    gate(s) failed rather than a single collapsed bool. Empty tuple means
+    the candidate qualifies -- `not qualification_failure_reasons(c)` is
+    exactly equivalent to `qualifies(c)`."""
+    reasons: list[str] = []
+    if candidate.final_aggregate_confidence < confidence_floor:
+        reasons.append(RejectionReason.BELOW_CONFIDENCE_FLOOR)
+    if candidate.ev_per_dollar <= 0:
+        reasons.append(RejectionReason.NON_POSITIVE_EV)
+    return tuple(reasons)
+
+
+def partition_market_conflicts(
+    qualifying: list[EvaluatedCandidate],
+) -> tuple[list[EvaluatedCandidate], list[RejectedCandidate]]:
     """Decision AC, applied within one game's already-qualifying
     candidates: for each directional market_type (moneyline/spread/total)
     with more than one qualifying candidate, keep only the single
     best-ranked one (Decision AM hierarchy) -- the two candidates are
     opposing sides of the SAME market and cannot both be selected. Prop
     candidates are never conflict-resolved against each other -- distinct
-    props are independent markets, not opposing sides of one."""
+    props are independent markets, not opposing sides of one.
+
+    Returns `(winners, rejected)` -- `winners` is byte-identical to what
+    `resolve_market_conflicts` (below) has always returned; `rejected`
+    (Milestone 5.2 addition) is every same-market candidate that lost,
+    tagged `RejectionReason.LOST_SAME_MARKET_CONFLICT`."""
     by_market: dict[str, list[EvaluatedCandidate]] = {}
     props: list[EvaluatedCandidate] = []
     for candidate in qualifying:
@@ -126,10 +186,24 @@ def resolve_market_conflicts(qualifying: list[EvaluatedCandidate]) -> list[Evalu
         else:
             props.append(candidate)
 
-    resolved: list[EvaluatedCandidate] = list(props)
+    winners: list[EvaluatedCandidate] = list(props)
+    rejected: list[RejectedCandidate] = []
     for group in by_market.values():
-        resolved.append(min(group, key=rank_key))
-    return resolved
+        ranked = sorted(group, key=rank_key)
+        winners.append(ranked[0])
+        rejected.extend(
+            RejectedCandidate(candidate=c, reasons=(RejectionReason.LOST_SAME_MARKET_CONFLICT,)) for c in ranked[1:]
+        )
+    return winners, rejected
+
+
+def resolve_market_conflicts(qualifying: list[EvaluatedCandidate]) -> list[EvaluatedCandidate]:
+    """Decision AC -- unchanged public contract, still directly tested.
+    Delegates to `partition_market_conflicts` (Milestone 5.2) and discards
+    the rejection detail; the winner-selection logic itself is identical,
+    not reimplemented."""
+    winners, _rejected = partition_market_conflicts(qualifying)
+    return winners
 
 
 def compute_strategy_decision(games: list[GameCandidates]) -> SlateStrategyResult:
@@ -143,19 +217,35 @@ def compute_strategy_decision(games: list[GameCandidates]) -> SlateStrategyResul
     all_selected_legs: list[EvaluatedCandidate] = []
 
     for game in games:
-        qualifying = [c for c in game.candidates if qualifies(c)]
+        gate_rejected: list[RejectedCandidate] = []
+        qualifying: list[EvaluatedCandidate] = []
+        for candidate in game.candidates:
+            reasons = qualification_failure_reasons(candidate)
+            if reasons:
+                gate_rejected.append(RejectedCandidate(candidate=candidate, reasons=reasons))
+            else:
+                qualifying.append(candidate)
+
         if not qualifying:
             game_decisions.append(
-                GameDecision(game_id=game.game_id, recommendation_id=game.recommendation_id, outcome="no_bet", legs=())
+                GameDecision(
+                    game_id=game.game_id,
+                    recommendation_id=game.recommendation_id,
+                    outcome="no_bet",
+                    legs=(),
+                    rejected=tuple(gate_rejected),
+                )
             )
             continue
-        resolved = resolve_market_conflicts(qualifying)
+
+        resolved, conflict_rejected = partition_market_conflicts(qualifying)
         game_decisions.append(
             GameDecision(
                 game_id=game.game_id,
                 recommendation_id=game.recommendation_id,
                 outcome="qualified",
                 legs=tuple(resolved),
+                rejected=tuple(gate_rejected) + tuple(conflict_rejected),
             )
         )
         all_selected_legs.extend(resolved)

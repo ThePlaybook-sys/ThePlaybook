@@ -1,9 +1,10 @@
 # The Playbook — Volume 4
 ## AI Intelligence Architecture: Agents, Orchestration, Consensus, Explainability, Learning
 
-**Version:** v5.5
+**Version:** v5.6
 **Last updated:** 2026-08-25
 
+**v5.6 note (MINOR):** §8 gains a note documenting Milestone 5.2's actual Deterministic V1 implementation against the original question table below — built in `app.features.explainability`/`app.orchestration.explainability` (ai-orchestrator), persisted to Volume 3 §5B's two new tables. No LLM narrative layer, no live model calls (`narrative_summary` reserved, unpopulated). One real correction to this section's original sourcing is disclosed inline: "why not another bet" is answered from the Strategy Engine's own deterministic rejection trace (§9, `RejectedCandidate`/`RejectionReason`), not a Public Betting Agent — no such agent exists in the implemented 12-agent committee. See `CHANGELOG.md` v5.6 entry for full reasoning.
 **v5.3 note (MINOR):** §3.1/§4.3 document the shared-vs-personalized execution split built for the proactive Recommendation Worker (Milestone 4.9): Probability Modeling → EV → Risk Manager, consensus computation, and Meta Agent review each run exactly once per `(recommendation_id, candidate)` pair, shared across every user; Bankroll Coach runs separately, once per user who needs a stake number, reusing the shared chain's already-computed probability/EV; Elite second-pass reconciliation is computed at most once per candidate per cycle and reused across every Elite-tier subscriber, with entitlement/tier controlling only whether it triggers, never how many times the underlying evidence gets re-analyzed. Candidate generation (V1: home/away moneyline, home/away spread, over/under total, no player props, one reference sportsbook per game) is also documented here for the first time. See `CHANGELOG.md` v5.3 (Volume 4) entry for full reasoning.
 **v5.2 note (MINOR):** §4.3's Elite second-pass threshold corrected from the structurally-unreachable `agreement_variance > 0.25` to `> 0.10` (Milestone 4.8, Decision L) — the `1.0`/`0.3` directional-agreement factors, `aggregate_confidence`'s semantics, and the variance formula itself are all unchanged, per Mac's explicit instruction. §6 (Adaptive Agent Weighting) is confirmed Phase 5 scope, not Phase 4 — Phase 4's own obligation (consuming `current_weight` correctly via `weight_applied`) was already satisfied in Milestone 4.7; the write/learning loop described in §6.1 has not been built and its guardrail numbers remain provisional launch defaults pending real settlement/outcome data. See `CHANGELOG.md` v5.2 entry for full reasoning.
 **v5.1 note (MINOR):** §4.1 documents candidate-anchored consensus as an intentional Blueprint evolution (Phase 4 Milestone 4.7) — `directional_agreement` now compares each fan-out agent against a specific `MarketCandidate`'s own resolved direction, not a self-referential committee majority, since Milestone 4.6 introduced a candidate concept this section's original wording never anticipated. Also documents a real, freshly-discovered mathematical ceiling on `agreement_variance` (implemented as population variance of `directional_agreement` values) that makes §4.3's `> 0.25` Elite second-pass threshold unreachable under this section's own specified `0.3` fractional penalty — flagged as an open question, not resolved. See `CHANGELOG.md` v5.1 entry for full reasoning.
@@ -316,6 +317,21 @@ Maps directly onto `explainability_payloads` (Volume 3 §5) and the master spec'
 | Why does this fit the user? | Bankroll Coach output, referencing `user_profiles` + `betting_dna` |
 
 This table is the concrete implementation spec Volume 5 needs to design the recommendation detail screen around — every row here is a UI element, not just a data field.
+
+**Implementation note (v5.6, Milestone 5.2, Deterministic V1, 2026-08-25):** built in `app.features.explainability`/`app.orchestration.explainability`, persisted to Volume 3 §5B's `recommendation_product_explanations`/`recommendation_leg_explanations`. Every value is read back from an already-frozen Phase 4/Milestone 5.1 row — nothing here is re-derived, re-computed, or (since there is no live model call in this milestone) narrated by an LLM. Mapping the table above onto what actually ships:
+
+| Question | Actual v1 source |
+|---|---|
+| Why this recommendation? / Why this bet type? | `why_this_shape` — the Strategy Engine's own outcome (`single`/`multiple_singles`/`no_bet`/`bankroll_preservation`) and qualification math (§9) |
+| Why now? | Not built in V1 — Closing Line Movement is a game-level committee voter (contributes to `contributing_agents`), not yet a standalone timing statement; see §9.5 (Bet Timing & Execution Intelligence, future) |
+| Why not another bet / not the public favorite? | `why_not_other_shapes`/`rejected_alternatives` — **corrected sourcing:** the Strategy Engine's own deterministic rejection trace (`RejectedCandidate`/`RejectionReason`, §9), never a Public Betting Agent lean. No Public Betting Agent exists in the implemented 12-agent committee; this row's original sourcing text was aspirational and is corrected here, not implemented as originally written. |
+| What evidence was strongest? | `strongest_evidence`, from `contributing_agents` — game-level committee agents only (Injury Intelligence, Weather, Vegas Line, Closing Line Movement, Travel & Fatigue, Rest Days) whose `directional_lean` matches the leg's resolved direction |
+| Biggest risks? | `biggest_risks` — Risk Manager's own already-frozen candidate-level output, read directly |
+| What would invalidate this? | `would_change_mind_if` — verbatim quote of the single highest-weighted supporting agent's own field; NULL (never synthesized) when no defensible one exists |
+| Which agents contributed? | `contributing_agents` jsonb — a frozen render of the same `recommendation_agent_outputs` rows above, not a separate threshold computation |
+| Why does this fit the user? | Not built in V1 — `user_recommendation_selections` (Volume 3 §5A) already carries the per-user Kelly/risk-tolerance personalization; a Bankroll-Coach-sourced explanation sentence is deferred, not fabricated in its place |
+
+Two rows are honestly unbuilt rather than filled with a fabricated stand-in — "why now" and "why does this fit the user" — per the explicit "NULL/absent is preferable to invented intelligence" guardrail (also governing `would_change_mind_if` above). Both are natural extension points for a future milestone, not gaps hidden behind placeholder text.
 
 ---
 

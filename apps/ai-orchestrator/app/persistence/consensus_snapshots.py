@@ -36,7 +36,14 @@ async def read_game_level_agent_outputs(client: httpx.AsyncClient, headers: dict
     Meta Agent's functional-group clustering evidence needs no second
     round-trip. Returns a flattened plain-dict shape, not the raw
     Supabase row -- callers never need to know PostgREST's embedding
-    shape."""
+    shape.
+
+    **Milestone 5.2 addition:** also extracts `would_change_mind_if` --
+    additive only; `app.features.consensus.compute_consensus` (the
+    original, unchanged caller) reads only the keys it needs and ignores
+    the rest. Used by `app.features.explainability.select_would_change_mind_if`
+    to verbatim-quote the highest-weighted supporting agent's own
+    invalidation condition, never a synthesized one."""
     response = await client.get(
         "/rest/v1/recommendation_agent_outputs",
         params={
@@ -65,6 +72,7 @@ async def read_game_level_agent_outputs(client: httpx.AsyncClient, headers: dict
                 "directional_lean": raw_output.get("directional_lean"),
                 "evidence_classification": raw_output.get("evidence_classification"),
                 "weight_applied": row["weight_applied"],
+                "would_change_mind_if": raw_output.get("would_change_mind_if"),
             }
         )
     return flattened

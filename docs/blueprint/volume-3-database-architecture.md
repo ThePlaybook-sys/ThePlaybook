@@ -1,9 +1,10 @@
 # The Playbook — Volume 3
 ## Database Architecture: Tables, Relationships, Indexes, Triggers, Migrations, RLS
 
-**Version:** v4.19
+**Version:** v4.20
 **Last updated:** 2026-08-25
 
+**v4.20 note (MINOR):** §5A gains a new §5B — `recommendation_product_explanations`/`recommendation_leg_explanations` (Phase 5 Milestone 5.2, Deterministic V1) — two new additive tables giving every `recommendation_products`/`recommendation_legs` row exactly one, ever, append-only explanation. `explainability_payloads` (§5, Phase 1) is left completely untouched: not repointed, not retrofitted, not deleted, its existing row not migrated — its sole FK target (`recommendations.id`) has no path to the Phase 5 product layer, and it carries no append-only protection at all. See `CHANGELOG.md` v4.20 entry for full reasoning.
 **v4.17 note (MINOR):** New table `master_refresh_runs` (Milestone 4.9, 2026-08-25) — the durable bridge between "Master Refresh completed" and "the Recommendation Worker may safely process this slate," created before work begins and finalized once with the actual outcome (`running`/`success`/`partial`/`failed`, mirroring `MasterRefreshResult.status` exactly). `recommendations` gains `correlation_id text unique`, nullable and backward-compatible — the crash-safe idempotency identity flagged as an open gap since Milestone 4.5, now resolved: a retried Recommendation Worker call against the same `(master_refresh_run_id, game_id)` pair recovers the same row via upsert rather than creating a duplicate. See `CHANGELOG.md` v4.17 entry for full reasoning.
 **v4.16 note (MINOR):** `recommendation_agent_outputs` gains two nullable columns, `prompt_name`/`prompt_version` (Milestone 4.8, Phase 4 Closeout Remediation, 2026-08-24), plus a composite FK to `prompt_registry(prompt_name, version)` — the canonical per-agent-output prompt provenance, since `recommendations.prompt_version` (§5) cannot truthfully represent independently-versioned per-agent prompts once `prompt_registry` became the production source of agent system prompts. `recommendations.prompt_version` itself is unchanged in shape but is now documented as legacy/non-authoritative for per-agent reconstruction — see both sections below. `prompt_registry` also gains a partial unique index enforcing at most one active version per `prompt_name`. See `CHANGELOG.md` v4.16 entry for full reasoning.
 **v4.15 note (MINOR):** `consensus_snapshots` gains four nullable columns (Milestone 4.7, 2026-08-22): `candidate_key` (mirrors `recommendation_agent_outputs.candidate_key`, v4.14, exactly), `final_aggregate_confidence` (distinct from the existing `aggregate_confidence`), `below_confidence_floor` (the internal 0.55-threshold result, never a Phase-5 recommendation decision), and `participation_metadata` (the only durable record of what was attempted/failed/deferred for a historical run, since a failed/deferred agent leaves no row elsewhere). See `CHANGELOG.md` v4.15 entry for full reasoning.
@@ -729,6 +730,55 @@ create table conversations (
 );
 ```
 Exactly Volume 4 §7's own originally-specified shape (`session_preferences` is a column here, not a separate table). `conversation_messages` is deliberately NOT built yet — deferred to Phase 6 — but nothing here forecloses adding it later; its FK will simply target `conversations(id)`, untouched by this migration. Built now, not in Phase 1 as the roadmap's v3.0 amendment originally scoped it, because Milestone 5.1's Strategy Engine is the first thing that actually needs to read a session-preference exclusion; a schema-only table with nothing reading it yet would have sat unused since Phase 1.
+
+---
+
+## 5B. Phase 5 Explainability Engine (v5.1, Phase 5 Milestone 5.2, 2026-08-25)
+
+**Deterministic V1 only — no LLM narrative layer, no live model calls.** Explains an already-persisted §5A `SlateStrategyResult`; never re-ranks, never re-runs Strategy selection, never changes `recommendation_type`/EV/confidence/eligibility/stake/status. Explaining a decision and making one are structurally different operations — there is no shared code path between them (see `app.orchestration.explainability`'s module docstring). Two new tables, both additive; `explainability_payloads` (§5, Phase 1) is unchanged — its sole FK target (`recommendations.id`) has no path to this product layer, and it was never given append-only protection, so repointing it would both widen its grain incorrectly and quietly relax a guarantee this schema otherwise enforces everywhere.
+
+### `recommendation_product_explanations`
+```sql
+create table recommendation_product_explanations (
+  id uuid primary key default uuid_generate_v7(),
+  recommendation_product_id uuid not null unique references recommendation_products(id) on delete cascade,
+  why_this_shape text not null,
+  why_not_other_shapes text,
+  rejected_alternatives jsonb not null default '[]'::jsonb,
+  data_limitations text,
+  narrative_summary text,  -- reserved for a future LLM narrative layer, NOT built in Milestone 5.2
+  created_at timestamptz not null default now()
+);
+```
+
+### `recommendation_leg_explanations`
+```sql
+create table recommendation_leg_explanations (
+  id uuid primary key default uuid_generate_v7(),
+  recommendation_leg_id uuid not null unique references recommendation_legs(id) on delete cascade,
+  why_selected text not null,
+  strongest_evidence text not null,
+  contributing_agents jsonb not null default '[]'::jsonb,
+  biggest_risks text not null,
+  rejected_alternatives jsonb not null default '[]'::jsonb,
+  would_change_mind_if text,
+  narrative_summary text,  -- same reservation as the product-level column above
+  created_at timestamptz not null default now()
+);
+```
+Both tables enforce **exactly one explanation row per product/leg, ever** — `UNIQUE(recommendation_product_id)`/`UNIQUE(recommendation_leg_id)` plus a full-block `BEFORE UPDATE` trigger, not an open-ended version history. This is a deliberate departure from tables like `consensus_snapshots` that legitimately allow multiple rows per parent: those exist because the underlying computation can genuinely differ on a retry (an Elite second pass recomputes `consensus_snapshots` differently); Milestone 5.2's explanation logic is 100% deterministic over already-frozen Phase 4/5.1 facts, so the same product/leg can only ever produce the same explanation. A future bug fix in the deterministic logic changes what a NEW product's explanation looks like — it never rewrites history, the same discipline already applied to `recommendation_agent_outputs`/`recommendation_legs`.
+
+**`contributing_agents`/`rejected_alternatives` stored as `jsonb` are a frozen, point-in-time render of already-first-class rows** (`recommendation_agent_outputs` for the former, `app.features.strategy.RejectedCandidate` for the latter) — exactly the same denormalization discipline already established by `recommendation_snapshots.agent_outputs_snapshot` (§5), not the kind of "opaque JSON hiding a missing FK" this schema otherwise rejects.
+
+**`contributing_agents` is the GAME-LEVEL committee only** (Injury Intelligence, Weather, Vegas Line, Closing Line Movement, Travel & Fatigue, Rest Days) — the same `agent_rows` `app.features.consensus.compute_consensus` already consumes for that leg's candidate. Probability Modeling/EV/Risk Manager/Bankroll Coach are candidate-level sequential agents, never voters, and are read separately (`biggest_risks` reads Risk Manager's own already-frozen `recommendation_agent_outputs` row directly).
+
+**`would_change_mind_if` is NULL unless it can be a verbatim quote.** Populated only from the single highest-weighted supporting agent's own already-frozen `would_change_mind_if` field (captured since Milestone 4.2) — never synthesized by Explainability itself. NULL is preferable to invented intelligence.
+
+**Provenance chain** (Time Machine reconstruction path for one leg's explanation): `recommendation_product_id → recommendation_leg_id → recommendation_legs.recommendation_id → recommendation_legs.candidate_key → recommendation_legs.consensus_snapshot_id → recommendation_agent_outputs (game-level, for contributing_agents; candidate-level, for biggest_risks) → prompt_name/prompt_version → model/version info (§8) → weight_applied → the frozen odds/point/line and modeled probability/EV already on `recommendation_legs` → `final_aggregate_confidence` → participation metadata (`consensus_snapshots.participation_metadata`, v4.15) → the Strategy Engine's own decision trace (`app.features.strategy.RejectedCandidate`/`RejectionReason`)`. No step in this chain is re-derived or re-computed by Explainability — every value is read back from a row Phase 4 or Milestone 5.1 already wrote.
+
+**Shared data, not per-user** — same "RLS enabled, no select policy, service-role only, consumed through the API Gateway" convention already applied to `recommendation_agent_outputs`/`consensus_snapshots`/`recommendation_legs`.
+
+**Known V1 scope boundary, not a fabrication risk:** the approved rejection-reason vocabulary includes `UNSUPPORTED_MARKET_TYPE`/`PARLAY_CAPABILITY_UNAVAILABLE` as future-extensible values, but neither is wired into any explanation output yet — candidate generation already excludes prop markets before they ever reach the Strategy Engine, and parlay candidates are never generated at all, so no candidate currently reaches Strategy that would produce either rejection. Adding those constants without a real code path behind them would be exactly the kind of invented category this module's own docstring forbids; they remain reserved, unused vocabulary until a real condition exists to populate them.
 
 ---
 
