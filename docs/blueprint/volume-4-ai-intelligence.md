@@ -1,7 +1,7 @@
 # The Playbook — Volume 4
 ## AI Intelligence Architecture: Agents, Orchestration, Consensus, Explainability, Learning
 
-**Version:** v5.4
+**Version:** v5.5
 **Last updated:** 2026-08-25
 
 **v5.3 note (MINOR):** §3.1/§4.3 document the shared-vs-personalized execution split built for the proactive Recommendation Worker (Milestone 4.9): Probability Modeling → EV → Risk Manager, consensus computation, and Meta Agent review each run exactly once per `(recommendation_id, candidate)` pair, shared across every user; Bankroll Coach runs separately, once per user who needs a stake number, reusing the shared chain's already-computed probability/EV; Elite second-pass reconciliation is computed at most once per candidate per cycle and reused across every Elite-tier subscriber, with entitlement/tier controlling only whether it triggers, never how many times the underlying evidence gets re-analyzed. Candidate generation (V1: home/away moneyline, home/away spread, over/under total, no player props, one reference sportsbook per game) is also documented here for the first time. See `CHANGELOG.md` v5.3 (Volume 4) entry for full reasoning.
@@ -319,6 +319,46 @@ This table is the concrete implementation spec Volume 5 needs to design the reco
 
 ---
 
+## 8.5 Market Integrity & Anomaly Intelligence (v5.5, FUTURE CAPABILITY — APPROVED / DOCUMENTED, NOT YET IMPLEMENTED, 2026-08-25)
+
+**Status: architecture reservation only.** Nothing described in this section exists in code today. It is documented here, ahead of implementation, specifically so that Milestone 5.1's frozen Strategy Engine and Milestone 5.2's Explainability Engine are not designed in a way that would make adding this capability later structurally awkward or impossible.
+
+**Purpose.** The Playbook must account for situations where the normal statistical and betting assumptions surrounding a game, market, team, player, or other participant may be less trustworthy than usual. **This is explicitly not a "rigging detector."** The system must never claim a game is fixed, a player intentionally underperformed, a referee manipulated an outcome, a sportsbook controlled an outcome, or that suspicious market behavior alone proves corruption — unless credible, authoritative evidence establishes such an integrity event. Absent that evidence, the system detects and communicates unusual conditions, unexplained market behavior, and statistical anomalies — never a fabricated causal story.
+
+**Three distinct concepts, kept explicitly separate — conflating them is the one mistake this section exists to prevent:**
+
+1. **Statistical anomaly** — an observed performance or condition is unusual relative to expected behavior. Alone, this is not evidence of manipulation.
+2. **Market anomaly** — betting-market behavior is unusual or cannot currently be explained by known information (e.g. abnormal line movement, unusual player-prop movement, movement inconsistent with currently-known injury/weather/roster information, abrupt near-kickoff movement). Alone, this is not evidence of manipulation.
+3. **Confirmed integrity information** — credible external information exists (an official league investigation, regulator action, suspension, criminal case, a confirmed gambling-policy violation, authoritative reporting of an integrity event). **Only this category may justify explicit integrity-related language**, and its provenance must be preserved alongside the claim.
+
+**Unexplained Market Movement — the key future signal.** When the Playbook's known evidence supports one side and no meaningful injury/weather/roster/matchup information has changed, but the market nevertheless moves materially against that side, the system must never conclude "Vegas knows something." It may instead surface **UNEXPLAINED MARKET MOVEMENT**: "the market changed materially in a way the information currently available to The Playbook does not adequately explain." This increases uncertainty; it never manufactures an explanation to fill the gap.
+
+**Conceptual severity model (labels only — no numeric thresholds are locked in by this entry; a later focused inspection, with real market data available to validate against, must derive any defensible number, exactly matching this project's established practice of never inventing a threshold without evidence — see the Elite second-pass variance threshold history in §4.3 for precedent):**
+
+- **NORMAL** — no meaningful anomaly/integrity concern.
+- **WATCH** — something unusual exists but does not currently invalidate the recommendation.
+- **ELEVATED** — multiple or meaningful unexplained signals exist; the recommendation deserves additional scrutiny.
+- **SEVERE** — credible integrity information, or extreme unexplained conditions, make normal assumptions sufficiently unreliable that recommendation suppression may be appropriate.
+
+**Architectural position.** Conceptually sits between the committee/consensus analysis (§2–§6) and Strategy Engine activation (§9): `Market/Data Refresh → Phase 4 Analysis/Committee → Market Integrity & Anomaly Intelligence → Strategy Engine → Explainability (§8) → Product Recommendation`. It is primarily a **risk/guardrail capability**, not an ordinary voting committee member — it must not be casually implemented as "just another fan-out agent" whose lean gets averaged into consensus. **Whether it is ultimately a deterministic risk engine, one or more specialist agents, a hybrid, or another mechanism is an explicit open implementation question for a future focused architecture inspection — not decided here.**
+
+**Strategy Engine interaction (future).** The Strategy Engine (§9, currently frozen per Milestone 5.1) must eventually be capable of responding to an anomaly/integrity signal with outcomes such as: recommendation remains valid; recommendation receives additional scrutiny; recommendation moves into a WAIT state (§9.5); recommendation is re-evaluated; recommendation is suppressed/PASS; recommendation becomes `no_bet`. The system must always prefer disclosed uncertainty over fabricated certainty.
+
+**Explainability requirement (future).** Explainability (§8) must eventually distinguish FACT, INFERENCE, ANOMALY, UNEXPLAINED CONDITION, and CONFIRMED INTEGRITY INFORMATION as genuinely different categories, never blended into one sentence. Acceptable: "Unusual market movement was detected that is not currently explained by known injury, weather, or roster information." Unacceptable, under any circumstance: "The sportsbook knows the game is fixed." Provenance/evidence must be preserved for every integrity-related claim, exactly like every other explanation statement in §8.
+
+**Relationship to existing architecture — inspected directly, not assumed:**
+
+- **`market_monitoring_events` (Volume 3 §7)** already exists as live schema and is the natural future data sink for this capability — its `event_type` vocabulary (`line_movement`, `injury_update`, `weather_change`, `lineup_change`, `breaking_news`) and `action_taken` vocabulary (`none`, `updated`, `withdrawn`) already anticipate exactly the "detect a change, decide whether it affects an existing recommendation" shape this capability needs. **Confirmed by direct inspection: this table has zero rows and zero code anywhere references it** — it is unbuilt Phase-1 schema, not a working capability today.
+- **`worker-market-monitor` (Volume 2 §4/§5)** is a provisioned Railway service with **no application code at all** — confirmed by a direct repository search (no file anywhere implements it, unlike `worker-scheduled`, which Milestone 4.9 built out for the Recommendation Worker). It is the intended future home for this capability's live monitoring loop.
+- **Closing Line Movement Agent** (§2.4, built in Milestone 4.4) already computes how a line has moved since open from `odds_snapshots` history — this is a real, existing signal this future capability would consume as one input, not duplicate. It answers "how has the line moved," not "is this movement explained" — the anomaly layer's job is the second question.
+- **`odds_snapshots`** (Volume 3 §4) already holds the full historical price series needed to detect movement; no new raw-data table is anticipated.
+- **Recommendation withdrawal** (`recommendations.status='withdrawn'`/`withdrawn_at`/`withdrawal_reason`, Volume 3 §5; mirrored in `recommendation_products` per Volume 3 §5A) already has the schema-level mechanism a SEVERE integrity finding would use to suppress a recommendation — no new withdrawal mechanism is anticipated, only a new trigger for using the existing one.
+- **Strategy Engine / Explainability / Time Machine** — see the two subsections above and below; no duplication of responsibility identified, only new upstream input and new downstream disclosure obligations once built.
+
+**No genuine architecture conflict was found** — this capability composes with existing, mostly-unbuilt scaffolding (`market_monitoring_events`, `worker-market-monitor`) rather than requiring any of it to be redesigned.
+
+---
+
 ## 9. Recommendation Strategy Engine
 
 Decides the *shape* of the final output (single, prop, SGP, multi-game parlay, multiple singles, bankroll preservation, or no-bet) — this sits after Consensus/Meta Agent and before Explainability in the flow (Section 3.1, step 9; see that section's own note on the step-order correction). Implemented, deterministically, in `app.features.strategy` (ai-orchestrator) — persisted to the Phase 5 product layer, Volume 3 §5A.
@@ -336,6 +376,44 @@ Decides the *shape* of the final output (single, prop, SGP, multi-game parlay, m
 **Never force a shape onto the data** remains true and is now mechanically enforced rather than aspirational: the qualification gate in rule 1 is the actual mechanism that produces `no_bet`/`bankroll_preservation` as the honest default absent a real signal, not a policy statement layered on top.
 
 **The market-mixing rule (v3.0) is preserved as written for the day parlays activate**, but does not apply to anything the Strategy Engine currently produces — `multiple_singles` presents each qualifying leg as its own separate bet by construction, never combined, so there is no "mix" to speak of until same_game_parlay/multi_game_parlay actually activate.
+
+---
+
+## 9.5 Bet Timing & Execution Intelligence (v5.5, FUTURE CAPABILITY — APPROVED / DOCUMENTED, NOT YET IMPLEMENTED, 2026-08-25)
+
+**Status: architecture reservation only.** Nothing described in this section exists in code today.
+
+**Purpose.** The Playbook should not universally recommend placing a bet immediately, nor universally recommend waiting until immediately before game time. Correct timing depends on current price, EV, line movement, unresolved information (injury status, lineup/inactive announcements, weather), market movement, data freshness, integrity/anomaly signals (§8.5), proximity to game start, and the risk that waiting causes the current favorable price to disappear. The Playbook's job therefore eventually extends beyond "what should I bet?" to "*when* should I bet it?"
+
+**The three-question distinction this capability makes explicit, and which the architecture must not collapse into one question:**
+
+- **ANALYSIS** — is this candidate fundamentally attractive? (Phase 4 committee/consensus, §2–§6)
+- **STRATEGY** — should The Playbook recommend it at all? (§9, frozen per Milestone 5.1)
+- **EXECUTION** — is the *current* price and *current* information state appropriate for acting *now*? (this section, future)
+
+A recommendation may therefore exist while its execution state is WAIT — "good bet" and "good bet at this exact price and exact moment" are treated as genuinely different questions, never conflated into a single verdict.
+
+**Core execution states (conceptual, future):**
+
+- **BET NOW** — the candidate qualifies and the current market price is sufficiently attractive that waiting is not justified by currently unresolved information.
+- **WAIT** — the candidate is promising/qualified or close to actionable, but meaningful information remains unresolved, or market conditions warrant additional observation. **WAIT is an active state, not "do nothing"** — the intended future loop is `recommendation identified → WAIT → automatic data/market refresh → re-evaluation → BET NOW / continue WAIT / PASS / LINE LOST`, triggered by (future, unscheduled) events such as a new odds snapshot, meaningful line movement, an injury-status change, an inactive/lineup announcement, a weather change, material news, an anomaly-state change (§8.5), or approaching game start. **The exact scheduling/event architecture for this loop is explicitly not chosen here** — it requires its own later execution-focused inspection, and likely depends on the event infrastructure Volume 2 §3 already lists as deferred post-MLP (`InjuryUpdated`, `WeatherChanged`, and similar consumers).
+- **PASS** — the opportunity no longer satisfies The Playbook's requirements.
+- **LINE LOST** — The Playbook previously identified an attractive opportunity, but the market moved enough that the original edge no longer exists at the currently available price (e.g. the original candidate was Team A -2.5; the current market is Team A -4.5). **The system must re-evaluate the CURRENT price and must never continue presenting the original recommendation as actionable merely because the earlier price was attractive.**
+
+**Price sensitivity — a foundational principle for this capability, not yet enforced anywhere in the codebase today.** A recommendation is conditional on price: Team A -2.5 and Team A -5 are not necessarily the same opportunity. The Playbook must eventually preserve the activation-time price (already true today — `recommendation_legs.american_odds`/`.point`/`.decimal_odds` freeze this exactly, per Volume 3 §5A) and compare later observed prices against it, re-evaluating EV when the price materially changes. **No universal numeric threshold for what constitutes "LINE LOST" is invented here** — that requires a later, market-specific inspection, exactly the same discipline already applied to the Elite second-pass variance threshold (§4.3) and explicitly required again here.
+
+**Integration with Market Integrity & Anomaly Intelligence (§8.5).** Market Integrity & Anomaly Intelligence feeds this capability, not the reverse. Example: a candidate still qualifies statistically, but `UNEXPLAINED MARKET MOVEMENT = ELEVATED` (§8.5) — Execution Intelligence may then return WAIT rather than BET NOW, without needing to know *why* the movement occurred. **This is a load-bearing architectural principle for both future capabilities: unknown information may change the action without the system inventing the missing explanation.**
+
+**Relationship to existing architecture — inspected directly, not assumed:**
+
+- **Recommendation lifecycle / withdrawal** (Volume 3 §5/§5A) already has the schema-level `status`/`withdrawn_at`/`withdrawal_reason` mechanism a PASS/LINE LOST transition would use — no new withdrawal mechanism is anticipated.
+- **Master Refresh / Recommendation Worker** (Volume 2 §4.4, Milestone 4.9) currently run once per slate cycle, not continuously against live price movement — the "automatic re-evaluation" loop above is new scope, not something either currently does or was designed to preclude.
+- **`market_monitoring_events`/`worker-market-monitor`** — same unbuilt foundation §8.5 depends on; this capability is a second, later consumer of the same eventual monitoring loop, not a duplicate of it.
+- **Explainability (§8)** would need to surface, per historical decision point: what changed, why the state changed, what information remains unresolved, the originally-evaluated price, and the currently-available price — all of which are facts, not narrative, and therefore fit §8's existing deterministic-fact discipline without requiring new LLM capability.
+- **Time Machine** (Volume 3 §5A's frozen-leg pattern, Milestone 5.3's snapshot mechanism) must eventually preserve, without overwriting: the original candidate, original price, original EV, original recommendation, original execution state, every subsequent market price observed, every state transition and its reason, and the anomaly/integrity signal state at each decision point. **This is a requirement on Milestone 5.3's design, not something Milestone 5.2/5.3 must build now** — but it must not be designed out. The append-only, frozen-at-write pattern already established for `recommendation_legs`/`user_recommendation_selections` (Milestone 5.1) is the direct precedent this future work would extend, not replace.
+- **User experience** (Volume 5, future) would need BET NOW/WAIT/PASS/LINE LOST to read as genuinely different, understandable states — not new to this document's principles, but flagged so Volume 5's eventual design doesn't collapse them into one generic "recommendation" card.
+
+**No genuine architecture conflict was found.** This capability depends on §8.5 (documented above) and on event/monitoring infrastructure that Volume 2 already named and deliberately deferred — it composes with that deferral rather than contradicting it.
 
 ---
 

@@ -1,7 +1,7 @@
 # The Playbook — Engineering Roadmap & Build Order
 
-**Version:** v4.0
-**Last updated:** 2026-08-06
+**Version:** v4.1
+**Last updated:** 2026-08-25
 **Type:** Companion document — not a Volume. Volumes 1–5 describe *what* the system is. This document describes *the order in which to build it* and *how to know each piece is actually done* before moving to the next.
 **v2.0 note:** Amended per external architecture review, which arrived before any phase began building — no phase needed to be reopened, but Phases 1, 4, 5, and 6 gained new scope. See `v2.0-amendments-architecture-review.md` §7 for the full impact summary.
 **v3.0 note:** Amended per conversational-first UX and intelligence pipeline additions — Phases 1, 3, 4, 5, and 6 gained new scope (`daily_game_intelligence`, Redis, named vendors, worker cadences, Kelly Criterion, session memory, chat-first landing route). See `v3.0-amendments-conversational-intelligence.md` §12 for the full impact summary.
@@ -261,6 +261,12 @@ Phases 7, 8, and 9 are the first genuine parallelization point — everything be
 - Guardrail tests for all three weighting constraints, each with a case designed to violate it and confirm rejection
 - Full pipeline integration test: game snapshot in → recommendation out → postgame review generated → weight update attempted, all as one traced flow using the correlation ID from Volume 2 §9
 
+**Future Phase 5 capabilities — approved/documented, deliberately NOT assigned a milestone number above (v4.1, 2026-08-25).** Two capabilities were fully specified in Volume 4 §8.5 (Market Integrity & Anomaly Intelligence) and §9.5 (Bet Timing & Execution Intelligence) without being forced into Milestones 1-5 above, per Mac's explicit instruction not to arbitrarily assign a capability to a milestone the Blueprint doesn't clearly support. Dependency analysis, performed against the actual current codebase rather than assumed:
+
+- **Market Integrity & Anomaly Intelligence** depends on: `odds_snapshots` history (Phase 3, built), the Closing Line Movement Agent (Phase 4 Milestone 4.4, built), and the Recommendation Strategy Engine existing as a real consumer of an anomaly signal (Milestone 5.1, built). It also depends on `worker-market-monitor` actually being implemented with real monitoring logic and `market_monitoring_events` actually being written to — **both confirmed still completely unbuilt** (zero application code, zero rows) by direct inspection. **Earliest technically defensible placement: a new Phase 5 milestone (tentatively Milestone 6), after Milestone 5.1 and logically before or alongside Milestone 5.5's Continuous Learning loop** — it needs Strategy Engine to exist (it does) but does not need Explainability, Time Machine, or Continuous Learning to exist first.
+- **Bet Timing & Execution Intelligence** depends on everything above, PLUS Market Integrity & Anomaly Intelligence itself (per Volume 4 §9.5's explicit integration requirement — anomaly signals feed execution state), PLUS the automatic re-evaluation loop, which depends on event infrastructure Volume 2 §4.5 already named and explicitly deferred post-MLP (`InjuryUpdated`, `WeatherChanged`, and similar consumers). **Earliest technically defensible placement: a new Phase 5 milestone (tentatively Milestone 7), strictly after the Market Integrity milestone above** — and its full realization (a user actually seeing "WAIT, check back later") likely also touches Phase 7's Twilio/notification work, even though its core decision logic belongs in Phase 5.
+- **Neither is scheduled into a specific sprint by this entry** — both remain future capabilities pending a dedicated future architecture inspection (explicitly not performed here, per Mac's instruction) that would determine the exact mechanism (deterministic engine vs. specialist agent(s) vs. hybrid) before implementation begins. This entry exists so neither is forgotten or designed out, not so either is scheduled.
+
 ---
 
 ## Phase 6 — Dashboard / Core Frontend
@@ -460,6 +466,8 @@ Organized by priority category rather than one flat list, specifically to keep t
 - Live betting
 - Advanced explainability beyond the current nine-question spec
 - Deeper personalized betting profiles beyond current Betting DNA
+- **Market Integrity & Anomaly Intelligence (added 2026-08-25) — fully specified in Volume 4 §8.5, tentatively Phase 5 Milestone 6.** Not yet implemented; see Phase 5's own "Future Phase 5 capabilities" note above for the dependency analysis.
+- **Bet Timing & Execution Intelligence (added 2026-08-25) — fully specified in Volume 4 §9.5, tentatively Phase 5 Milestone 7, strictly after Market Integrity & Anomaly Intelligence.** Not yet implemented; see Phase 5's own "Future Phase 5 capabilities" note above for the dependency analysis.
 
 **Research** (exploratory, no committed timeline):
 - Personalized AI beyond the current persona-classification model
@@ -479,4 +487,4 @@ This document should be revisited whenever a volume gets a version bump. A MAJOR
 
 ## Changelog Entry for This Version
 
-See `CHANGELOG.md` — v1.0, 2026-08-05, Engineering Roadmap & Build Order added as a companion document. Updated to v2.0, 2026-08-05, per external architecture review — Phases 1, 4, 5, and 6 amended directly above, not just noted in the header. Updated to v3.0, 2026-08-05 — Phases 1, 3, 4, 5, and 6 amended directly above with the conversational-first and intelligence pipeline additions. Updated to v4.0, 2026-08-06 — Phases 1, 3, and 4 amended with multi-sport core and Recommendation Worker scope, plus the new Technical Debt & Feature Backlog section.
+See `CHANGELOG.md` — v1.0, 2026-08-05, Engineering Roadmap & Build Order added as a companion document. Updated to v2.0, 2026-08-05, per external architecture review — Phases 1, 4, 5, and 6 amended directly above, not just noted in the header. Updated to v3.0, 2026-08-05 — Phases 1, 3, 4, 5, and 6 amended directly above with the conversational-first and intelligence pipeline additions. Updated to v4.0, 2026-08-06 — Phases 1, 3, and 4 amended with multi-sport core and Recommendation Worker scope, plus the new Technical Debt & Feature Backlog section. Updated to v4.1, 2026-08-25 — Phase 5 gained a "Future Phase 5 capabilities" note documenting Market Integrity & Anomaly Intelligence and Bet Timing & Execution Intelligence (fully specified in Volume 4 §8.5/§9.5) with a dependency analysis and tentative future-milestone placement (6/7) — neither implemented, neither scheduled, Milestones 1-5 unchanged.
