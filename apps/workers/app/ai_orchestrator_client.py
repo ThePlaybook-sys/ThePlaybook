@@ -51,3 +51,38 @@ async def run_game_recommendation(
             f"ai-orchestrator returned {response.status_code} for game_id={game_id!r}: {response.text}"
         )
     return response.json()
+
+
+async def finalize_slate_strategy(
+    client: httpx.AsyncClient,
+    *,
+    base_url: str,
+    internal_token: str,
+    master_refresh_run_id: str,
+    games: list[dict],
+) -> dict:
+    """Calls `POST {base_url}/v1/internal/recommendation-worker/
+    finalize-strategy` exactly once per Recommendation Worker cycle, after
+    every eligible game's `run_game_recommendation` call has completed
+    (Milestone 5.1). `games` is `[{"game_id", "recommendation_id",
+    "candidates": [...]}]` -- each game's `candidates` list is the
+    `strategy_input` field already returned by that game's own `run-game`
+    response, relayed unmodified; this function/module never inspects or
+    recomputes any of it. Raises `AiOrchestratorCallError` on any non-2xx
+    response or transport failure, exactly like `run_game_recommendation` --
+    unlike per-game dispatch, a failure here is NOT isolated by this
+    module; the caller decides how to record it (there is no smaller unit
+    than "the whole slate" for this call)."""
+    try:
+        response = await client.post(
+            f"{base_url}/v1/internal/recommendation-worker/finalize-strategy",
+            json={"master_refresh_run_id": master_refresh_run_id, "games": games},
+            headers={"X-Internal-Token": internal_token, "Content-Type": "application/json"},
+        )
+    except httpx.HTTPError as exc:
+        raise AiOrchestratorCallError(f"transport failure calling ai-orchestrator finalize-strategy: {exc}") from exc
+    if response.status_code != 200:
+        raise AiOrchestratorCallError(
+            f"ai-orchestrator finalize-strategy returned {response.status_code}: {response.text}"
+        )
+    return response.json()

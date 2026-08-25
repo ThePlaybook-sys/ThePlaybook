@@ -49,6 +49,11 @@ def test_run_dispatches_eligible_games(monkeypatch):
     respx.post(f"{AI_ORCHESTRATOR_URL}/v1/internal/recommendation-worker/run-game").mock(
         return_value=httpx.Response(200, json={"recommendation_id": "r1", "candidates": []})
     )
+    respx.post(f"{AI_ORCHESTRATOR_URL}/v1/internal/recommendation-worker/finalize-strategy").mock(
+        return_value=httpx.Response(
+            200, json={"outcome": "bankroll_preservation", "recommendation_product_ids": ["p1"], "leg_count": 0, "no_bet_game_count": 0}
+        )
+    )
 
     response = client.post("/v1/internal/recommendation-worker/run", headers={"X-Internal-Token": "correct-token"})
 
@@ -57,3 +62,5 @@ def test_run_dispatches_eligible_games(monkeypatch):
     assert body["status"] == "completed"
     assert body["run_id"] == "run-1"
     assert body["games"] == [{"game_id": "g1", "correlation_id": "run-1:g1", "status": "dispatched", "error": None}]
+    assert body["strategy"]["outcome"] == "bankroll_preservation"
+    assert body["strategy_error"] is None

@@ -33,7 +33,7 @@ from dataclasses import dataclass, field
 
 import httpx
 
-from app.ai_orchestrator_client import AiOrchestratorCallError, run_game_recommendation
+from app.ai_orchestrator_client import AiOrchestratorCallError, finalize_slate_strategy, run_game_recommendation
 from app.persistence.games import read_eligible_game_ids
 from app.persistence.master_refresh_runs import read_latest_eligible_run
 
@@ -61,6 +61,14 @@ class WorkerCycleResult:
     status: str  # "no_eligible_run" | "completed"
     run_id: str | None
     games: list[GameCycleResult] = field(default_factory=list)
+    #: Milestone 5.1 -- the Strategy Engine's slate-level finalization
+    #: result. `None` when `status != "completed"`, or when the
+    #: finalize-strategy call itself failed (see `strategy_error`) --
+    #: every per-game dispatch above still succeeded/failed on its own
+    #: terms regardless; this field is reported separately, never allowed
+    #: to retroactively mark a game's own dispatch as failed.
+    strategy: dict | None = None
+    strategy_error: str | None = None
 
 
 def build_correlation_id(*, run_id: str, game_id: str) -> str:
@@ -110,4 +118,36 @@ async def run_recommendation_worker_cycle(
             continue
         games.append(GameCycleResult(game_id=game_id, correlation_id=correlation_id, status="dispatched", response=response))
 
-    return WorkerCycleResult(status="completed", run_id=run["id"], games=games)
+    # Milestone 5.1: finalize the Strategy Engine's slate-level decision
+    # exactly once, after every eligible game's dispatch above has
+    # completed -- relaying each dispatched game's already-computed
+    # strategy_input fields unmodified (see app.ai_orchestrator_client.
+    # finalize_slate_strategy's own docstring). A game that failed to
+    # dispatch is OMITTED here, never represented as no_bet -- it was
+    # never evaluated at all, which is a different fact from "evaluated,
+    # nothing qualified."
+    strategy_games = [
+        {
+            "game_id": g.game_id,
+            "recommendation_id": g.response["recommendation_id"],
+            "candidates": [c["strategy_input"] for c in g.response["candidates"] if c.get("strategy_input")],
+        }
+        for g in games
+        if g.status == "dispatched"
+    ]
+
+    strategy_result: dict | None = None
+    strategy_error: str | None = None
+    if strategy_games:
+        try:
+            strategy_result = await finalize_slate_strategy(
+                ai_orchestrator_client,
+                base_url=ai_orchestrator_base_url,
+                internal_token=internal_token,
+                master_refresh_run_id=run["id"],
+                games=strategy_games,
+            )
+        except AiOrchestratorCallError as exc:
+            strategy_error = str(exc)
+
+    return WorkerCycleResult(status="completed", run_id=run["id"], games=games, strategy=strategy_result, strategy_error=strategy_error)

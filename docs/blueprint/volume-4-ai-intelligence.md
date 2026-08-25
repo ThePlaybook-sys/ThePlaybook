@@ -1,7 +1,7 @@
 # The Playbook — Volume 4
 ## AI Intelligence Architecture: Agents, Orchestration, Consensus, Explainability, Learning
 
-**Version:** v5.3
+**Version:** v5.4
 **Last updated:** 2026-08-25
 
 **v5.3 note (MINOR):** §3.1/§4.3 document the shared-vs-personalized execution split built for the proactive Recommendation Worker (Milestone 4.9): Probability Modeling → EV → Risk Manager, consensus computation, and Meta Agent review each run exactly once per `(recommendation_id, candidate)` pair, shared across every user; Bankroll Coach runs separately, once per user who needs a stake number, reusing the shared chain's already-computed probability/EV; Elite second-pass reconciliation is computed at most once per candidate per cycle and reused across every Elite-tier subscriber, with entitlement/tier controlling only whether it triggers, never how many times the underlying evidence gets re-analyzed. Candidate generation (V1: home/away moneyline, home/away spread, over/under total, no player props, one reference sportsbook per game) is also documented here for the first time. See `CHANGELOG.md` v5.3 (Volume 4) entry for full reasoning.
@@ -164,10 +164,12 @@ Applied in §4.1 as the last step before the 0.55 "No Bet Today" check (§4.2): 
 6. Risk Manager + Bankroll Coach execute in parallel, consuming EV output + user profile
 7. Consensus Engine resolves the full set into one recommendation package (§4.1)
 8. Meta Agent (§2.6) reviews the consensus output and applies its confidence_adjustment, if any
-9. Explainability Engine formats the package into the question-answer structure (Section 8)
-10. Recommendation Strategy Engine decides final output shape (Section 9)
+9. Recommendation Strategy Engine decides final output shape (Section 9)
+10. Explainability Engine formats the package into the question-answer structure (Section 8)
 11. Package + full snapshot written to recommendation_snapshots (Volume 3 §5)
 ```
+
+**Steps 9/10 reordered (v5.0, Phase 5 Milestone 5.1, Decision R, 2026-08-25) — a genuine self-contradiction in this document's earlier text, not a new decision being introduced here.** The list above originally read Explainability (step 9) then Strategy (step 10), while Section 9's own text already said Strategy "sits after Consensus and before Explainability" — the two couldn't both be true. Strategy also structurally has to run first: Explainability's question list (Section 8) includes "why this bet type" and "why not alternatives," neither of which is answerable before Strategy has actually decided a shape. Corrected here to match Section 9's own text and the underlying dependency, not the other way around.
 
 **Why proactive generation doesn't complicate personalization (step 6):** the Recommendation Worker's proactive run uses each active user's `user_profiles`/`betting_dna` at the time it runs, same as an on-demand request would — it's not a single generic recommendation broadcast to everyone. In practice this means the worker iterates active users (or user-persona clusters, as an optimization once volume justifies it) rather than producing one universal recommendation per game.
 
@@ -319,18 +321,21 @@ This table is the concrete implementation spec Volume 5 needs to design the reco
 
 ## 9. Recommendation Strategy Engine
 
-Decides the *shape* of the final output (single, prop, SGP, multi-game parlay, multiple singles, bankroll preservation, or no-bet) — this sits after Consensus and before Explainability in the flow (Section 3.1, step 9).
+Decides the *shape* of the final output (single, prop, SGP, multi-game parlay, multiple singles, bankroll preservation, or no-bet) — this sits after Consensus/Meta Agent and before Explainability in the flow (Section 3.1, step 9; see that section's own note on the step-order correction). Implemented, deterministically, in `app.features.strategy` (ai-orchestrator) — persisted to the Phase 5 product layer, Volume 3 §5A.
 
-**Decision logic, in priority order:**
-1. If `final_aggregate_confidence < 0.55` → `no_bet` (Section 4.2), regardless of anything else.
-2. If exactly one game/market clears the confidence floor with strong EV → `single`.
-3. If multiple *independent* high-confidence legs exist within the user's `max_parlay_legs` (Volume 3 §3) → `same_game_parlay` or `multi_game_parlay`, but only if the Risk Manager confirms the combined variance is appropriate for the user's stated risk tolerance — never assembled purely because multiple legs are available.
-4. If several unrelated high-confidence single bets exist but combining them would only add variance without EV benefit → `multiple_singles`, explicitly presented as separate bets rather than bundled.
-5. If market conditions are broadly unfavorable across the board (not just one game) → `bankroll_preservation`, a distinct status from a per-game `no_bet`, meant to message "sit out today entirely" at the portfolio level.
+**Finalized decision logic (v5.0, Phase 5 Milestone 5.1, Decisions X/Y/Z/AA/AB/AC/AM/AN, 2026-08-25) — supersedes the priority-order list this section previously carried, which predated Phase 4's candidate-anchored architecture and left several genuine ambiguities (EV vs. confidence dominance, exact tie-break behavior, the exact no_bet/bankroll_preservation boundary) explicitly open. Every ambiguity below was closed by Mac's own explicit ruling, not inferred:**
 
-**Never force a shape onto the data.** This is the master spec's most repeated instruction across the whole document, and it's worth stating plainly here as an actual rule the engine enforces: the default output, absent a clear signal, is always the more conservative option in this ordering — no_bet over single, single over parlay.
+1. **Qualification — both gates required, neither alone sufficient:** a candidate qualifies only when `final_aggregate_confidence >= 0.55` (Section 4.2's floor) AND `ev_per_dollar > 0`. A high-confidence, zero/negative-EV candidate does not qualify; a positive-EV, below-floor candidate does not either.
+2. **Ranking, tie-break, and same-market conflict resolution all use one hierarchy:** `ev_per_dollar` DESC, then `final_aggregate_confidence` DESC, then `candidate_key` ASC (purely for deterministic output, never a betting-quality signal). EV is the sole primary signal; confidence is a secondary tie-break only — there is no blended score.
+3. **Same-market exclusivity:** at most one candidate per `(game, market_type)` survives for moneyline/spread/total — the two possible selections are opposing sides of one wager and can never both be selected. DB-enforced (Volume 3 §5A, `idx_recommendation_legs_one_per_market`), not merely a convention.
+4. **`no_bet` is strictly per-game:** zero qualifying candidates for that specific game, independent of the rest of the slate.
+5. **`bankroll_preservation` is strictly slate-wide:** zero qualifying candidates ANYWHERE in the entire slate that Master Refresh run covers — there is no partial-slate or percentage-threshold version of this outcome.
+6. **`single` vs. `multiple_singles` is decided by the total count of selected legs across the whole slate, after same-market conflict resolution — not by game count.** Exactly one selected leg anywhere in the slate → `single`. Two or more → `multiple_singles`. One game may legitimately contribute more than one leg (e.g. a qualifying moneyline and a qualifying total are different markets, not opposing sides).
+7. **`same_game_parlay`/`multi_game_parlay` remain schema-supported but INACTIVE** (Decision AD/AN, confirmed by a full-codebase grep: no joint-probability formula, no combined-EV formula, no correlation data, and no sportsbook parlay/SGP pricing exists anywhere in this codebase or any adapter). The Strategy Engine has no parlay branch at all as of Milestone 5.1, not a disabled one — activating parlays later is new work (correlation modeling, combined-variance math, parlay pricing), not a flag flip.
 
-**Parlays freely mix market types (v3.0, explicit confirmation of previously-implicit behavior).** When a parlay shape (rule 3 above) is selected, individual legs are never restricted to one market type. A single parlay can combine moneyline, spread, totals, and player props (passing yards, anytime TD, strikeouts, points, assists, etc.) in whatever combination the Consensus Engine's highest-confidence findings support — this was already implied by the Player Prop Agent existing as a full committee member (§2.3), but is now an explicit rule: mixing markets whenever it improves expected value is default behavior, not a special case requiring separate logic.
+**Never force a shape onto the data** remains true and is now mechanically enforced rather than aspirational: the qualification gate in rule 1 is the actual mechanism that produces `no_bet`/`bankroll_preservation` as the honest default absent a real signal, not a policy statement layered on top.
+
+**The market-mixing rule (v3.0) is preserved as written for the day parlays activate**, but does not apply to anything the Strategy Engine currently produces — `multiple_singles` presents each qualifying leg as its own separate bet by construction, never combined, so there is no "mix" to speak of until same_game_parlay/multi_game_parlay actually activate.
 
 ---
 
