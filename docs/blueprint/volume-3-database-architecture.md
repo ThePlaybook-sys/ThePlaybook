@@ -1,7 +1,7 @@
 # The Playbook — Volume 3
 ## Database Architecture: Tables, Relationships, Indexes, Triggers, Migrations, RLS
 
-**Version:** v4.18
+**Version:** v4.19
 **Last updated:** 2026-08-25
 
 **v4.17 note (MINOR):** New table `master_refresh_runs` (Milestone 4.9, 2026-08-25) — the durable bridge between "Master Refresh completed" and "the Recommendation Worker may safely process this slate," created before work begins and finalized once with the actual outcome (`running`/`success`/`partial`/`failed`, mirroring `MasterRefreshResult.status` exactly). `recommendations` gains `correlation_id text unique`, nullable and backward-compatible — the crash-safe idempotency identity flagged as an open gap since Milestone 4.5, now resolved: a retried Recommendation Worker call against the same `(master_refresh_run_id, game_id)` pair recovers the same row via upsert rather than creating a duplicate. See `CHANGELOG.md` v4.17 entry for full reasoning.
@@ -851,6 +851,8 @@ create table market_monitoring_events (
 );
 create index idx_mme_game on market_monitoring_events(game_id);
 ```
+
+**Future data sink, not yet wired to anything (v4.19, 2026-08-25).** This table's `event_type`/`action_taken` vocabularies already anticipate the two future capabilities specified in Volume 4 §8.5 (Market Integrity & Anomaly Intelligence) and §9.5 (Bet Timing & Execution Intelligence) — confirmed by direct inspection that this table has zero rows and zero code references anywhere in this repository today. Documented here only so the existing column shape isn't accidentally redesigned before that future work reads/writes it; no schema change made by this entry.
 
 ---
 
