@@ -17,15 +17,23 @@ docstring), carried forward as a required Milestone 4.9 checkpoint.
 stops at persisting individual agent outputs; consensus math belongs to
 the not-yet-built Consensus Engine milestone.
 
-**Milestone 4.6 addition:** `run_candidate_evaluation` runs the
-sequential Decision & Advisory chain (Probability Modeling -> Expected
-Value -> Risk Manager -> Bankroll Coach) for one `MarketCandidate`
-against an already-existing `recommendation_id` -- it never creates a
-`recommendations` row itself. One cycle (`run_recommendation_cycle`)
-may have `run_candidate_evaluation` called multiple times, once per
-candidate evaluated within it (Decision G: `candidate_key` identifies
-the wager being evaluated; `recommendation_id` identifies the overall
-analysis cycle -- not interchangeable)."""
+**Milestone 4.6 addition, decoupled Milestone 4.9 (Decision 2):**
+`run_candidate_evaluation` runs the SHARED half of the Decision &
+Advisory chain (Probability Modeling -> Expected Value -> Risk Manager)
+for one `MarketCandidate` against an already-existing `recommendation_id`
+-- it never creates a `recommendations` row itself, and it has no user
+concept at all. One cycle (`run_recommendation_cycle`) may have
+`run_candidate_evaluation` called multiple times, once per candidate
+evaluated within it (Decision G: `candidate_key` identifies the wager
+being evaluated; `recommendation_id` identifies the overall analysis
+cycle -- not interchangeable).
+
+`run_bankroll_coach_evaluation` is the separate, per-user half -- callable
+zero or more times against the SAME already-evaluated candidate (one call
+per user who actually needs a stake number), reusing `run_candidate_
+evaluation`'s already-computed probability/EV rather than re-running
+those model calls. This split is the direct fix for the pre-4.9 coupling
+that re-ran Probability/EV/Risk once per user for no reason."""
 from __future__ import annotations
 
 import dataclasses
@@ -40,7 +48,12 @@ from app.features.candidate import MarketCandidate, candidate_key as _candidate_
 from app.models.retry_policy import RetryEngine
 from app.models.router import AdapterRegistry
 from app.orchestration.fanout import FanOutResult, run_fan_out
-from app.orchestration.sequential import SequentialChainResult, run_sequential_chain
+from app.orchestration.sequential import (
+    BankrollCoachResult,
+    SharedCandidateChainResult,
+    run_bankroll_coach_step,
+    run_shared_candidate_chain,
+)
 from app.persistence.recommendations import create_recommendation_cycle, persist_agent_output, persist_candidate_agent_output
 from app.persistence.user_profiles import read_user_profile
 
@@ -67,7 +80,12 @@ async def run_recommendation_cycle(
     context = await build_agent_context(client, headers, game_id=game_id, correlation_id=correlation_id)
 
     recommendation_id = await create_recommendation_cycle(
-        client, headers, game_id=game_id, prompt_version=prompt_version, agent_version=agent_version
+        client,
+        headers,
+        game_id=game_id,
+        prompt_version=prompt_version,
+        agent_version=agent_version,
+        correlation_id=correlation_id,
     )
 
     fan_out_result = await run_fan_out(
@@ -95,9 +113,9 @@ async def run_recommendation_cycle(
     return recommendation_id, fan_out_result
 
 
-def _deterministic_payload_for(agent_name: str, chain_result: SequentialChainResult) -> dict:
-    """Maps a sequential-chain agent's own deterministic companion data
-    -- computed by `app.orchestration.sequential.run_sequential_chain`,
+def _shared_deterministic_payload_for(agent_name: str, chain_result: SharedCandidateChainResult) -> dict:
+    """Maps a shared-chain agent's own deterministic companion data --
+    computed by `app.orchestration.sequential.run_shared_candidate_chain`,
     never by the agent's own LLM call -- into the plain dict persisted
     alongside its `AgentOutput` (Milestone 4.6: "compose, don't extend
     the contract")."""
@@ -105,8 +123,6 @@ def _deterministic_payload_for(agent_name: str, chain_result: SequentialChainRes
         return dataclasses.asdict(chain_result.ev)
     if agent_name == "risk_manager_agent":
         return dataclasses.asdict(chain_result.risk)
-    if agent_name == "bankroll_coach_agent":
-        return dataclasses.asdict(chain_result.kelly)
     raise ValueError(f"no deterministic payload mapping for agent_name={agent_name!r}")
 
 
@@ -122,39 +138,34 @@ async def run_candidate_evaluation(
     participation: ParticipationMetadata,
     routing_rules: dict[str, dict],
     adapter_registry: AdapterRegistry,
-    user_id: str | None = None,
     model_providers: dict[str, str] | None = None,
     retry_engine: RetryEngine | None = None,
-) -> SequentialChainResult:
-    """Runs the sequential Decision & Advisory chain (Milestone 4.6) for
-    exactly one `MarketCandidate` against an ALREADY-EXISTING
-    `recommendation_id` -- one recommendation cycle may have this called
-    multiple times, once per candidate evaluated within it (Decision G).
-    Never creates a second `recommendations` row.
-
-    `user_id`, when given, reads that user's real `user_profiles` row
-    (Decision F) -- `None` (no row, or every real row's `optional_bankroll`
-    being `NULL`, as confirmed live in dev) flows straight through to
-    `context.bankroll_profile`, never fabricated. Omitting `user_id`
-    entirely (the default) also yields `bankroll_profile=None`, exactly
-    the same degraded path a real incomplete profile produces.
+) -> SharedCandidateChainResult:
+    """Runs the SHARED half of the Decision & Advisory chain (Probability
+    Modeling -> EV -> Risk Manager, Milestone 4.9 Decision 2) for exactly
+    one `MarketCandidate` against an ALREADY-EXISTING `recommendation_id`
+    -- one recommendation cycle may have this called multiple times, once
+    per candidate evaluated within it (Decision G). Never creates a
+    second `recommendations` row. No user/bankroll concept at all -- see
+    `run_bankroll_coach_evaluation` for the per-user step.
 
     Persists one `recommendation_agent_outputs` row per successful
     chain step, each tagged with this candidate's `candidate_key`. A
     failed step (including Probability Modeling itself, which blocks the
-    rest of the chain per `run_sequential_chain`) is never persisted."""
-    bankroll_profile = await read_user_profile(client, headers, user_id=user_id) if user_id is not None else None
-
+    rest of the chain per `run_shared_candidate_chain`) is never
+    persisted. Returns the full `SharedCandidateChainResult` -- including
+    its `context` -- so callers can pass it straight into
+    `run_bankroll_coach_evaluation` without re-fetching or re-running
+    anything."""
     context = SequentialDecisionContext(
         game_id=game_id,
         correlation_id=correlation_id,
         candidate=candidate,
         upstream_outputs=tuple(upstream_outputs),
         participation=participation,
-        bankroll_profile=bankroll_profile,
     )
 
-    chain_result = await run_sequential_chain(
+    chain_result = await run_shared_candidate_chain(
         context,
         client=client,
         headers=headers,
@@ -172,7 +183,7 @@ async def run_candidate_evaluation(
         else:
             raw_output = {
                 "agent_output": result.output.model_dump(mode="json"),
-                "deterministic": _deterministic_payload_for(result.agent_name, chain_result),
+                "deterministic": _shared_deterministic_payload_for(result.agent_name, chain_result),
             }
             agent_confidence = result.output.confidence
         await persist_candidate_agent_output(
@@ -188,3 +199,69 @@ async def run_candidate_evaluation(
         )
 
     return chain_result
+
+
+async def run_bankroll_coach_evaluation(
+    client: httpx.AsyncClient,
+    headers: dict,
+    *,
+    recommendation_id: str,
+    candidate: MarketCandidate,
+    shared_chain_context: SequentialDecisionContext,
+    routing_rule: dict,
+    adapter_registry: AdapterRegistry,
+    user_id: str | None = None,
+    model_providers: dict[str, str] | None = None,
+    retry_engine: RetryEngine | None = None,
+) -> BankrollCoachResult:
+    """Runs Bankroll Coach for exactly one user against an already-
+    evaluated candidate (Milestone 4.9, Decision 2) -- `shared_chain_context`
+    must be `run_candidate_evaluation`'s own returned
+    `SharedCandidateChainResult.context` (carrying `probability`/`ev`
+    forward, so this step never re-runs those model calls). Callable zero
+    or more times per candidate, once per user who actually needs a
+    stake number -- calling it for a second user does not touch
+    Probability/EV/Risk again.
+
+    `user_id`, when given, reads that user's real `user_profiles` row
+    (Decision F) -- `None` (no row, or every real row's `optional_bankroll`
+    being `NULL`, as confirmed live in dev) flows straight through to
+    `context.bankroll_profile`, never fabricated. Omitting `user_id`
+    entirely (the default) also yields `bankroll_profile=None`, exactly
+    the same degraded path a real incomplete profile produces -- bankroll
+    stays optional/user-reported/non-authoritative: candidate analysis
+    already happened regardless, only the dollar stake goes `None`.
+
+    Persists one `recommendation_agent_outputs` row for Bankroll Coach on
+    success, tagged with the same `candidate_key` the shared chain's rows
+    used."""
+    bankroll_profile = await read_user_profile(client, headers, user_id=user_id) if user_id is not None else None
+    context = dataclasses.replace(shared_chain_context, bankroll_profile=bankroll_profile)
+
+    result = await run_bankroll_coach_step(
+        context,
+        client=client,
+        headers=headers,
+        routing_rule=routing_rule,
+        model_providers=model_providers,
+        adapter_registry=adapter_registry,
+        retry_engine=retry_engine,
+    )
+
+    if result.status == "success":
+        await persist_candidate_agent_output(
+            client,
+            headers,
+            recommendation_id=recommendation_id,
+            agent_name=result.result.agent_name,
+            candidate_key=_candidate_key(candidate),
+            raw_output={
+                "agent_output": result.result.output.model_dump(mode="json"),
+                "deterministic": dataclasses.asdict(result.kelly),
+            },
+            agent_confidence=result.result.output.confidence,
+            prompt_name=result.result.prompt_name,
+            prompt_version=result.result.prompt_version,
+        )
+
+    return result

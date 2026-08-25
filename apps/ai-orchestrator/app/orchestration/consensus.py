@@ -20,7 +20,48 @@ on top of already-valid deterministic math, not a prerequisite for it.
 text:** the same already-persisted fan-out findings the Meta Agent saw,
 plus the Meta Agent's own `reasoning` field -- the fan-out committee is
 never re-run.
-"""
+
+**Milestone 4.9, Decision 2 -- Elite reconciliation decoupled from
+entitlement lookup, split into three steps.** Pre-4.9, this module took
+a single `user_id`, looked up ITS OWN subscription tier via
+`read_subscription_tier`, and persisted exactly once per call -- meaning
+two different Elite users viewing the SAME candidate this cycle would
+each trigger their own Elite Reconciliation Agent call, redundantly
+re-analyzing IDENTICAL evidence (Elite reconciliation reasoning depends
+only on the candidate's own agent findings + Meta Agent's own reasoning,
+never on which specific user is asking -- unlike Bankroll Coach, whose
+output genuinely differs per user's bankroll). Mac's explicit shared-vs-
+personalized breakdown: "Elite reconciliation is candidate-level
+(computed at most once per candidate/cycle, reused across Elite users);
+entitlement/tier controls triggering, not the underlying football
+evidence."
+
+The fix here is orchestration-level sequencing discipline, not a schema
+change -- deliberately NOT adding a uniqueness constraint to
+`consensus_snapshots` to enable an upsert/update-in-place, since the
+existing schema migration
+(`20260822153000_consensus_snapshots_candidate_and_final_confidence.sql`)
+already documents "No uniqueness constraint... retry/versioning
+semantics for a candidate-level consensus snapshot aren't designed yet
+either" -- reversing that documented decision without Mac's explicit
+sign-off would be exactly the "silently improvise past a real
+Blueprint/reality conflict" CLAUDE.md rules out. Instead:
+
+1. `run_shared_consensus` -- no user/tier concept at all. Computes
+   consensus + always runs Meta Agent. Does NOT persist.
+2. `run_elite_reconciliation` -- takes the ALREADY-RESOLVED `tier` for
+   whichever Elite-tier user(s), if any, are requesting this candidate
+   this cycle (resolved by the caller, e.g. the Milestone 4.9 top-level
+   Recommendation Worker entry point, via `read_subscription_tier` --
+   this module no longer calls it). The caller is responsible for
+   invoking this AT MOST ONCE per candidate/cycle regardless of how many
+   Elite users are viewing it -- exactly like `run_shared_candidate_chain`
+   runs once per candidate regardless of how many users later call
+   `run_bankroll_coach_step`. Does NOT persist.
+3. `finalize_consensus` -- the single persistence call, made exactly
+   once per candidate by the caller after both steps above have run
+   (`elite=None` in the common case where no Elite user requested this
+   candidate this cycle, or Elite reconciliation didn't trigger)."""
 from __future__ import annotations
 
 import dataclasses
@@ -44,7 +85,6 @@ from app.models.router import AdapterRegistry, ModelRouter
 from app.models.types import ModelRequest
 from app.persistence.consensus_snapshots import persist_consensus_snapshot, read_game_level_agent_outputs
 from app.persistence.model_config import resolve_active_prompt
-from app.persistence.subscriptions import read_subscription_tier
 
 @dataclass
 class ReviewAgentRunResult:
@@ -95,17 +135,43 @@ async def _run_review_agent(
 
 
 @dataclass
-class ConsensusRunResult:
+class SharedConsensusResult:
+    """The candidate-level, user-independent half (Milestone 4.9,
+    Decision 2) -- computed once per candidate, shared across every user
+    who views it. `review_context` carries `meta_reasoning`-ready state
+    forward for `run_elite_reconciliation` without re-fetching
+    `recommendation_agent_outputs`."""
+
     status: str  # "no_consensus" | "computed"
     consensus: ConsensusResult | None
     meta_result: ReviewAgentRunResult | None
+    review_context: ConsensusReviewContext | None
+    after_meta_confidence: float | None
+    model_routing_used: dict
+
+
+@dataclass
+class EliteReconciliationResult:
+    """`triggered=False` covers both "not requested" (caller never even
+    tried, `elite_result=None`) and "requested but the structural
+    threshold/tier check didn't fire" -- distinguished only by whether
+    the caller invoked this function at all, never by inspecting this
+    result alone."""
+
+    triggered: bool
     elite_result: ReviewAgentRunResult | None
-    second_pass_triggered: bool
     final_aggregate_confidence: float | None
-    below_confidence_floor: bool | None
+    model_routing_used: dict
 
 
-async def run_candidate_consensus(
+@dataclass
+class ConsensusFinalizeResult:
+    final_aggregate_confidence: float
+    below_confidence_floor: bool
+    second_pass_triggered: bool
+
+
+async def run_shared_consensus(
     client,
     headers: dict,
     *,
@@ -120,14 +186,14 @@ async def run_candidate_consensus(
     adapter_registry: AdapterRegistry,
     model_providers: dict[str, str] | None = None,
     retry_engine: RetryEngine | None = None,
-    user_id: str | None = None,
-) -> ConsensusRunResult:
-    """Computes and persists one candidate's consensus. `home_team`/
-    `away_team` resolve the candidate's own direction (Decision I) --
-    never inferred from array position or text ordering. `user_id`,
-    when given, is the ONLY way Elite second-pass can ever trigger; its
-    absence (the default) means the trigger check is skipped entirely,
-    never defaulted to elevated treatment."""
+) -> SharedConsensusResult:
+    """Computes one candidate's consensus and always runs Meta Agent
+    when a consensus number exists to review (Milestone 4.9, Decision 2:
+    no user/tier concept at all -- entitlement is entirely
+    `run_elite_reconciliation`'s concern). `home_team`/`away_team`
+    resolve the candidate's own direction (Decision I) -- never inferred
+    from array position or text ordering. Does NOT persist -- see this
+    module's docstring for why."""
     retry_engine = retry_engine or RetryEngine()
 
     candidate_direction = resolve_candidate_direction(
@@ -137,14 +203,8 @@ async def run_candidate_consensus(
     consensus = compute_consensus(agent_rows, candidate_direction=candidate_direction)
 
     if consensus.aggregate_confidence is None:
-        return ConsensusRunResult(
-            status="no_consensus",
-            consensus=consensus,
-            meta_result=None,
-            elite_result=None,
-            second_pass_triggered=False,
-            final_aggregate_confidence=None,
-            below_confidence_floor=None,
+        return SharedConsensusResult(
+            status="no_consensus", consensus=consensus, meta_result=None, review_context=None, after_meta_confidence=None, model_routing_used={}
         )
 
     candidate_key_value = compute_candidate_key(candidate)
@@ -158,8 +218,6 @@ async def run_candidate_consensus(
         participation=participation,
     )
 
-    model_routing_used: dict[str, str] = {}
-
     meta_agent = MetaAgent()
     meta_result = await _run_review_agent(
         meta_agent,
@@ -171,56 +229,114 @@ async def run_candidate_consensus(
         adapter_registry=adapter_registry,
         retry_engine=retry_engine,
     )
-    model_routing_used[meta_agent.agent_name] = routing_rules[meta_agent.task_type]["primary_model"]
     meta_adjustment = meta_result.output.confidence_adjustment if meta_result.status == "success" else 0.0
     after_meta = apply_confidence_adjustment(consensus.aggregate_confidence, meta_adjustment)
 
-    second_pass_triggered = False
-    elite_result = None
-    final_aggregate_confidence = after_meta
+    return SharedConsensusResult(
+        status="computed",
+        consensus=consensus,
+        meta_result=meta_result,
+        review_context=review_context,
+        after_meta_confidence=after_meta,
+        model_routing_used={meta_agent.agent_name: routing_rules[meta_agent.task_type]["primary_model"]},
+    )
 
-    tier = await read_subscription_tier(client, headers, user_id=user_id) if user_id is not None else None
-    if should_trigger_elite_second_pass(consensus.agreement_variance, tier):
-        second_pass_triggered = True
-        meta_reasoning = meta_result.output.reasoning if meta_result.status == "success" else None
-        elite_context = dataclasses.replace(review_context, meta_reasoning=meta_reasoning)
-        elite_agent = EliteReconciliationAgent()
-        elite_result = await _run_review_agent(
-            elite_agent,
-            elite_context,
-            client=client,
-            headers=headers,
-            routing_rule=routing_rules[elite_agent.task_type],
-            model_providers=model_providers,
-            adapter_registry=adapter_registry,
-            retry_engine=retry_engine,
+
+async def run_elite_reconciliation(
+    shared: SharedConsensusResult,
+    client,
+    headers: dict,
+    *,
+    tier: str | None,
+    routing_rules: dict[str, dict],
+    adapter_registry: AdapterRegistry,
+    model_providers: dict[str, str] | None = None,
+    retry_engine: RetryEngine | None = None,
+) -> EliteReconciliationResult:
+    """Runs Elite second-pass reconciliation for one candidate, AT MOST
+    ONCE per candidate/cycle -- the caller (e.g. the top-level
+    Recommendation Worker entry point) resolves `tier` itself, once,
+    representing whichever Elite-tier user(s) are requesting this
+    candidate this cycle, and is responsible for calling this function
+    at most once regardless of how many such users there are (Milestone
+    4.9, Decision 2). `tier` is never looked up here -- this module has
+    no user concept.
+
+    A no-op (`triggered=False`, `final_aggregate_confidence` carried
+    through unchanged from `shared`) when `shared.status != "computed"`
+    (nothing to reconcile) or `should_trigger_elite_second_pass` doesn't
+    fire for `shared.consensus.agreement_variance`/`tier`."""
+    if shared.status != "computed":
+        return EliteReconciliationResult(triggered=False, elite_result=None, final_aggregate_confidence=None, model_routing_used={})
+
+    if not should_trigger_elite_second_pass(shared.consensus.agreement_variance, tier):
+        return EliteReconciliationResult(
+            triggered=False, elite_result=None, final_aggregate_confidence=shared.after_meta_confidence, model_routing_used={}
         )
-        model_routing_used[elite_agent.agent_name] = routing_rules[elite_agent.task_type]["primary_model"]
-        elite_adjustment = elite_result.output.confidence_adjustment if elite_result.status == "success" else 0.0
-        final_aggregate_confidence = apply_confidence_adjustment(after_meta, elite_adjustment)
 
+    retry_engine = retry_engine or RetryEngine()
+    meta_reasoning = shared.meta_result.output.reasoning if shared.meta_result.status == "success" else None
+    elite_context = dataclasses.replace(shared.review_context, meta_reasoning=meta_reasoning)
+    elite_agent = EliteReconciliationAgent()
+    elite_result = await _run_review_agent(
+        elite_agent,
+        elite_context,
+        client=client,
+        headers=headers,
+        routing_rule=routing_rules[elite_agent.task_type],
+        model_providers=model_providers,
+        adapter_registry=adapter_registry,
+        retry_engine=retry_engine,
+    )
+    elite_adjustment = elite_result.output.confidence_adjustment if elite_result.status == "success" else 0.0
+    final_aggregate_confidence = apply_confidence_adjustment(shared.after_meta_confidence, elite_adjustment)
+
+    return EliteReconciliationResult(
+        triggered=True,
+        elite_result=elite_result,
+        final_aggregate_confidence=final_aggregate_confidence,
+        model_routing_used={elite_agent.agent_name: routing_rules[elite_agent.task_type]["primary_model"]},
+    )
+
+
+async def finalize_consensus(
+    client,
+    headers: dict,
+    *,
+    recommendation_id: str,
+    candidate: MarketCandidate,
+    participation: ParticipationMetadata,
+    shared: SharedConsensusResult,
+    elite: EliteReconciliationResult | None = None,
+) -> ConsensusFinalizeResult:
+    """The single persistence call for one candidate's consensus --
+    callers make this call EXACTLY ONCE per candidate/cycle, after
+    `run_shared_consensus` and (if it ran at all) `run_elite_
+    reconciliation` have both already completed. `shared.status` must be
+    `"computed"` -- callers never finalize a `"no_consensus"` result (no
+    row to write, per this module's original `consensus_snapshots`
+    persistence contract)."""
+    final_aggregate_confidence = elite.final_aggregate_confidence if elite is not None else shared.after_meta_confidence
     below_confidence_floor = is_below_confidence_floor(final_aggregate_confidence)
+    second_pass_triggered = elite.triggered if elite is not None else False
+    model_routing_used = {**shared.model_routing_used, **(elite.model_routing_used if elite is not None else {})}
 
     await persist_consensus_snapshot(
         client,
         headers,
         recommendation_id=recommendation_id,
-        candidate_key=candidate_key_value,
-        aggregate_confidence=consensus.aggregate_confidence,
+        candidate_key=compute_candidate_key(candidate),
+        aggregate_confidence=shared.consensus.aggregate_confidence,
         final_aggregate_confidence=final_aggregate_confidence,
-        agreement_variance=consensus.agreement_variance,
+        agreement_variance=shared.consensus.agreement_variance,
         below_confidence_floor=below_confidence_floor,
         participation_metadata=participation_metadata_to_json(participation),
         model_routing_used=model_routing_used,
         second_pass_triggered=second_pass_triggered,
     )
 
-    return ConsensusRunResult(
-        status="computed",
-        consensus=consensus,
-        meta_result=meta_result,
-        elite_result=elite_result,
-        second_pass_triggered=second_pass_triggered,
+    return ConsensusFinalizeResult(
         final_aggregate_confidence=final_aggregate_confidence,
         below_confidence_floor=below_confidence_floor,
+        second_pass_triggered=second_pass_triggered,
     )
