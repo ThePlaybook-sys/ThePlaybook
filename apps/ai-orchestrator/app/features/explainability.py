@@ -52,6 +52,16 @@ from dataclasses import dataclass
 from app.features.consensus import lean_factor
 from app.features.strategy import EvaluatedCandidate, RejectedCandidate
 
+#: Milestone 5.3 (Decision AX) -- the Explainability Engine logic version,
+#: frozen directly onto the actual `recommendation_product_explanations`/
+#: `recommendation_leg_explanations` rows this module's callers persist,
+#: never onto a separate/inferred location -- so a future reconstruction
+#: can tell "same evidence, same explanation algorithm" from "same
+#: evidence, the algorithm changed" for any historical explanation. A
+#: future deliberate change to how this module builds `why_this_shape`/
+#: `why_selected`/etc. must bump this constant; it is never inferred.
+EXPLAINABILITY_VERSION = "v1"
+
 #: Unconditional -- these three categories are confirmed, by direct
 #: repository/schema inspection, to have no data source anywhere in this
 #: system today (Volume 3 §4.1: `public_betting`/`sharp_money` stay

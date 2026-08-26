@@ -99,6 +99,57 @@ async def test_run_agent_success():
     assert result.error is None
     assert result.prompt_name == "agent_a"
     assert result.prompt_version == 1
+    # Milestone 5.3 (Decision AV) -- the ACTUAL model/provider that
+    # produced this output, from ModelResponse.usage.
+    assert result.model_name == "claude-sonnet-5"
+    assert result.provider == "anthropic"
+    assert result.used_fallback is False
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_run_agent_used_fallback_flag_is_correct_even_though_model_name_is_not():
+    """Milestone 5.3 (Decision AV) surfaced a genuine, pre-existing
+    Milestone 4.3 architecture gap, reported rather than silently fixed
+    here (out of Milestone 5.3's authorized scope): `RetryEngine.execute`
+    is called with a single `ModelRequest` shared by both the primary and
+    fallback attempts (`app.orchestration.fanout.run_agent` builds it once
+    with `model=decision.primary_model`) -- there is no mechanism to swap
+    in `decision.fallback_model` for the fallback candidate. Both real
+    adapters (`OpenAIModelAdapter`/`AnthropicModelAdapter`) send
+    `request.model` literally as the provider API's `model` parameter, so
+    a real fallback call would ask the FALLBACK provider to serve the
+    PRIMARY's model name -- invisible until now because every call in
+    this codebase has used `FakeModelAdapter`, which never validates the
+    model string it's handed. `used_fallback` (this milestone's own new
+    field) is still correctly `True` -- it comes from the retry engine's
+    own bookkeeping, not from `request.model` -- but `model_name` is
+    provably wrong in this scenario (echoes the primary's model, not the
+    fallback's), captured here exactly as it happens today rather than
+    asserting a corrected value this codebase doesn't yet produce."""
+    from app.models.retry_policy import RetryEngine
+
+    mock_prompt_registry_route(SUPABASE_URL)
+    agent = _StubAgent("agent_a", "task_a")
+    primary = FakeModelAdapter(provider="openai", script=[ScriptedFailure(error=ModelTimeoutError("timeout"))] * 2)
+    fallback = FakeModelAdapter(provider="anthropic", script=[ScriptedSuccess(raw_text=_valid_output_json("agent_a"))])
+    registry = AdapterRegistry(adapters={"openai": primary, "anthropic": fallback})
+    routing_rule = {"task_type": "task_a", "primary_model": "gpt-5", "fallback_model": "claude-sonnet-5"}
+    async with httpx.AsyncClient(base_url=SUPABASE_URL) as client:
+        result = await run_agent(
+            agent,
+            _context(),
+            client=client,
+            headers=_headers(),
+            routing_rule=routing_rule,
+            model_providers={"gpt-5": "openai", "claude-sonnet-5": "anthropic"},
+            adapter_registry=registry,
+            retry_engine=RetryEngine(),
+        )
+    assert result.status == "success"
+    assert result.used_fallback is True
+    assert result.provider == "anthropic"  # correct -- from the fallback adapter's own identity
+    assert result.model_name == "gpt-5"  # WRONG -- should be "claude-sonnet-5"; documents the gap above
 
 
 @pytest.mark.asyncio

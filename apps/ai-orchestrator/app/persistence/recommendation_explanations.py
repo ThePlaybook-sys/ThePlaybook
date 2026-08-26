@@ -124,6 +124,7 @@ async def persist_product_explanation(
     why_not_other_shapes: str | None,
     rejected_alternatives: list[dict],
     data_limitations: str | None,
+    explainability_version: str,
 ) -> str:
     """Inserts the single, permanent explanation row for one
     `recommendation_products` row (UNIQUE constraint enforces exactly one,
@@ -131,13 +132,18 @@ async def persist_product_explanation(
     deterministic-only; the column stays NULL, reserved for a future
     narrative layer that would populate it only at row-creation time for
     NEW products, never via an UPDATE to this one (the table is
-    append-only)."""
+    append-only). `explainability_version` (Milestone 5.3, Decision AX)
+    is always supplied explicitly by the caller
+    (`app.features.explainability.EXPLAINABILITY_VERSION`) -- never left
+    to the column's DB-level default, so a future version bump is never
+    silently missed by forgetting to also update this call site."""
     payload = {
         "recommendation_product_id": recommendation_product_id,
         "why_this_shape": why_this_shape,
         "why_not_other_shapes": why_not_other_shapes,
         "rejected_alternatives": rejected_alternatives,
         "data_limitations": data_limitations,
+        "explainability_version": explainability_version,
     }
     response = await client.post(
         "/rest/v1/recommendation_product_explanations",
@@ -168,11 +174,13 @@ async def persist_leg_explanation(
     biggest_risks: str,
     rejected_alternatives: list[dict],
     would_change_mind_if: str | None,
+    explainability_version: str,
 ) -> str:
     """Inserts the single, permanent explanation row for one
     `recommendation_legs` row (UNIQUE constraint enforces exactly one,
     ever). Same `narrative_summary` reservation as the product-level
-    function above."""
+    function above. `explainability_version`: see
+    `persist_product_explanation`'s identical note."""
     payload = {
         "recommendation_leg_id": recommendation_leg_id,
         "why_selected": why_selected,
@@ -181,6 +189,7 @@ async def persist_leg_explanation(
         "biggest_risks": biggest_risks,
         "rejected_alternatives": rejected_alternatives,
         "would_change_mind_if": would_change_mind_if,
+        "explainability_version": explainability_version,
     }
     response = await client.post(
         "/rest/v1/recommendation_leg_explanations",

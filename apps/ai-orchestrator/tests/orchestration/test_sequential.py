@@ -132,6 +132,12 @@ async def test_shared_chain_full_when_all_three_succeed():
     assert result.risk.bernoulli_outcome_variance == pytest.approx(0.57 * 0.43)
     # No bankroll/Kelly concept at all in the shared chain:
     assert result.context.kelly is None
+    # Milestone 5.3 (Decision AV) -- the ACTUAL model/provider that
+    # produced each output, from ModelResponse.usage.
+    for success in result.successes:
+        assert success.model_name == "claude-sonnet-5"
+        assert success.provider == "anthropic"
+        assert success.used_fallback is False
 
 
 @pytest.mark.asyncio

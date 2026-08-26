@@ -43,6 +43,7 @@ import httpx
 
 from app.features.consensus import resolve_candidate_direction
 from app.features.explainability import (
+    EXPLAINABILITY_VERSION,
     build_biggest_risks,
     build_contributing_agents,
     build_data_limitations,
@@ -106,6 +107,7 @@ async def _explain_no_bet_product(
         why_not_other_shapes=build_why_not_other_shapes("no_bet"),
         rejected_alternatives=rejected_alternatives_to_json(list(game_decision.rejected)),
         data_limitations=build_data_limitations(participation),
+        explainability_version=EXPLAINABILITY_VERSION,
     )
     return ProductExplanationResult(product_id=product_id, recommendation_type="no_bet", status="generated", explanation_id=explanation_id)
 
@@ -124,6 +126,7 @@ async def _explain_bankroll_preservation_product(
         # duplicated here.
         rejected_alternatives=[],
         data_limitations=build_data_limitations(None),
+        explainability_version=EXPLAINABILITY_VERSION,
     )
     return ProductExplanationResult(
         product_id=product_id, recommendation_type="bankroll_preservation", status="generated", explanation_id=explanation_id
@@ -183,6 +186,7 @@ async def _explain_leg(
         biggest_risks=biggest_risks,
         rejected_alternatives=rejected_alternatives_to_json(conflict_losers),
         would_change_mind_if=would_change_mind_if,
+        explainability_version=EXPLAINABILITY_VERSION,
     )
     return LegExplanationResult(
         leg_id=leg_id, candidate_key=candidate.candidate_key, status="generated", explanation_id=explanation_id
@@ -248,6 +252,7 @@ async def generate_and_persist_explanations(
                 if decision.outcome == "single"
                 else None
             ),
+            explainability_version=EXPLAINABILITY_VERSION,
         )
         result.products.append(
             ProductExplanationResult(

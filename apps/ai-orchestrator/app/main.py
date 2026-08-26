@@ -197,6 +197,8 @@ class FinalizeStrategyResponse(BaseModel):
     no_bet_game_count: int
     explanations_generated: int
     explanations_failed: int
+    activation_snapshots_generated: int
+    activation_snapshots_failed: int
 
 
 @app.post(
@@ -221,10 +223,11 @@ async def internal_finalize_strategy(payload: FinalizeStrategyRequest) -> Finali
     ]
     headers = supabase_client.auth_headers()
     async with supabase_client.new_client(timeout=60.0) as client:
-        decision, created_ids, explainability_result = await finalize_slate_strategy(
+        decision, created_ids, explainability_result, time_machine_result = await finalize_slate_strategy(
             client, headers, master_refresh_run_id=payload.master_refresh_run_id, games=games
         )
     all_explanation_statuses = [p.status for p in explainability_result.products] + [l.status for l in explainability_result.legs]
+    all_snapshot_statuses = [p.status for p in time_machine_result.snapshots] + [l.status for l in time_machine_result.legs]
     return FinalizeStrategyResponse(
         outcome=decision.outcome,
         recommendation_product_ids=created_ids,
@@ -232,6 +235,8 @@ async def internal_finalize_strategy(payload: FinalizeStrategyRequest) -> Finali
         no_bet_game_count=sum(1 for d in decision.game_decisions if d.outcome == "no_bet"),
         explanations_generated=sum(1 for s in all_explanation_statuses if s == "generated"),
         explanations_failed=sum(1 for s in all_explanation_statuses if s == "failed"),
+        activation_snapshots_generated=sum(1 for s in all_snapshot_statuses if s == "generated"),
+        activation_snapshots_failed=sum(1 for s in all_snapshot_statuses if s == "failed"),
     )
 
 

@@ -66,6 +66,11 @@ class SequentialAgentRunResult:
     error: str | None = None
     prompt_name: str | None = None
     prompt_version: int | None = None
+    # Milestone 5.3 (Decision AV) -- see `app.orchestration.fanout.
+    # AgentRunResult`'s identical fields for the full rationale.
+    model_name: str | None = None
+    provider: str | None = None
+    used_fallback: bool | None = None
 
 
 @dataclass
@@ -147,6 +152,9 @@ async def run_sequential_agent(
         output=response.parsed,
         prompt_name=resolved_prompt.prompt_name,
         prompt_version=resolved_prompt.version,
+        model_name=response.usage.model,
+        provider=response.usage.provider,
+        used_fallback=response.usage.used_fallback,
     )
 
 

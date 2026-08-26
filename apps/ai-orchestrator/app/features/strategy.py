@@ -54,6 +54,21 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+#: Milestone 5.3 (Decision AW) -- the Strategy Engine logic version, frozen
+#: onto `recommendation_activation_snapshots.strategy_version` at
+#: activation time so the Time Machine can distinguish "same inputs, same
+#: rules" from "same inputs, the rules changed" for any historical
+#: product. Describes this exact Milestone 5.1 rule set (Decisions
+#: X/Y/Z/AA/AB/AC/AM/AN, restated in this module's own docstring above) --
+#: never a global "AI version" blending Strategy with prompt/model/
+#: consensus/Explainability versioning, each of which changes on its own
+#: independent schedule (Volume 3 §5's own five-separate-columns
+#: principle, applied here to a sixth, distinct kind of version). A
+#: future deliberate change to this module's qualification/ranking/
+#: conflict-resolution rules must bump this constant -- it is never
+#: inferred from git history or a deploy timestamp.
+STRATEGY_VERSION = "v1"
+
 _DIRECTIONAL_MARKET_TYPES = ("moneyline", "spread", "total")
 
 
