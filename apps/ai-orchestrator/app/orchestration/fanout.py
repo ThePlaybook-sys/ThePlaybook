@@ -120,6 +120,7 @@ async def run_agent(
             request=request,
             fallback=fallback,
             fallback_provider=decision.fallback_provider,
+            fallback_model=decision.fallback_model,
         )
     except Exception as exc:  # noqa: BLE001 -- deliberate: isolate this one agent, never cancel the others
         return AgentRunResult(agent_name=agent.agent_name, status="failed", error=str(exc))

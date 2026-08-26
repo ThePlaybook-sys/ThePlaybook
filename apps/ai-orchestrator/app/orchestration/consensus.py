@@ -138,7 +138,12 @@ async def _run_review_agent(
             response_model=agent.response_model,
         )
         response = await retry_engine.execute(
-            primary=primary, primary_provider=decision.primary_provider, request=request, fallback=fallback, fallback_provider=decision.fallback_provider
+            primary=primary,
+            primary_provider=decision.primary_provider,
+            request=request,
+            fallback=fallback,
+            fallback_provider=decision.fallback_provider,
+            fallback_model=decision.fallback_model,
         )
     except Exception as exc:  # noqa: BLE001 -- deliberate: isolate this one review agent
         return ReviewAgentRunResult(agent_name=agent.agent_name, status="failed", error=str(exc))

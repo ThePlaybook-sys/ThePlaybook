@@ -1,8 +1,8 @@
 # The Playbook — Volume 3
 ## Database Architecture: Tables, Relationships, Indexes, Triggers, Migrations, RLS
 
-**Version:** v4.21
-**Last updated:** 2026-08-25
+**Version:** v4.22
+**Last updated:** 2026-08-27
 
 **v4.21 note (MINOR):** §5B gains a new §5C — `recommendation_activation_snapshots`/`_legs`/`_source_products` + `recommendation_product_lifecycle_events` (Phase 5 Milestone 5.3, Time Machine) — an additive activation manifest that composes already-frozen Milestone 5.1/5.2 rows by FK, never duplicating odds/EV/confidence/explanation content a second time. The legacy `recommendation_snapshots` (§5, Phase 1) is confirmed unfit for the Phase 5 product/leg layer and is left completely untouched. Two real, live-verified provenance gaps found during the Milestone 5.3 inspection are also closed: `consensus_snapshots` gains the append-only `BEFORE UPDATE` trigger every sibling table already had; `recommendation_agent_outputs` gains nullable `model_name`/`provider`/`used_fallback` columns recording the ACTUAL model/provider that produced each output (never the requested routing rule). `recommendation_product_explanations`/`recommendation_leg_explanations` gain `explainability_version`. See `CHANGELOG.md` v4.21 entry for full reasoning.
 **v4.20 note (MINOR):** §5A gains a new §5B — `recommendation_product_explanations`/`recommendation_leg_explanations` (Phase 5 Milestone 5.2, Deterministic V1) — two new additive tables giving every `recommendation_products`/`recommendation_legs` row exactly one, ever, append-only explanation. `explainability_payloads` (§5, Phase 1) is left completely untouched: not repointed, not retrofitted, not deleted, its existing row not migrated — its sole FK target (`recommendations.id`) has no path to the Phase 5 product layer, and it carries no append-only protection at all. See `CHANGELOG.md` v4.20 entry for full reasoning.
@@ -852,6 +852,79 @@ An append-only EVENT LOG, not a "current state only" column set (Decision AZ) �
 
 ---
 
+## 5D. Phase 5 Postgame Review Grading Layer (v5.3, Phase 5 Milestone 5.4, 2026-08-27)
+
+**Resolves the same class of conflict §5A/§5C already resolved, one more time: the legacy `postgame_reviews` (§7) FKs to the legacy Phase 4 `recommendations` cycle row, not the Phase 5 product/leg layer — no product/leg awareness, no append-only trigger, no deterministic outcome column at all, every field is narrative text or an agent-name array.** Resolution (Mac's explicit decision, Decisions BG-BZ): leave `postgame_reviews` completely untouched as legacy (not repointed, not deleted, its fixture row not migrated) — same "leave as legacy, build the correct additive layer above it" pattern as `explainability_payloads` (§5B) and `recommendation_snapshots` (§5C).
+
+**Narrow schema inspection conclusion (performed before this migration, per Mac's explicit instruction): three new tables, not four, not one polymorphic table.** Leg-scope and product-scope were kept separate rather than one `grade_events` table with nullable `leg_id`/`product_id` columns — a single table would need a CHECK ensuring exactly one of two nullable parent FKs is set, plus a rollup-only column meaningless for leg-scoped rows, exactly the "ambiguous nullable-parent design" the inspection was told to avoid. A separate leg-level narrative table was considered and rejected — nothing in Volume 4's nine-question Explainability spec or this milestone's decisions calls for one; weather/injury/agent-correctness narrative is naturally slate-of-legs-level, matching the legacy `postgame_reviews` shape.
+
+### `recommendation_leg_grade_events`
+```sql
+create table recommendation_leg_grade_events (
+  id uuid primary key default uuid_generate_v7(),
+  recommendation_leg_id uuid not null references recommendation_legs(id),
+  game_id uuid not null references games(id),
+  grading_version text not null,
+  outcome text not null check (outcome in ('WIN', 'LOSS', 'PUSH', 'VOID_NO_ACTION', 'PENDING_MISSING_DATA')),
+  authoritative_result jsonb not null,
+  graded_at timestamptz not null default now(),
+  is_correction boolean not null default false,
+  corrects_grade_event_id uuid references recommendation_leg_grade_events(id),
+  correction_source text check (correction_source in ('stat_correction', 'grading_rule_change', 'manual_review')),
+  correction_reason text,
+  created_at timestamptz not null default now()
+);
+create unique index idx_leg_grade_events_original_per_version
+  on recommendation_leg_grade_events (recommendation_leg_id, grading_version) where is_correction = false;
+```
+One deterministic grade per leg per `grading_version`, ever, for an ORIGINAL grade (partial unique index) — a correction is a separate row with `is_correction = true` and `corrects_grade_event_id` pointing at what it supersedes, never an UPDATE (append-only `BEFORE UPDATE` trigger, live-proven). `authoritative_result` freezes exactly the final-result facts the grade was computed against — never a live pointer to mutable `games.final_score`/`team_stats`/`player_stats` — so a later stat correction can never retroactively change what a historical grade "saw." **Idempotent-retry vs. legitimate-regrade (Decision BQ) is DB-enforced, not application-memory-only**: a worker's create-or-get for the original grade of a version hits the partial unique index on retry; a genuine correction (different `authoritative_result`) is a new row the index does not block.
+
+### `recommendation_product_grade_events`
+```sql
+create table recommendation_product_grade_events (
+  id uuid primary key default uuid_generate_v7(),
+  recommendation_product_id uuid not null references recommendation_products(id),
+  grading_version text not null,
+  outcome text not null check (outcome in ('WIN', 'LOSS', 'PUSH', 'VOID_NO_ACTION', 'PENDING_MISSING_DATA', 'NOT_APPLICABLE', 'MIXED_SETTLED')),
+  leg_outcome_counts jsonb,
+  computed_at timestamptz not null default now(),
+  is_correction boolean not null default false,
+  corrects_grade_event_id uuid references recommendation_product_grade_events(id),
+  correction_source text check (correction_source in ('stat_correction', 'grading_rule_change', 'manual_review')),
+  correction_reason text,
+  created_at timestamptz not null default now()
+);
+```
+Mirrors the leg table's append-only/idempotency design exactly. `single` mirrors its one leg's outcome verbatim (`leg_outcome_counts = NULL`). `no_bet`/`bankroll_preservation` are always `NOT_APPLICABLE` (Decisions BL/BM) — no retrospective win/loss is invented for an abstention, since no Blueprint-approved rule for "was passing correct?" exists yet. `multiple_singles` is `PENDING_MISSING_DATA` until every leg has a terminal grade, then `MIXED_SETTLED` with the full per-outcome breakdown in `leg_outcome_counts` (Decision BK) — the rollup is a derived summary; the individual leg results remain the first-class record in `recommendation_leg_grade_events`, never collapsed away.
+
+### `recommendation_product_postgame_reviews`
+```sql
+create table recommendation_product_postgame_reviews (
+  id uuid primary key default uuid_generate_v7(),
+  recommendation_product_id uuid not null references recommendation_products(id),
+  product_grade_event_id uuid not null references recommendation_product_grade_events(id),
+  grading_version text not null,
+  postgame_review_version text not null,
+  outcome_summary text,
+  why_it_won_or_lost text,
+  factual_deltas jsonb,
+  correct_agents text[],
+  underperforming_agents text[],
+  learning_notes text,
+  generated_at timestamptz not null default now(),
+  created_at timestamptz not null default now()
+);
+create unique index idx_postgame_reviews_product_version
+  on recommendation_product_postgame_reviews (recommendation_product_id, postgame_review_version);
+```
+Strictly downstream of an already-persisted `product_grade_event_id` (Decision BU) — the LLM narrative layer has no field capable of representing a grade, EV, confidence, or historical Explainability value, structurally, not just by convention. `GRADING_VERSION` and `POSTGAME_REVIEW_VERSION` are independent (Decision BN/BO) — the deterministic rules and the narrative-generation logic can evolve on separate timelines. `factual_deltas` is deterministic-derivation-only (weather/injury/line-movement changes between activation and kickoff) and conservatively `None` in this milestone (no snapshot-diffing infrastructure was built) — honest absence, never an approximation. `correct_agents`/`underperforming_agents` are populated only when an agent's directional call can be objectively compared to the realized game direction (Decision BT) — `NULL` (not `[]`) when that comparison is impossible (a push/void/pending leg has no "reality was on this side" fact to compare against), never confidence- or majority-based. Append-only.
+
+**Reconciliation-eligibility, the actual grading-readiness condition (Decision BH):** `games.status = 'final'` is necessary but not sufficient — the Postgame Ingestion Worker's own bounded reconciliation window (§4, Volume 2 §8) can still correct `team_stats`/`player_stats`/`final_score` for up to 72 hours after finalization. Grading a `final` game waits until `now >= games.finalized_at + 72h` (the same final checkpoint `app.workers.reconciliation.CHECKPOINT_OFFSETS` already uses, imported rather than duplicated as a new number) before treating its stats as authoritative. `postponed`/`canceled` games grade immediately as `VOID_NO_ACTION` — no reconciliation process exists for them to wait on. **A disclosed, not silently worked-around, limitation:** `is_reconciliation_complete`'s own `checks_done` state is held only in the Postgame Worker's calling process's memory (no DB persistence layer exists for it yet) — a separate service cannot read it directly, so this derived wall-clock condition is used instead. It does not verify every individual checkpoint actually ran successfully, only that enough time has passed for all of them to have had their chance.
+
+**Carry-Forward Gap 1 (from the Milestone 5.4 pre-implementation inspection), closed as a small corrective patch before this milestone's own build began:** `app.models.retry_policy.RetryEngine.execute` previously ran the fallback candidate against the exact same `ModelRequest` built for the primary, so a real fallback call would have asked the fallback provider to serve the primary's model name, and `model_name` provenance would echo the primary's model even when the fallback actually served the response. Fixed (Decision BF) by accepting an explicit `fallback_model` and swapping it into a per-candidate request via `dataclasses.replace` immediately before that candidate's own attempts. `provider`/`used_fallback` were never affected by this bug (both are set by the retry engine itself, never from the request).
+
+---
+
 ## 6. Bet Verification & Performance Attribution
 
 ### `bet_slips`
@@ -955,7 +1028,7 @@ create table postgame_reviews (
   created_at timestamptz default now()
 );
 ```
-Generated automatically by the scheduled worker (Volume 2, Section 4.4) once `games.status = 'final'`. This table is what feeds the "correct_agents / underperforming_agents" data back into `agent_performance_scores` — the Continuous Learning Engine loop, fully specified in Volume 4, closes here at the schema level. **`outcome_summary` narrates recommendation performance, not wager settlement** — it must not be treated as, or conflated with, a graded bet outcome. See §6's Stat Correction ↔ Bet Settlement Policy (v4.3) for the full separation requirement; that policy is Phase 5 scope, not built here.
+**LEGACY, UNBUILT, LEFT UNTOUCHED (Phase 5 Milestone 5.4, Decision BG, 2026-08-27) — confirmed unfit for the Phase 5 product layer:** this table FKs to the legacy Phase 4 `recommendations` cycle row, has no product/leg awareness, no append-only trigger, and no deterministic outcome column at all. Zero rows, zero writers, exactly the same "schema exists, nothing writes it" state `explainability_payloads` and `recommendation_snapshots` were found in before their own milestones. **The actual Postgame Review grading/narrative layer is §5D's three new, additive tables** (`recommendation_leg_grade_events`/`recommendation_product_grade_events`/`recommendation_product_postgame_reviews`) — not this table, not repointed, not retrofitted. `outcome_summary` narrates recommendation performance, not wager settlement — it must not be treated as, or conflated with, a graded bet outcome. See §6's Stat Correction ↔ Bet Settlement Policy (v4.3) for the full separation requirement; that policy remains Phase 5 `verified_bets` scope, unaffected by §5D.
 
 ### `market_monitoring_events`
 ```sql

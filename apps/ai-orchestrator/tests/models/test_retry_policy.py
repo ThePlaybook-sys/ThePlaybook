@@ -111,6 +111,104 @@ async def test_malformed_output_exhausts_primary_then_falls_back():
     assert response.usage.attempt_count == 3  # 2 primary + 1 fallback
 
 
+# --- Decision BF: fallback-model provenance fix -----------------------
+
+
+@pytest.mark.asyncio
+async def test_bf_primary_succeeds_receives_and_records_primary_model():
+    """Proof 1: primary succeeds -> primary adapter receives
+    `primary_model`; persisted `(model_name, provider, used_fallback)`
+    reflects the primary, unaffected by `fallback_model` being set."""
+    primary = FakeModelAdapter(provider="anthropic", script=[ScriptedSuccess(raw_text="ok")])
+    fallback = FakeModelAdapter(provider="openai", script=[])
+    engine = RetryEngine()
+    response = await engine.execute(
+        primary=primary,
+        primary_provider="anthropic",
+        request=_request(model="claude-primary"),
+        fallback=fallback,
+        fallback_provider="openai",
+        fallback_model="gpt-fallback",
+    )
+    assert response.usage.model == "claude-primary"
+    assert response.usage.provider == "anthropic"
+    assert response.usage.used_fallback is False
+    assert fallback.call_count == 0  # never invoked -- primary succeeded first try
+
+
+@pytest.mark.asyncio
+async def test_bf_fallback_receives_fallback_model_not_primary_model():
+    """Proof 2: primary fails, fallback succeeds -> the fallback ADAPTER
+    is called with `fallback_model` (never `primary_model`), and the
+    persisted triple reflects the fallback truthfully. This is the exact
+    bug from Carry-Forward Gap 1: before the fix, `response.usage.model`
+    here would incorrectly read "claude-primary"."""
+    primary = FakeModelAdapter(
+        provider="anthropic", script=[ScriptedFailure(error=ModelAuthError("bad key"))]
+    )
+    fallback = FakeModelAdapter(provider="openai", script=[ScriptedSuccess(raw_text="ok")])
+    engine = RetryEngine()
+    response = await engine.execute(
+        primary=primary,
+        primary_provider="anthropic",
+        request=_request(model="claude-primary"),
+        fallback=fallback,
+        fallback_provider="openai",
+        fallback_model="gpt-fallback",
+    )
+    assert response.usage.model == "gpt-fallback"
+    assert response.usage.model != "claude-primary"
+    assert response.usage.provider == "openai"
+    assert response.usage.used_fallback is True
+
+
+@pytest.mark.asyncio
+async def test_bf_fallback_model_equal_to_primary_model_still_correct():
+    """Proof 3: when `primary_model == fallback_model` incidentally, the
+    fallback's recorded model must still come from the actual serving
+    adapter/model, not from an equality check against the primary --
+    proving the fix sources the field structurally, not by diffing."""
+    primary = FakeModelAdapter(
+        provider="anthropic", script=[ScriptedFailure(error=ModelAuthError("bad key"))]
+    )
+    fallback = FakeModelAdapter(provider="openai", script=[ScriptedSuccess(raw_text="ok")])
+    engine = RetryEngine()
+    response = await engine.execute(
+        primary=primary,
+        primary_provider="anthropic",
+        request=_request(model="shared-model-name"),
+        fallback=fallback,
+        fallback_provider="openai",
+        fallback_model="shared-model-name",
+    )
+    assert response.usage.model == "shared-model-name"
+    assert response.usage.provider == "openai"
+    assert response.usage.used_fallback is True
+
+
+@pytest.mark.asyncio
+async def test_bf_omitting_fallback_model_preserves_pre_fix_behavior():
+    """Proof 4 (no-regression): a caller that does not pass
+    `fallback_model` (e.g. an un-migrated future call site) gets the
+    exact pre-fix behavior -- the fallback candidate reuses `request`
+    unchanged -- rather than the fix silently changing behavior for
+    callers that never opted in."""
+    primary = FakeModelAdapter(
+        provider="anthropic", script=[ScriptedFailure(error=ModelAuthError("bad key"))]
+    )
+    fallback = FakeModelAdapter(provider="openai", script=[ScriptedSuccess(raw_text="ok")])
+    engine = RetryEngine()
+    response = await engine.execute(
+        primary=primary,
+        primary_provider="anthropic",
+        request=_request(model="claude-primary"),
+        fallback=fallback,
+        fallback_provider="openai",
+    )
+    assert response.usage.model == "claude-primary"
+    assert response.usage.used_fallback is True
+
+
 @pytest.mark.asyncio
 async def test_timeout_retries_within_budget_then_succeeds():
     primary = FakeModelAdapter(

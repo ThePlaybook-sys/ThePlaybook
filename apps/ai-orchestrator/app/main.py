@@ -13,6 +13,9 @@ from app.models.anthropic_adapter import AnthropicModelAdapter
 from app.models.openai_adapter import OpenAIModelAdapter
 from app.models.router import AdapterRegistry
 from app.features.strategy import EvaluatedCandidate, GameCandidates
+from app.features.grading import GRADING_VERSION
+from app.orchestration.postgame_grading import grade_game, grade_pending_bankroll_preservation_products
+from app.orchestration.postgame_review_narrative import generate_and_persist_postgame_review
 from app.orchestration.recommendation_worker import RecommendationWorkerError, run_game_recommendation
 from app.orchestration.strategy_finalize import finalize_slate_strategy
 from app.persistence.model_config import list_active_model_routing_rules, list_active_models
@@ -237,6 +240,126 @@ async def internal_finalize_strategy(payload: FinalizeStrategyRequest) -> Finali
         explanations_failed=sum(1 for s in all_explanation_statuses if s == "failed"),
         activation_snapshots_generated=sum(1 for s in all_snapshot_statuses if s == "generated"),
         activation_snapshots_failed=sum(1 for s in all_snapshot_statuses if s == "failed"),
+    )
+
+
+class RunPostgameGradingRequest(BaseModel):
+    """Milestone 5.4's Postgame Grading entry point request. `game_ids`
+    is whatever `apps/workers` already determined are grading-candidate
+    games (its own `games` read, mirroring the Recommendation Worker's
+    own eligibility-discovery-then-dispatch split) -- this endpoint never
+    discovers eligibility itself, only grades what it's told to look at.
+    A game not yet reconciliation-eligible is a safe, cheap no-op here
+    (see `app.orchestration.postgame_grading`), so `apps/workers` can
+    pass a generously-bounded candidate list without this endpoint
+    misgrading anything."""
+
+    game_ids: list[str]
+
+
+class LegGradingResponseItem(BaseModel):
+    leg_id: str
+    recommendation_product_id: str
+    status: str
+    outcome: str | None
+    error: str | None
+
+
+class ProductGradingResponseItem(BaseModel):
+    product_id: str
+    status: str
+    outcome: str | None
+
+
+class GameGradingResponseItem(BaseModel):
+    game_id: str
+    status: str
+    legs: list[LegGradingResponseItem]
+    no_bet_products: list[ProductGradingResponseItem]
+    products: list[ProductGradingResponseItem]
+
+
+class RunPostgameGradingResponse(BaseModel):
+    games: list[GameGradingResponseItem]
+    bankroll_preservation_products: list[ProductGradingResponseItem]
+    postgame_reviews_generated: int
+    postgame_reviews_failed: int
+    postgame_reviews_skipped: int
+
+
+@app.post(
+    "/v1/internal/postgame-grading/run",
+    dependencies=[Depends(require_internal_token)],
+    response_model=RunPostgameGradingResponse,
+)
+async def internal_run_postgame_grading(payload: RunPostgameGradingRequest) -> RunPostgameGradingResponse:
+    """Milestone 5.4's Postgame Review entry point -- reachable only via
+    `INTERNAL_SERVICE_TOKEN`, called by `apps/workers` once it has
+    discovered which `game_ids` are grading candidates (see
+    `app.orchestration.postgame_grading`'s own module docstring for the
+    reconciliation-eligibility mechanism this endpoint applies per
+    game). Grades every game's legs/no_bet products, rolls up any
+    leg-bearing product whose every leg is now terminally graded, sweeps
+    every `bankroll_preservation` product (unconditional, no game-data
+    dependency), then generates a Postgame Review narrative (Decision BU
+    -- `FakeModelAdapter` in dev/testing, real providers only once a real
+    `postgame_review_narrative` routing rule AND real API keys both
+    exist, neither of which this endpoint creates) for every
+    newly-graded, non-NOT_APPLICABLE product rollup."""
+    headers = supabase_client.auth_headers()
+    async with supabase_client.new_client(timeout=60.0) as client:
+        routing_rule_rows = await list_active_model_routing_rules(client, headers)
+        routing_rules = {row["task_type"]: row for row in routing_rule_rows}
+        model_rows = await list_active_models(client, headers)
+        model_providers = {row["model_name"]: row["provider"] for row in model_rows}
+        adapter_registry = _build_real_adapter_registry()
+
+        game_results = []
+        review_stats = {"generated": 0, "failed": 0, "skipped": 0}
+        for game_id in payload.game_ids:
+            result = await grade_game(client, headers, game_id=game_id)
+            for product in result.products:
+                if (
+                    product.status in ("created", "corrected")
+                    and product.outcome not in ("NOT_APPLICABLE", "PENDING_MISSING_DATA")
+                    and product.grade_event_id is not None
+                ):
+                    review = await generate_and_persist_postgame_review(
+                        client,
+                        headers,
+                        recommendation_product_id=product.product_id,
+                        product_grade_event_id=product.grade_event_id,
+                        grading_version=GRADING_VERSION,
+                        outcome=product.outcome,
+                        routing_rules=routing_rules,
+                        adapter_registry=adapter_registry,
+                        model_providers=model_providers,
+                    )
+                    if review.status == "generated":
+                        review_stats["generated"] += 1
+                    elif review.status == "failed":
+                        review_stats["failed"] += 1
+                    else:
+                        review_stats["skipped"] += 1
+            game_results.append(result)
+
+        bankroll_results = await grade_pending_bankroll_preservation_products(client, headers)
+
+    return RunPostgameGradingResponse(
+        games=[
+            GameGradingResponseItem(
+                game_id=g.game_id,
+                status=g.status,
+                legs=[LegGradingResponseItem(leg_id=l.leg_id, recommendation_product_id=l.recommendation_product_id, status=l.status, outcome=l.outcome, error=l.error) for l in g.legs],
+                no_bet_products=[ProductGradingResponseItem(product_id=p.product_id, status=p.status, outcome=p.outcome) for p in g.no_bet_products],
+                products=[ProductGradingResponseItem(product_id=p.product_id, status=p.status, outcome=p.outcome) for p in g.products],
+            )
+            for g in game_results
+        ],
+        bankroll_preservation_products=[ProductGradingResponseItem(product_id=p.product_id, status=p.status, outcome=p.outcome) for p in bankroll_results],
+        postgame_reviews_generated=review_stats["generated"],
+        postgame_reviews_failed=review_stats["failed"],
+        postgame_reviews_skipped=review_stats["skipped"],
     )
 
 

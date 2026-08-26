@@ -1,8 +1,8 @@
 # The Playbook — Volume 4
 ## AI Intelligence Architecture: Agents, Orchestration, Consensus, Explainability, Learning
 
-**Version:** v5.7
-**Last updated:** 2026-08-25
+**Version:** v5.8
+**Last updated:** 2026-08-27
 
 **v5.7 note (MINOR):** §9/§8 each gain an explicit logic-version identifier (Phase 5 Milestone 5.3, Time Machine): `app.features.strategy.STRATEGY_VERSION`/`app.features.explainability.EXPLAINABILITY_VERSION`, both `"v1"`, frozen respectively onto Volume 3 §5C's `recommendation_activation_snapshots.strategy_version` and §5B's `recommendation_product_explanations`/`recommendation_leg_explanations.explainability_version` — a sixth and seventh independent kind of version (alongside `prompt_version`/`agent_version`/`weight_applied`/model identity), since Strategy's qualification/ranking rules and Explainability's template logic can each change on their own schedule, independent of the AI committee's own versioning. Neither is a global "AI version" — Volume 3 §5's own five-separate-columns principle, applied twice more. See `CHANGELOG.md` v5.7 entry for full reasoning.
 **v5.6 note (MINOR):** §8 gains a note documenting Milestone 5.2's actual Deterministic V1 implementation against the original question table below — built in `app.features.explainability`/`app.orchestration.explainability` (ai-orchestrator), persisted to Volume 3 §5B's two new tables. No LLM narrative layer, no live model calls (`narrative_summary` reserved, unpopulated). One real correction to this section's original sourcing is disclosed inline: "why not another bet" is answered from the Strategy Engine's own deterministic rejection trace (§9, `RejectedCandidate`/`RejectionReason`), not a Public Betting Agent — no such agent exists in the implemented 12-agent committee. See `CHANGELOG.md` v5.6 entry for full reasoning.
@@ -434,29 +434,58 @@ A recommendation may therefore exist while its execution state is WAIT — "good
 
 ---
 
+## 9.6 Postgame Review Grading Engine (v5.8, Phase 5 Milestone 5.4, 2026-08-27)
+
+**Deterministic grading first, always (Decision BI) — the grading engine, never an LLM, decides WIN/LOSS/PUSH/VOID_NO_ACTION/PENDING_MISSING_DATA/NOT_APPLICABLE.** `app.features.grading` (`apps/ai-orchestrator`) is a pure function of two already-frozen/already-authoritative inputs — the leg's own `market_type`/`selection`/`point` (Volume 3 §5A, immutable by construction: no UPDATE path exists anywhere in this codebase for `recommendation_legs`) and the game's authoritative final facts (`games.final_score`, once reconciliation-eligible, below) — never current market information, never an LLM judgment call. `GRADING_VERSION` is frozen onto every grade event (Volume 3 §5D) and stamped independently of `POSTGAME_REVIEW_VERSION` (Decision BN/BO) — the deterministic rules and the narrative-generation logic evolve on separate timelines.
+
+**Supported markets today: moneyline, spread, total — deterministic push/win/loss rules, including the standard industry moneyline-tie-is-push rule.** `player_prop` is deliberately unsupported, not degraded (Decision BJ) — the grading dispatch already has a market-type branch reserved for it; a leg of that type is skipped entirely (no grade event written) rather than fabricating a settlement, exactly the "structurally extensible but inactive" treatment already given to other not-yet-built capabilities in this volume (§8.5, §9.5).
+
+**Reconciliation-eligibility is the actual grading-readiness condition, not `games.status = 'final'` alone (Decision BH).** The Postgame Ingestion Worker's own bounded reconciliation window (Volume 2 §8) can still correct final stats for up to 72 hours after finalization — grading a `final` game waits until that window has elapsed (`games.finalized_at + 72h`, the same final checkpoint the ingestion worker's own schedule already uses) before treating `final_score` as authoritative. `postponed`/`canceled` games grade immediately as `VOID_NO_ACTION` — no reconciliation process exists for them to wait on.
+
+**Per-leg, per-product grading (Decision BK) — `multiple_singles` is never treated as a parlay.** Each leg is graded independently, on its own game's own reconciliation timeline; a product-level rollup is computed only once every one of its legs has a terminal grade, and the rollup preserves every individual leg outcome (`leg_outcome_counts`) rather than collapsing them into a single win/loss. `no_bet` and `bankroll_preservation` are always `NOT_APPLICABLE` (Decisions BL/BM) — no Blueprint-approved rule exists yet for "was passing/abstaining retrospectively correct," so V1 does not invent one; the underlying candidate/game-decision data remains reconstructable for a future, explicitly-designed retrospective capability.
+
+**Append-only correction/regrade (Decision BP), enforced at the database, never solved with application-memory-only bookkeeping (Decision BQ).** A stat correction or grading-rule change never overwrites a historical grade — it inserts a new row referencing the one it supersedes, DB-idempotency-enforced via a partial unique index on `(parent_id, grading_version) WHERE is_correction = false` (Volume 3 §5D).
+
+**Postgame Review narrative (Decision BU) is strictly downstream of an already-persisted grade — the LLM cannot alter it, structurally, not by convention.** Execution order: authoritative reconciled result → deterministic grade → factual evidence/deltas → LLM narrative. The narrative model's own response contract (`PostgameReviewNarrativeOutput`) has exactly three string fields (`outcome_summary`/`why_it_won_or_lost`/`learning_notes`) — no field capable of representing a grade, EV, confidence, or historical Explainability value exists for it to populate. Routed through the same `ModelRouter`/`RetryEngine`/`AdapterRegistry` plumbing every committee agent already uses, gated on a `model_routing_rules` row for `task_type="postgame_review_narrative"` that does not exist yet (flagged as a required pre-live-narrative seed, same class of gap Milestone 4.8-6 closed for the 12 committee agents' own `prompt_registry` rows) — narrative generation is skipped, never defaulted to a guessed model, when that row is absent. `FakeModelAdapter` only through this milestone's own build and test suite; zero live OpenAI/Anthropic calls.
+
+**Causal attribution is explicitly bounded (Decision BS).** The narrative layer may describe factual deltas ("wind increased from the activation snapshot to kickoff," "the quarterback was ruled out") but must never assert unsupported causation ("the wind caused the loss"). `factual_deltas` itself is conservatively `None` in this milestone — no activation-vs-kickoff snapshot-diffing infrastructure was built — an honest absence, never an approximation.
+
+**Agent correctness (Decision BT) reuses this volume's own §4.1 `directional_agreement` three-state comparison verbatim** (`app.features.consensus.lean_factor`), applied against the REALIZED direction (derived from the already-computed grade: a WIN leg's realized direction is its own candidate direction; a LOSS leg's is the opposite) rather than a new/looser standard. An agent is never classified as wrong merely for disagreeing with the majority, having lower confidence, or the product losing overall — only a traceable comparison between that agent's own historical directional call and the realized outcome counts. Where no realized direction exists (push/void/pending), no agent is classified either way.
+
+**Closing Line Value (CLV) remains unavailable (Decision BR).** `agent_performance_scores.clv` exists as a nullable column, but no closing-price-capture mechanism exists in `odds_snapshots` today — this milestone does not approximate a closing line from an arbitrary snapshot; CLV stays `NULL` until a real Market Monitoring/closing-price capability is built.
+
+**Adaptive Agent Weighting boundary, unchanged from §6/§10 below (Decision BW).** This engine PRODUCES trustworthy historical grading evidence — it does not write `agents.current_weight`, does not populate `agent_performance_scores`, and does not activate the 200-sample guardrail. One open interpretation question is explicitly carried forward, not resolved here: what exactly counts as one "recommendation" toward the provisional 200-sample threshold (§6.1) under the modern Phase 5 product/leg architecture — a graded leg, a graded product, or the legacy Phase 4 cycle unit the roadmap's own guardrail text was originally written against.
+
+---
+
 ## 10. Continuous Learning Engine (Closes the Loop)
 
 ```
 games.status → 'final'
       │
       ▼
-worker-scheduled generates postgame_reviews (Volume 3 §7)
+is_reconciliation_complete? (Postgame Ingestion Worker, Volume 2 §8) --
+  the actual grading-readiness gate, not the raw status transition alone (§9.6)
       │
       ▼
-correct_agents / underperforming_agents identified per recommendation
+Postgame Review Grading Engine (§9.6) writes deterministic per-leg/per-product
+  grades (Volume 3 §5D) -- NOT the legacy postgame_reviews (Volume 3 §7, unbuilt)
       │
       ▼
-aggregated into agent_performance_scores over the evaluation window
+correct_agents / underperforming_agents identified per graded product (§9.6)
+      │
+      ▼
+aggregated into agent_performance_scores over the evaluation window (NOT YET BUILT)
       │
       ▼
 adaptive weighting algorithm (Section 6) updates agents.current_weight,
-  subject to sample-size and max-change guardrails
+  subject to sample-size and max-change guardrails (NOT YET BUILT)
       │
       ▼
 next recommendation cycle uses updated weights
 ```
 
-This is intentionally a slow, guarded loop — the master spec's "evaluate agents over thousands of recommendations... prevent overfitting" instruction is why every step above has a minimum-evidence gate before it's allowed to change live behavior. Speed is not the goal here; a system that reacts too quickly to short-term results is exactly the failure mode this section exists to prevent.
+**Status as of Milestone 5.4: the first two steps above are built and live-proven; every step from "aggregated into `agent_performance_scores`" onward remains explicitly unimplemented (Decision BW)** — Milestone 5.4 produces the evidence this loop will eventually consume, it does not close the loop itself. This is intentionally a slow, guarded loop once it is built — the master spec's "evaluate agents over thousands of recommendations... prevent overfitting" instruction is why every step above has a minimum-evidence gate before it's allowed to change live behavior. Speed is not the goal here; a system that reacts too quickly to short-term results is exactly the failure mode this section exists to prevent.
 
 ---
 

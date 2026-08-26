@@ -143,6 +143,7 @@ async def run_sequential_agent(
             request=request,
             fallback=fallback,
             fallback_provider=decision.fallback_provider,
+            fallback_model=decision.fallback_model,
         )
     except Exception as exc:  # noqa: BLE001 -- deliberate: isolate this one agent, never abort the chain
         return SequentialAgentRunResult(agent_name=agent.agent_name, status="failed", error=str(exc))
