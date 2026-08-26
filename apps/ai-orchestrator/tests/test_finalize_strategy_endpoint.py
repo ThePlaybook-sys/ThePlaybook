@@ -1,13 +1,17 @@
 """Tests for POST /v1/internal/recommendation-worker/finalize-strategy
-(Milestone 5.1/5.2) -- the Strategy Engine's slate-level HTTP entry point,
-now also driving Explainability generation immediately afterward.
+(Milestone 5.1/5.2/5.3) -- the Strategy Engine's slate-level HTTP entry
+point, now also driving Explainability and Time Machine activation-
+snapshot generation immediately afterward.
 `app.features.strategy`/`app.persistence.recommendation_products`/
-`app.features.explainability`/`app.orchestration.explainability` are
-thoroughly tested directly; these tests cover only what's specific to
-this HTTP boundary: auth, request/response shape, and that the pure
-decision + persistence + explanation pieces are actually wired together
+`app.features.explainability`/`app.orchestration.explainability`/
+`app.orchestration.time_machine` are thoroughly tested directly; these
+tests cover only what's specific to this HTTP boundary: auth,
+request/response shape, and that the pure decision + persistence +
+explanation + activation-snapshot pieces are actually wired together
 correctly end to end."""
 from __future__ import annotations
+
+import json
 
 import httpx
 import respx
@@ -64,6 +68,26 @@ def _mock_explanation_reads():
     respx.post(f"{SUPABASE_URL}/rest/v1/recommendation_leg_explanations").mock(
         return_value=httpx.Response(201, json=[{"id": "leg-expl-1"}])
     )
+    _mock_time_machine_writes()
+
+
+def _mock_time_machine_writes():
+    """Everything `app.orchestration.time_machine` writes, mocked to
+    succeed -- these tests exist to prove the wiring succeeds and
+    produces the right counts, not to exercise every correlation branch
+    (covered directly in `tests/orchestration/test_time_machine.py`)."""
+    respx.post(f"{SUPABASE_URL}/rest/v1/recommendation_activation_snapshots").mock(
+        return_value=httpx.Response(201, json=[{"id": "snap-1"}])
+    )
+    respx.post(f"{SUPABASE_URL}/rest/v1/recommendation_product_lifecycle_events").mock(
+        return_value=httpx.Response(201, json=[{"id": "event-1"}])
+    )
+    respx.post(f"{SUPABASE_URL}/rest/v1/recommendation_activation_snapshot_legs").mock(
+        return_value=httpx.Response(201, json=[{"id": "snap-leg-1"}])
+    )
+    respx.post(f"{SUPABASE_URL}/rest/v1/recommendation_activation_snapshot_source_products").mock(
+        return_value=httpx.Response(201, json=[{"id": "snap-src-1"}])
+    )
 
 
 def test_finalize_strategy_requires_internal_token(monkeypatch):
@@ -96,6 +120,8 @@ def test_finalize_strategy_zero_games_is_bankroll_preservation(monkeypatch):
     assert body["no_bet_game_count"] == 0
     assert body["explanations_generated"] == 1  # the one bankroll_preservation product
     assert body["explanations_failed"] == 0
+    assert body["activation_snapshots_generated"] == 1  # the one bankroll_preservation product's snapshot
+    assert body["activation_snapshots_failed"] == 0
 
 
 @respx.mock
@@ -122,6 +148,8 @@ def test_finalize_strategy_one_qualifying_candidate_is_single(monkeypatch):
     assert body["no_bet_game_count"] == 0
     assert body["explanations_generated"] == 2  # 1 product + 1 leg
     assert body["explanations_failed"] == 0
+    assert body["activation_snapshots_generated"] == 2  # 1 product snapshot + 1 snapshot-leg row
+    assert body["activation_snapshots_failed"] == 0
 
 
 @respx.mock
@@ -152,6 +180,8 @@ def test_finalize_strategy_non_qualifying_candidate_is_no_bet(monkeypatch):
     assert body["no_bet_game_count"] == 1
     assert body["explanations_generated"] == 2  # the no_bet product + the bankroll_preservation product
     assert body["explanations_failed"] == 0
+    assert body["activation_snapshots_generated"] == 2  # the no_bet product's snapshot + the bankroll_preservation product's snapshot
+    assert body["activation_snapshots_failed"] == 0
 
 
 @respx.mock
@@ -164,6 +194,12 @@ def test_finalize_strategy_isolates_explanation_failure_from_the_response(monkey
     respx.post(f"{SUPABASE_URL}/rest/v1/rpc/next_display_id_counter").mock(return_value=httpx.Response(200, json=1))
     respx.post(f"{SUPABASE_URL}/rest/v1/recommendation_products").mock(return_value=httpx.Response(201, json=[{"id": "prod-1"}]))
     respx.post(f"{SUPABASE_URL}/rest/v1/recommendation_product_explanations").mock(return_value=httpx.Response(500, text="db error"))
+    snapshot_route = respx.post(f"{SUPABASE_URL}/rest/v1/recommendation_activation_snapshots").mock(
+        return_value=httpx.Response(201, json=[{"id": "snap-1"}])
+    )
+    respx.post(f"{SUPABASE_URL}/rest/v1/recommendation_product_lifecycle_events").mock(
+        return_value=httpx.Response(201, json=[{"id": "event-1"}])
+    )
 
     response = client.post(
         "/v1/internal/recommendation-worker/finalize-strategy",
@@ -177,3 +213,11 @@ def test_finalize_strategy_isolates_explanation_failure_from_the_response(monkey
     assert body["recommendation_product_ids"] == ["prod-1"]
     assert body["explanations_generated"] == 0
     assert body["explanations_failed"] == 1
+    # The activation snapshot must still succeed even though its
+    # explanation failed (Decision AP -- `recommendation_product_
+    # explanation_id` is nullable precisely so an already-isolated
+    # explanation failure never blocks activation-snapshot creation).
+    assert body["activation_snapshots_generated"] == 1
+    assert body["activation_snapshots_failed"] == 0
+    sent = json.loads(snapshot_route.calls.last.request.content)
+    assert sent["recommendation_product_explanation_id"] is None

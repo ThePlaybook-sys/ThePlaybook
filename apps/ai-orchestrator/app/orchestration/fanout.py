@@ -60,6 +60,13 @@ class AgentRunResult:
     error: str | None = None
     prompt_name: str | None = None
     prompt_version: int | None = None
+    # Milestone 5.3 (Decision AV) -- the ACTUAL model/provider that
+    # produced this output, from `ModelResponse.usage`, never the
+    # requested routing rule's `primary_model`. `None` only for a failed
+    # run (no response was ever produced).
+    model_name: str | None = None
+    provider: str | None = None
+    used_fallback: bool | None = None
 
 
 @dataclass
@@ -122,6 +129,9 @@ async def run_agent(
         output=response.parsed,
         prompt_name=resolved_prompt.prompt_name,
         prompt_version=resolved_prompt.version,
+        model_name=response.usage.model,
+        provider=response.usage.provider,
+        used_fallback=response.usage.used_fallback,
     )
 
 

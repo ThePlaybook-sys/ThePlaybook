@@ -94,6 +94,23 @@ class ReviewAgentRunResult:
     error: str | None = None
     prompt_name: str | None = None
     prompt_version: int | None = None
+    # Milestone 5.3 (Decision AV) -- see `app.orchestration.fanout.
+    # AgentRunResult`'s identical fields for the full rationale.
+    model_name: str | None = None
+    provider: str | None = None
+    used_fallback: bool | None = None
+
+
+def _model_routing_record(result: ReviewAgentRunResult) -> dict:
+    """Milestone 5.3 (Decision AV) fix: `consensus_snapshots.model_routing_used`
+    previously recorded `routing_rules[...]["primary_model"]` -- the
+    REQUESTED routing configuration, not what actually produced the
+    review agent's output. If the primary failed and a fallback
+    responded, that fact was silently lost. Records the ACTUAL
+    `model_name`/`provider`/`used_fallback` from `ReviewAgentRunResult`
+    instead -- `None`s for a failed run, since no response was ever
+    produced (never fabricated as if the primary had succeeded)."""
+    return {"model": result.model_name, "provider": result.provider, "used_fallback": result.used_fallback}
 
 
 async def _run_review_agent(
@@ -131,6 +148,9 @@ async def _run_review_agent(
         output=response.parsed,
         prompt_name=resolved_prompt.prompt_name,
         prompt_version=resolved_prompt.version,
+        model_name=response.usage.model,
+        provider=response.usage.provider,
+        used_fallback=response.usage.used_fallback,
     )
 
 
@@ -239,7 +259,7 @@ async def run_shared_consensus(
         meta_result=meta_result,
         review_context=review_context,
         after_meta_confidence=after_meta,
-        model_routing_used={meta_agent.agent_name: routing_rules[meta_agent.task_type]["primary_model"]},
+        model_routing_used={meta_agent.agent_name: _model_routing_record(meta_result)},
     )
 
 
@@ -296,7 +316,7 @@ async def run_elite_reconciliation(
         triggered=True,
         elite_result=elite_result,
         final_aggregate_confidence=final_aggregate_confidence,
-        model_routing_used={elite_agent.agent_name: routing_rules[elite_agent.task_type]["primary_model"]},
+        model_routing_used={elite_agent.agent_name: _model_routing_record(elite_result)},
     )
 
 

@@ -157,6 +157,10 @@ async def test_computed_consensus_full_flow_persists_expected_values():
     assert sent["final_aggregate_confidence"] == pytest.approx(0.546)
     assert sent["second_pass_triggered"] is False
     assert sent["participation_metadata"]["fan_out_status"] == "full"
+    # Milestone 5.3 (Decision AV) -- model_routing_used now records the
+    # ACTUAL model/provider that produced Meta Agent's output, never just
+    # the routing rule's requested primary_model.
+    assert sent["model_routing_used"] == {"meta_agent": {"model": "claude-sonnet-5", "provider": "anthropic", "used_fallback": False}}
 
 
 @pytest.mark.asyncio

@@ -1,9 +1,10 @@
 # The Playbook — Volume 3
 ## Database Architecture: Tables, Relationships, Indexes, Triggers, Migrations, RLS
 
-**Version:** v4.20
+**Version:** v4.21
 **Last updated:** 2026-08-25
 
+**v4.21 note (MINOR):** §5B gains a new §5C — `recommendation_activation_snapshots`/`_legs`/`_source_products` + `recommendation_product_lifecycle_events` (Phase 5 Milestone 5.3, Time Machine) — an additive activation manifest that composes already-frozen Milestone 5.1/5.2 rows by FK, never duplicating odds/EV/confidence/explanation content a second time. The legacy `recommendation_snapshots` (§5, Phase 1) is confirmed unfit for the Phase 5 product/leg layer and is left completely untouched. Two real, live-verified provenance gaps found during the Milestone 5.3 inspection are also closed: `consensus_snapshots` gains the append-only `BEFORE UPDATE` trigger every sibling table already had; `recommendation_agent_outputs` gains nullable `model_name`/`provider`/`used_fallback` columns recording the ACTUAL model/provider that produced each output (never the requested routing rule). `recommendation_product_explanations`/`recommendation_leg_explanations` gain `explainability_version`. See `CHANGELOG.md` v4.21 entry for full reasoning.
 **v4.20 note (MINOR):** §5A gains a new §5B — `recommendation_product_explanations`/`recommendation_leg_explanations` (Phase 5 Milestone 5.2, Deterministic V1) — two new additive tables giving every `recommendation_products`/`recommendation_legs` row exactly one, ever, append-only explanation. `explainability_payloads` (§5, Phase 1) is left completely untouched: not repointed, not retrofitted, not deleted, its existing row not migrated — its sole FK target (`recommendations.id`) has no path to the Phase 5 product layer, and it carries no append-only protection at all. See `CHANGELOG.md` v4.20 entry for full reasoning.
 **v4.17 note (MINOR):** New table `master_refresh_runs` (Milestone 4.9, 2026-08-25) — the durable bridge between "Master Refresh completed" and "the Recommendation Worker may safely process this slate," created before work begins and finalized once with the actual outcome (`running`/`success`/`partial`/`failed`, mirroring `MasterRefreshResult.status` exactly). `recommendations` gains `correlation_id text unique`, nullable and backward-compatible — the crash-safe idempotency identity flagged as an open gap since Milestone 4.5, now resolved: a retried Recommendation Worker call against the same `(master_refresh_run_id, game_id)` pair recovers the same row via upsert rather than creating a duplicate. See `CHANGELOG.md` v4.17 entry for full reasoning.
 **v4.16 note (MINOR):** `recommendation_agent_outputs` gains two nullable columns, `prompt_name`/`prompt_version` (Milestone 4.8, Phase 4 Closeout Remediation, 2026-08-24), plus a composite FK to `prompt_registry(prompt_name, version)` — the canonical per-agent-output prompt provenance, since `recommendations.prompt_version` (§5) cannot truthfully represent independently-versioned per-agent prompts once `prompt_registry` became the production source of agent system prompts. `recommendations.prompt_version` itself is unchanged in shape but is now documented as legacy/non-authoritative for per-agent reconstruction — see both sections below. `prompt_registry` also gains a partial unique index enforcing at most one active version per `prompt_name`. See `CHANGELOG.md` v4.16 entry for full reasoning.
@@ -779,6 +780,75 @@ Both tables enforce **exactly one explanation row per product/leg, ever** — `U
 **Shared data, not per-user** — same "RLS enabled, no select policy, service-role only, consumed through the API Gateway" convention already applied to `recommendation_agent_outputs`/`consensus_snapshots`/`recommendation_legs`.
 
 **Known V1 scope boundary, not a fabrication risk:** the approved rejection-reason vocabulary includes `UNSUPPORTED_MARKET_TYPE`/`PARLAY_CAPABILITY_UNAVAILABLE` as future-extensible values, but neither is wired into any explanation output yet — candidate generation already excludes prop markets before they ever reach the Strategy Engine, and parlay candidates are never generated at all, so no candidate currently reaches Strategy that would produce either rejection. Adding those constants without a real code path behind them would be exactly the kind of invented category this module's own docstring forbids; they remain reserved, unused vocabulary until a real condition exists to populate them.
+
+---
+
+## 5C. Phase 5 Time Machine Activation Snapshots (v5.2, Phase 5 Milestone 5.3, 2026-08-25)
+
+**Resolves the same load-bearing conflict §5A resolved for the product layer, one level up: the legacy `recommendation_snapshots` (§5, Phase 1) is one row per Phase 4 `recommendations.id`, giant JSONB blobs, `ON DELETE CASCADE` from a soft-deletable parent, zero rows, zero code — confirmed by direct inspection to be exactly as unbuilt as `explainability_payloads` and structurally unable to represent a slate-scoped `multiple_singles`/`bankroll_preservation` product, a `no_bet` product, multiple legs, or Explainability provenance.** Resolution (Mac's explicit decision, Decisions AO-BE): leave `recommendation_snapshots` completely untouched as legacy, and add a MANIFEST — not another duplicate-blob snapshot table — that composes already-frozen §5A/§5B rows by FK.
+
+### `recommendation_activation_snapshots`
+```sql
+create table recommendation_activation_snapshots (
+  id uuid primary key default uuid_generate_v7(),
+  recommendation_product_id uuid not null unique references recommendation_products(id) on delete cascade,
+  activated_at timestamptz not null default now(),
+  strategy_version text not null,
+  recommendation_product_explanation_id uuid references recommendation_product_explanations(id),
+  created_at timestamptz not null default now()
+);
+```
+One row per `recommendation_products` row, ever (`UNIQUE` + append-only `BEFORE UPDATE` trigger). **Composes, never duplicates** — no odds/EV/confidence/explanation-text value is copied here; those already live, frozen, on `recommendation_legs`/`recommendation_product_explanations`/`recommendation_leg_explanations` since Milestones 5.1/5.2. `strategy_version` (Decision AW) freezes which `app.features.strategy` logic version decided this product's shape — a sixth, independent kind of version alongside `prompt_version`/`agent_version`/`weight_applied`'s own frozen-copy pattern (§5's "five separate versioning columns" principle, extended). `recommendation_product_explanation_id` is nullable — Milestone 5.2's own per-unit explanation-generation failure must never block activation-snapshot creation for the underlying Strategy decision that already succeeded.
+
+### `recommendation_activation_snapshot_legs`
+```sql
+create table recommendation_activation_snapshot_legs (
+  id uuid primary key default uuid_generate_v7(),
+  activation_snapshot_id uuid not null references recommendation_activation_snapshots(id) on delete cascade,
+  recommendation_leg_id uuid not null references recommendation_legs(id),
+  leg_order integer not null check (leg_order > 0),
+  created_at timestamptz not null default now(),
+  unique (activation_snapshot_id, recommendation_leg_id),
+  unique (activation_snapshot_id, leg_order)
+);
+```
+A normalized join table, deliberately never an array/JSON column (Decision AO — this project has consistently rejected array/JSON representations of first-class relational identity) — freezes exactly which legs belonged to a `single`/`multiple_singles` product at activation, and their activation-time presentation order. Reconstruction reads this ordered by `leg_order`; it never re-derives historical ordering by rerunning Strategy's current ranking logic. Append-only.
+
+### `recommendation_activation_snapshot_source_products`
+```sql
+create table recommendation_activation_snapshot_source_products (
+  id uuid primary key default uuid_generate_v7(),
+  activation_snapshot_id uuid not null references recommendation_activation_snapshots(id) on delete cascade,
+  source_recommendation_product_id uuid not null references recommendation_products(id),
+  created_at timestamptz not null default now(),
+  unique (activation_snapshot_id, source_recommendation_product_id)
+);
+```
+For a `bankroll_preservation` activation, freezes the exact per-game `no_bet` products that constituted that slate-level decision (Decision AR) — deliberately not left to a future reader to rediscover via `master_refresh_run_id` alone, which could become historically ambiguous if more products are later associated with the same run. This is historical composition/provenance, not betting-leg identity — no fake wager legs are ever created for either `no_bet` or `bankroll_preservation` (unchanged since §5A). Append-only.
+
+### `recommendation_product_lifecycle_events`
+```sql
+create table recommendation_product_lifecycle_events (
+  id uuid primary key default uuid_generate_v7(),
+  recommendation_product_id uuid not null references recommendation_products(id) on delete cascade,
+  event_type text not null check (event_type in ('ACTIVATED', 'WITHDRAWN', 'SOFT_DELETED')),
+  event_timestamp timestamptz not null default now(),
+  reason text,
+  created_at timestamptz not null default now()
+);
+create index idx_recommendation_product_lifecycle_events_product on recommendation_product_lifecycle_events (recommendation_product_id, event_timestamp);
+```
+An append-only EVENT LOG, not a "current state only" column set (Decision AZ) — `recommendation_products.status`/`.withdrawn_at`/`.withdrawal_reason` (§5A) already track the current lifecycle state, but preserve only the LATEST value if a product were ever withdrawn more than once; this table preserves the full history of every transition, live-proven to allow multiple events per product without any uniqueness conflict. Only the lifecycle states that already exist in the current product model — explicitly NOT the future `BET NOW`/`WAIT`/`PASS`/`LINE LOST` execution states (Volume 4 §9.5, not yet implemented, Decision BE) — no speculative event values are reserved ahead of that capability's own future implementation. Append-only.
+
+**Two real provenance gaps found during the Milestone 5.3 inspection, closed here rather than knowingly carried into live-model operation (Decisions AT/AV):**
+- **`consensus_snapshots` gains the append-only `BEFORE UPDATE` trigger** every sibling table in the historical chain already had (`recommendation_agent_outputs`, `recommendation_legs`, `recommendation_products`, both explanation tables) — a real, live-verified gap: this table had no DB-level append-only enforcement at all, convention-only, despite the Time Machine referencing it as first-class historical evidence (`recommendation_legs.consensus_snapshot_id`).
+- **`recommendation_agent_outputs` gains nullable `model_name text`, `provider text`, `used_fallback boolean`** — the ACTUAL model/provider that produced each output (from `ModelResponse.usage`), never merely "the routing rule currently says model X." Historical rows written before this migration remain `NULL` forever — never backfilled with a guess. `apps/ai-orchestrator`'s `consensus_snapshots.model_routing_used` jsonb value shape also corrected from a bare requested-model string to `{"model", "provider", "used_fallback"}` reflecting the actual responding agent call, for the same reason.
+
+**`recommendation_product_explanations`/`recommendation_leg_explanations` (§5B) each gain `explainability_version text not null default 'v1'`** (Decision AX) — frozen directly on the actual explanation rows, distinguishing "same evidence, same explanation algorithm" from "same evidence, the algorithm changed" for any historical explanation. Always set explicitly by the application at insert time; the database default is a defensive backstop only, live-verified to reject an explicit `NULL`.
+
+**A genuine, disclosed architecture gap found but NOT fixed here (out of Milestone 5.3's authorized scope):** `app.models.retry_policy.RetryEngine.execute` is called with a single `ModelRequest` shared by both the primary and fallback attempts — there is no mechanism to swap in the fallback's own model name when a fallback is actually used. Both real adapters send `request.model` literally as the provider API's model parameter, so a real fallback call today would ask the fallback provider to serve the primary's model name. Invisible until Milestone 5.3's own new tests exercised a real fallback scenario for the first time — every model call in this codebase to date has used `FakeModelAdapter`, which never validates the model string it's handed, so this has had zero live impact. `used_fallback` is still correctly recorded (it comes from the retry engine's own bookkeeping); `model_name` in that one scenario is provably wrong. Flagged for a dedicated future fix (Milestone 4.3's `RetryEngine`/`app.orchestration.fanout`/`sequential`/`consensus`'s shared `ModelRequest`-building pattern), not silently worked around.
+
+**Immutability/cascade invariant, documented as a Time Machine assumption rather than changed:** `recommendations` (Phase 4) → `recommendation_agent_outputs`/`consensus_snapshots` remain `ON DELETE CASCADE` (Decision AU, unchanged from Phase 4) — no physical-delete application code path exists anywhere in this codebase (confirmed by a full grep; the one `.delete()` call anywhere is `apps/sports-intel-layer/app/demo/reset.py`, hard-isolated to the `demo` Supabase project and touching none of these tables), and the Phase 5 layer's own `NO ACTION` FKs from `recommendation_products`/`recommendation_legs` to `recommendations` already practically block deleting an analysis cycle a Phase 5 product still references. If future work ever introduces real deletion of a `recommendations` row, this cascade behavior must be re-inspected before that capability is allowed.
 
 ---
 

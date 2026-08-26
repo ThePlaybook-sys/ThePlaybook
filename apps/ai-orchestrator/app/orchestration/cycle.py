@@ -108,6 +108,9 @@ async def run_recommendation_cycle(
             output=result.output,
             prompt_name=result.prompt_name,
             prompt_version=result.prompt_version,
+            model_name=result.model_name,
+            provider=result.provider,
+            used_fallback=result.used_fallback,
         )
 
     return recommendation_id, fan_out_result
@@ -196,6 +199,9 @@ async def run_candidate_evaluation(
             agent_confidence=agent_confidence,
             prompt_name=result.prompt_name,
             prompt_version=result.prompt_version,
+            model_name=result.model_name,
+            provider=result.provider,
+            used_fallback=result.used_fallback,
         )
 
     return chain_result
@@ -262,6 +268,9 @@ async def run_bankroll_coach_evaluation(
             agent_confidence=result.result.output.confidence,
             prompt_name=result.result.prompt_name,
             prompt_version=result.result.prompt_version,
+            model_name=result.result.model_name,
+            provider=result.result.provider,
+            used_fallback=result.result.used_fallback,
         )
 
     return result

@@ -150,6 +150,9 @@ async def persist_agent_output(
     output: AgentOutput,
     prompt_name: str | None = None,
     prompt_version: int | None = None,
+    model_name: str | None = None,
+    provider: str | None = None,
+    used_fallback: bool | None = None,
 ) -> None:
     """Persists exactly one `recommendation_agent_outputs` row for a
     successful agent output. Never called for a failed agent -- callers
@@ -160,7 +163,12 @@ async def persist_agent_output(
     prompt identity the caller's orchestration layer used for this
     agent's system prompt -- `None` only for a caller that genuinely has
     none (there is no other legitimate reason to omit them for a real
-    agent run)."""
+    agent run). `model_name`/`provider`/`used_fallback` (Milestone 5.3,
+    Decision AV) are the ACTUAL model/provider that produced this output
+    (`AgentRunResult.model_name`/`.provider`/`.used_fallback`, sourced
+    from `ModelResponse.usage`) -- never the routing rule's requested
+    `primary_model`. `None` for a caller with no such data (e.g. a test
+    fixture predating this milestone) -- never inferred or guessed."""
     agent = await resolve_agent(client, headers, agent_name=agent_name)
     payload = {
         "recommendation_id": recommendation_id,
@@ -170,6 +178,9 @@ async def persist_agent_output(
         "weight_applied": agent["current_weight"],
         "prompt_name": prompt_name,
         "prompt_version": prompt_version,
+        "model_name": model_name,
+        "provider": provider,
+        "used_fallback": used_fallback,
     }
     response = await client.post(
         "/rest/v1/recommendation_agent_outputs",
@@ -194,6 +205,9 @@ async def persist_candidate_agent_output(
     agent_confidence: float | None,
     prompt_name: str | None = None,
     prompt_version: int | None = None,
+    model_name: str | None = None,
+    provider: str | None = None,
+    used_fallback: bool | None = None,
 ) -> None:
     """Persists one candidate-level `recommendation_agent_outputs` row
     for the sequential Decision & Advisory chain (Milestone 4.6, Decision
@@ -209,7 +223,9 @@ async def persist_candidate_agent_output(
     agent_id, candidate_key)` row -- multiple evaluations of the same
     candidate may legitimately exist over time (Decision G, no
     uniqueness constraint approved). `prompt_name`/`prompt_version`
-    (Milestone 4.8): see `persist_agent_output`'s identical note."""
+    (Milestone 4.8): see `persist_agent_output`'s identical note.
+    `model_name`/`provider`/`used_fallback` (Milestone 5.3, Decision AV):
+    same note."""
     agent = await resolve_agent(client, headers, agent_name=agent_name)
     payload = {
         "recommendation_id": recommendation_id,
@@ -220,6 +236,9 @@ async def persist_candidate_agent_output(
         "candidate_key": candidate_key,
         "prompt_name": prompt_name,
         "prompt_version": prompt_version,
+        "model_name": model_name,
+        "provider": provider,
+        "used_fallback": used_fallback,
     }
     response = await client.post(
         "/rest/v1/recommendation_agent_outputs",

@@ -127,12 +127,14 @@ async def test_persist_product_explanation_sends_all_fields_and_returns_id():
             why_not_other_shapes="not other reason",
             rejected_alternatives=[{"candidate_key": "ck"}],
             data_limitations="limitations",
+            explainability_version="v1",
         )
     assert explanation_id == "expl-1"
     sent = json.loads(route.calls.last.request.content)
     assert sent["recommendation_product_id"] == "prod-1"
     assert sent["why_this_shape"] == "shape reason"
     assert sent["rejected_alternatives"] == [{"candidate_key": "ck"}]
+    assert sent["explainability_version"] == "v1"
     assert "narrative_summary" not in sent
 
 
@@ -152,6 +154,7 @@ async def test_persist_product_explanation_raises_on_error():
                 why_not_other_shapes=None,
                 rejected_alternatives=[],
                 data_limitations=None,
+                explainability_version="v1",
             )
 
 
@@ -175,12 +178,14 @@ async def test_persist_leg_explanation_sends_all_fields_and_returns_id():
             biggest_risks="risks",
             rejected_alternatives=[],
             would_change_mind_if=None,
+            explainability_version="v1",
         )
     assert explanation_id == "leg-expl-1"
     sent = json.loads(route.calls.last.request.content)
     assert sent["recommendation_leg_id"] == "leg-1"
     assert sent["contributing_agents"] == [{"agent_name": "a"}]
     assert sent["would_change_mind_if"] is None
+    assert sent["explainability_version"] == "v1"
 
 
 @pytest.mark.asyncio
@@ -201,4 +206,5 @@ async def test_persist_leg_explanation_raises_on_error():
                 biggest_risks="x",
                 rejected_alternatives=[],
                 would_change_mind_if=None,
+                explainability_version="v1",
             )

@@ -29,13 +29,23 @@ Explanation generation never raises out of this function (every
 product/leg failure is isolated and recorded in its own result, per
 `app.orchestration.explainability`'s own docstring) -- an explanation
 failure never un-persists or invalidates the Strategy decision that was
-already committed."""
+already committed.
+
+**Milestone 5.3 addition:** immediately after Explainability runs,
+`app.orchestration.time_machine.generate_activation_snapshots` runs
+against the same decision/explanation results -- extending the pipeline
+order once more (Phase 4 Analysis -> Strategy Engine -> Explainability ->
+Time Machine activation snapshot). Same never-raises, per-unit-isolated
+discipline as Explainability -- an activation-snapshot failure never
+un-persists or hides the already-committed Strategy decision or
+Explainability content."""
 from __future__ import annotations
 
 import httpx
 
 from app.features.strategy import GameCandidates, SlateStrategyResult, compute_strategy_decision
 from app.orchestration.explainability import ExplainabilityResult, generate_and_persist_explanations
+from app.orchestration.time_machine import TimeMachineResult, generate_activation_snapshots
 from app.persistence.recommendation_products import persist_strategy_decision
 
 
@@ -45,11 +55,12 @@ async def finalize_slate_strategy(
     *,
     master_refresh_run_id: str,
     games: list[GameCandidates],
-) -> tuple[SlateStrategyResult, list[str], ExplainabilityResult]:
+) -> tuple[SlateStrategyResult, list[str], ExplainabilityResult, TimeMachineResult]:
     """Computes and persists the Strategy Engine's decision for one whole
-    slate, then generates and persists its Explainability. Returns the
-    pure decision, the list of created `recommendation_products.id`
-    values (in write order), and the explanation generation result."""
+    slate, generates and persists its Explainability, then its Time
+    Machine activation snapshot. Returns the pure decision, the list of
+    created `recommendation_products.id` values (in write order), the
+    explanation generation result, and the activation-snapshot result."""
     decision = compute_strategy_decision(games)
     created_ids = await persist_strategy_decision(
         client, headers, master_refresh_run_id=master_refresh_run_id, decision=decision
@@ -57,4 +68,7 @@ async def finalize_slate_strategy(
     explainability_result = await generate_and_persist_explanations(
         client, headers, decision=decision, created_product_ids=created_ids
     )
-    return decision, created_ids, explainability_result
+    time_machine_result = await generate_activation_snapshots(
+        client, headers, decision=decision, created_product_ids=created_ids, explainability_result=explainability_result
+    )
+    return decision, created_ids, explainability_result, time_machine_result
