@@ -54,11 +54,24 @@ own token/cost fields (never fabricated from a failed attempt) --
 cost-tracking consumer needs to know "this recommendation cost N calls,
 not 1," without this engine inventing a cost number no attempt actually
 reported.
+
+**Milestone 5.4 pre-implementation fix (Decision BF):** `execute()`
+previously ran the fallback candidate against the exact same `request`
+object built for the primary -- meaning `request.model` (fixed to the
+caller's `decision.primary_model` before `execute()` is ever called) was
+sent to, and echoed back in `usage.model` by, the fallback adapter too.
+`provider`/`used_fallback` were never affected (both are set by this
+engine itself, from `provider_name`/`is_fallback`, never from the
+request) -- only `model_name` provenance was wrong under fallback. Fixed
+by accepting an explicit `fallback_model` and swapping it into a
+per-candidate request via `dataclasses.replace` immediately before that
+candidate's own attempts, rather than threading two separately-built
+`ModelRequest`s through every caller.
 """
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from app.models.base import ModelAdapter
 from app.models.circuit_breaker import CircuitBreaker, NoopCircuitBreaker
@@ -126,16 +139,23 @@ class RetryEngine:
         request: ModelRequest,
         fallback: ModelAdapter | None = None,
         fallback_provider: str | None = None,
+        fallback_model: str | None = None,
     ) -> ModelResponse:
+        """`fallback_model` (Decision BF): the model identity the fallback
+        PROVIDER should actually be asked for. `None` (a fallback-less
+        call, or a caller not yet updated) preserves the pre-fix behavior
+        of reusing `request.model` unchanged -- every caller that DOES
+        configure a fallback must pass its own `decision.fallback_model`
+        here, never leave this `None` while also passing `fallback=`."""
         start = self._clock()
         attempts: list[AttemptRecord] = []
 
-        for provider_name, adapter, is_fallback in self._candidates(
-            primary, primary_provider, fallback, fallback_provider
+        for provider_name, adapter, candidate_request, is_fallback in self._candidates(
+            primary, primary_provider, request, fallback, fallback_provider, fallback_model
         ):
             if not self._circuit_breaker.allow(provider_name):
                 continue
-            outcome = await self._run_against(adapter, provider_name, request, start, attempts)
+            outcome = await self._run_against(adapter, provider_name, candidate_request, start, attempts)
             if isinstance(outcome, ModelResponse):
                 outcome.usage.attempt_count = len(attempts)
                 outcome.usage.used_fallback = is_fallback
@@ -153,10 +173,18 @@ class RetryEngine:
         ) from _last_error(attempts)
 
     @staticmethod
-    def _candidates(primary, primary_provider, fallback, fallback_provider):
-        yield primary_provider, primary, False
+    def _candidates(primary, primary_provider, request, fallback, fallback_provider, fallback_model):
+        yield primary_provider, primary, request, False
         if fallback is not None:
-            yield fallback_provider, fallback, True
+            # Decision BF: the fallback candidate gets its OWN request,
+            # carrying the fallback's own model identity -- `request`
+            # itself (built by the caller for the primary) is never
+            # mutated or reused verbatim here. `fallback_model=None`
+            # (an un-migrated caller) falls back to the old, buggy-but-
+            # explicit behavior of reusing `request.model` rather than
+            # silently guessing.
+            fallback_request = replace(request, model=fallback_model) if fallback_model is not None else request
+            yield fallback_provider, fallback, fallback_request, True
 
     async def _run_against(
         self,

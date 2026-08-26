@@ -108,25 +108,19 @@ async def test_run_agent_success():
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_run_agent_used_fallback_flag_is_correct_even_though_model_name_is_not():
+async def test_run_agent_fallback_model_name_is_correct():
     """Milestone 5.3 (Decision AV) surfaced a genuine, pre-existing
-    Milestone 4.3 architecture gap, reported rather than silently fixed
-    here (out of Milestone 5.3's authorized scope): `RetryEngine.execute`
-    is called with a single `ModelRequest` shared by both the primary and
-    fallback attempts (`app.orchestration.fanout.run_agent` builds it once
-    with `model=decision.primary_model`) -- there is no mechanism to swap
-    in `decision.fallback_model` for the fallback candidate. Both real
-    adapters (`OpenAIModelAdapter`/`AnthropicModelAdapter`) send
-    `request.model` literally as the provider API's `model` parameter, so
-    a real fallback call would ask the FALLBACK provider to serve the
-    PRIMARY's model name -- invisible until now because every call in
-    this codebase has used `FakeModelAdapter`, which never validates the
-    model string it's handed. `used_fallback` (this milestone's own new
-    field) is still correctly `True` -- it comes from the retry engine's
-    own bookkeeping, not from `request.model` -- but `model_name` is
-    provably wrong in this scenario (echoes the primary's model, not the
-    fallback's), captured here exactly as it happens today rather than
-    asserting a corrected value this codebase doesn't yet produce."""
+    Milestone 4.3 architecture gap: `RetryEngine.execute` used to run the
+    fallback candidate against the exact same `ModelRequest` built for the
+    primary (`model=decision.primary_model`), so a real fallback call
+    would have asked the FALLBACK provider to serve the PRIMARY's model
+    name, and `model_name` provenance would echo the primary's model even
+    though the fallback actually served the response. Fixed under
+    Milestone 5.4's Decision BF (`app.models.retry_policy.RetryEngine`
+    now accepts `fallback_model` and swaps it into a per-candidate
+    request) -- this test asserts the corrected behavior; see
+    `tests/models/test_retry_policy.py`'s `test_bf_*` cases for the
+    engine-level proof."""
     from app.models.retry_policy import RetryEngine
 
     mock_prompt_registry_route(SUPABASE_URL)
@@ -148,8 +142,8 @@ async def test_run_agent_used_fallback_flag_is_correct_even_though_model_name_is
         )
     assert result.status == "success"
     assert result.used_fallback is True
-    assert result.provider == "anthropic"  # correct -- from the fallback adapter's own identity
-    assert result.model_name == "gpt-5"  # WRONG -- should be "claude-sonnet-5"; documents the gap above
+    assert result.provider == "anthropic"
+    assert result.model_name == "claude-sonnet-5"
 
 
 @pytest.mark.asyncio

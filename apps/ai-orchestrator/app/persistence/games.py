@@ -174,3 +174,34 @@ async def find_previous_final_game(
         )
     rows = response.json()
     return rows[0] if rows else None
+
+
+async def get_game_for_grading(client: httpx.AsyncClient, headers: dict, *, game_id: str) -> dict | None:
+    """Milestone 5.4 -- the widened `games` read the deterministic
+    grading engine (`app.features.grading`) needs: `home_team`/
+    `away_team` (selection matching), `status` (postponed/canceled ->
+    void; final -> gradeable once reconciliation-eligible),
+    `final_score` (the authoritative result), and `finalized_at` (the
+    durable anchor `app.orchestration.postgame_grading` uses to decide
+    reconciliation-eligibility -- see that module's own docstring for
+    why `finalized_at + RECONCILIATION_WINDOW_HOURS` is used instead of
+    the Postgame Worker's own in-memory `checks_done` state, which
+    cannot be read from a separate process/service).
+
+    Separate from `get_game` above (Milestone 4.1/4.2's pregame-
+    eligibility read) rather than widening that function's own select
+    list -- `get_game` is frozen, already-tested Phase 4 code with its
+    own narrower, already-correct contract; grading is a new, unrelated
+    consumer with its own field needs."""
+    response = await client.get(
+        "/rest/v1/games",
+        params={
+            "id": f"eq.{game_id}",
+            "select": "id,status,home_team,away_team,final_score,finalized_at",
+        },
+        headers=headers,
+    )
+    if response.status_code != 200:
+        raise GamesReadError(f"failed to read game for grading {game_id}: {response.status_code} {response.text}")
+    rows = response.json()
+    return rows[0] if rows else None

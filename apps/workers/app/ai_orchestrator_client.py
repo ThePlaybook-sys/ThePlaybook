@@ -86,3 +86,32 @@ async def finalize_slate_strategy(
             f"ai-orchestrator finalize-strategy returned {response.status_code}: {response.text}"
         )
     return response.json()
+
+
+async def run_postgame_grading(
+    client: httpx.AsyncClient, *, base_url: str, internal_token: str, game_ids: list[str]
+) -> dict:
+    """Calls `POST {base_url}/v1/internal/postgame-grading/run` once per
+    Postgame Grading Worker cycle (Milestone 5.4) with every candidate
+    `game_ids` this service discovered (`app.persistence.games.
+    read_grading_candidate_game_ids`) -- `ai-orchestrator`'s own endpoint
+    decides per-game reconciliation-eligibility; this call is a single
+    batch dispatch, not one call per game (unlike `run_game_recommendation`,
+    which has a real per-game persistence/idempotency reason to be
+    separate calls -- grading has no such requirement, and one call keeps
+    this cheap for however many stale candidates the lookback window
+    finds). Raises `AiOrchestratorCallError` on any non-2xx response or
+    transport failure, exactly like every other call in this module."""
+    try:
+        response = await client.post(
+            f"{base_url}/v1/internal/postgame-grading/run",
+            json={"game_ids": game_ids},
+            headers={"X-Internal-Token": internal_token, "Content-Type": "application/json"},
+        )
+    except httpx.HTTPError as exc:
+        raise AiOrchestratorCallError(f"transport failure calling ai-orchestrator postgame-grading: {exc}") from exc
+    if response.status_code != 200:
+        raise AiOrchestratorCallError(
+            f"ai-orchestrator postgame-grading returned {response.status_code}: {response.text}"
+        )
+    return response.json()
