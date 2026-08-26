@@ -1,7 +1,7 @@
 # The Playbook — Volume 3
 ## Database Architecture: Tables, Relationships, Indexes, Triggers, Migrations, RLS
 
-**Version:** v4.22
+**Version:** v4.23
 **Last updated:** 2026-08-27
 
 **v4.21 note (MINOR):** §5B gains a new §5C — `recommendation_activation_snapshots`/`_legs`/`_source_products` + `recommendation_product_lifecycle_events` (Phase 5 Milestone 5.3, Time Machine) — an additive activation manifest that composes already-frozen Milestone 5.1/5.2 rows by FK, never duplicating odds/EV/confidence/explanation content a second time. The legacy `recommendation_snapshots` (§5, Phase 1) is confirmed unfit for the Phase 5 product/leg layer and is left completely untouched. Two real, live-verified provenance gaps found during the Milestone 5.3 inspection are also closed: `consensus_snapshots` gains the append-only `BEFORE UPDATE` trigger every sibling table already had; `recommendation_agent_outputs` gains nullable `model_name`/`provider`/`used_fallback` columns recording the ACTUAL model/provider that produced each output (never the requested routing rule). `recommendation_product_explanations`/`recommendation_leg_explanations` gain `explainability_version`. See `CHANGELOG.md` v4.21 entry for full reasoning.
@@ -922,6 +922,64 @@ Strictly downstream of an already-persisted `product_grade_event_id` (Decision B
 **Reconciliation-eligibility, the actual grading-readiness condition (Decision BH):** `games.status = 'final'` is necessary but not sufficient — the Postgame Ingestion Worker's own bounded reconciliation window (§4, Volume 2 §8) can still correct `team_stats`/`player_stats`/`final_score` for up to 72 hours after finalization. Grading a `final` game waits until `now >= games.finalized_at + 72h` (the same final checkpoint `app.workers.reconciliation.CHECKPOINT_OFFSETS` already uses, imported rather than duplicated as a new number) before treating its stats as authoritative. `postponed`/`canceled` games grade immediately as `VOID_NO_ACTION` — no reconciliation process exists for them to wait on. **A disclosed, not silently worked-around, limitation:** `is_reconciliation_complete`'s own `checks_done` state is held only in the Postgame Worker's calling process's memory (no DB persistence layer exists for it yet) — a separate service cannot read it directly, so this derived wall-clock condition is used instead. It does not verify every individual checkpoint actually ran successfully, only that enough time has passed for all of them to have had their chance.
 
 **Carry-Forward Gap 1 (from the Milestone 5.4 pre-implementation inspection), closed as a small corrective patch before this milestone's own build began:** `app.models.retry_policy.RetryEngine.execute` previously ran the fallback candidate against the exact same `ModelRequest` built for the primary, so a real fallback call would have asked the fallback provider to serve the primary's model name, and `model_name` provenance would echo the primary's model even when the fallback actually served the response. Fixed (Decision BF) by accepting an explicit `fallback_model` and swapping it into a per-candidate request via `dataclasses.replace` immediately before that candidate's own attempts. `provider`/`used_fallback` were never affected by this bug (both are set by the retry engine itself, never from the request).
+
+---
+
+## 5E. Phase 5 Adaptive Agent Weighting — Propose-Only V1 (v5.4, Phase 5 Milestone 5.5, 2026-08-27)
+
+**V1 is PROPOSE-ONLY.** Nothing in this section, or anywhere in Milestone 5.5, writes `agents.current_weight`. Every table and function here computes and preserves what a weight change WOULD be under Volume 4 §6.1's formula and guardrails — applying one to `agents.current_weight` is a separate, not-yet-authorized future capability. **IMPLEMENTATION VALIDATION vs. EMPIRICAL VALIDATION:** this layer is proven correct against deterministic fixture evidence (the same discipline as every other Phase 5 milestone). As of this milestone, zero real graded recommendations exist anywhere in this system (live-verified: `recommendation_products`/`recommendation_legs`/every grade-event table all had zero rows at inspection time) — a persisted proposal is never a claim of empirical validation, improved betting performance, or a real-world-deserved adjustment.
+
+**"200 recommendations" (§6.1's own guardrail text), reinterpreted for the Phase 5 architecture that didn't exist when §6 was written:** 200 CLASSIFIABLE GRADED-LEG OBSERVATIONS PER AGENT. An observation counts only when the leg has an authoritative deterministic grade (§5D) producing a realized `WIN`/`LOSS` direction, the agent's own game-level output for that leg's cycle succeeded, and the agent's `directional_lean` is on-axis (matches or opposes the realized direction) per §4.1's own `lean_factor` three-state rule. Never counted: failed agents, abstentions, off-axis outputs, `PUSH`/`VOID_NO_ACTION`/`PENDING_MISSING_DATA`/`NOT_APPLICABLE` legs, `no_bet`/`bankroll_preservation` products, or `player_prop` legs (never graded at all, §5D). `multiple_singles` contributes observations independently per leg, never per product.
+
+### `adaptive_weight_proposals`
+```sql
+create table adaptive_weight_proposals (
+  id uuid primary key default uuid_generate_v7(),
+  agent_id uuid not null references agents(id),
+  previous_weight numeric not null,
+  raw_proposed_weight numeric,
+  guardrail_adjusted_proposed_weight numeric,
+  applied_weight numeric,
+  evaluation_window_start date not null,
+  evaluation_window_end date not null,
+  sample_size integer not null,
+  roi numeric,
+  committee_average_roi numeric,
+  performance_delta numeric,
+  learning_rate numeric not null,
+  weighting_version text not null,
+  status text not null check (status in ('proposed', 'rejected_insufficient_sample')),
+  rejection_reason text,
+  is_correction boolean not null default false,
+  corrects_proposal_id uuid references adaptive_weight_proposals(id),
+  created_at timestamptz not null default now()
+);
+create unique index idx_adaptive_weight_proposals_original_per_window
+  on adaptive_weight_proposals (agent_id, evaluation_window_start, evaluation_window_end, weighting_version)
+  where is_correction = false;
+```
+One row per `(agent, window, weighting_version)` evaluation, append-only (`BEFORE UPDATE` trigger, live-proven). `applied_weight` is always `NULL` in V1 — reserved for a future, separately-authorized promotion mechanism; no code path anywhere sets it. `raw_proposed_weight`/`guardrail_adjusted_proposed_weight`/`roi`/`committee_average_roi`/`performance_delta` are `NULL`, never a fabricated zero, whenever `sample_size = 0` makes them undefined. `learning_rate` is frozen per row (Decision 9/28 — `0.25`, an APPROVED V1 DEFAULT, NOT EMPIRICALLY OPTIMIZED, SUBJECT TO FUTURE REVIEW) so a future change to the constant is historically traceable, never silently reinterpreting an old proposal. Idempotent-retry vs. legitimate-correction is DB-enforced via the same partial-unique-index pattern §5D's grade-event tables already established — a worker's create-or-get for the original evaluation of a window hits the index on retry; a genuine correction (new evidence from a Milestone 5.4 grade correction) is a separate `is_correction = true` row the index does not block.
+
+### `adaptive_weight_proposal_observations`
+```sql
+create table adaptive_weight_proposal_observations (
+  id uuid primary key default uuid_generate_v7(),
+  proposal_id uuid not null references adaptive_weight_proposals(id) on delete cascade,
+  recommendation_leg_grade_event_id uuid not null references recommendation_leg_grade_events(id),
+  classification text not null check (classification in ('correct', 'underperforming')),
+  directional_lean text not null,
+  notional_pnl numeric not null,
+  created_at timestamptz not null default now(),
+  unique (proposal_id, recommendation_leg_grade_event_id)
+);
+```
+Normalized evidence rows, never opaque JSON — one row per graded leg that actually counted toward a proposal, giving full provenance to reproduce any evaluation's evidence population by querying this table directly. `notional_pnl` uses a disclosed, symmetric pricing approximation (`app.features.adaptive_weighting`'s own module docstring has the full truth table): exact when the classification matches the recommended leg's own realized side (its frozen `decimal_odds`/outcome apply directly), a flat unit-stake proxy otherwise (the opposite side's real price is never known — there is no second, independently-priced line for it anywhere in this system). Append-only.
+
+**Market-type provenance preserved, segmentation NOT built (Decision 3).** Neither table has a `sport`/`market_type` column — V1 keeps the Blueprint's existing global-per-agent weight model exactly. `recommendation_legs.market_type` remains reachable from any `adaptive_weight_proposal_observations` row via its `recommendation_leg_grade_event_id` → `recommendation_leg_id` chain, so a future per-market-type weighting capability could be built without re-deriving lost provenance — this section does not redesign the weighting system around segmentation now, per explicit instruction.
+
+**CLV (Closing Line Value) has zero role here** — it remains unavailable (§5D/Decision BR, reaffirmed, not re-litigated) and is never read, computed, or persisted anywhere in this layer.
+
+**No absolute min/max weight bound, no cross-committee normalization, no cooldown period exist in the Blueprint** — none are invented here (Decisions 11/12/13); V1's only bounds are the ±10% per-evaluation cap and the two guardrails above. Idempotency (Decision 13) substitutes for a cooldown: identical evidence/window/version can never produce a duplicate proposal, but a genuinely new evaluation window or new evidence can always produce a new one.
 
 ---
 

@@ -1,9 +1,10 @@
 # The Playbook — Volume 4
 ## AI Intelligence Architecture: Agents, Orchestration, Consensus, Explainability, Learning
 
-**Version:** v5.8
+**Version:** v5.9
 **Last updated:** 2026-08-27
 
+**v5.9 note (MINOR):** §6.2/§10 document Milestone 5.5's Adaptive Agent Weighting V1 as a PROPOSE-ONLY implementation, built entirely against deterministic fixtures (`app.features.adaptive_weighting`/`app.orchestration.adaptive_weighting`, ai-orchestrator), persisted append-only to Volume 3 §5E's two new tables. "200 recommendations" is reinterpreted as 200 classifiable graded-leg observations per agent (only the 9 game-level voting agents can ever produce one); `learning_rate` is fixed at `0.25` as an approved initial product-policy default (`ADAPTIVE_WEIGHT_LEARNING_RATE`), not an empirically-optimized value; the ±10% single-adjustment guardrail is enforced independently of it; `agents.current_weight` is never automatically mutated — a future, separately-authorized promotion step is required to close the loop. The 2026-08-07 `agent_performance_scores` rows predate this architecture and carry no valid provenance; they are disregarded, not deleted. This is IMPLEMENTATION VALIDATION only — no real graded recommendation history exists yet, so EMPIRICAL VALIDATION (does the weighting actually improve committee performance) remains pending. See `CHANGELOG.md` v5.9 entry for full reasoning.
 **v5.7 note (MINOR):** §9/§8 each gain an explicit logic-version identifier (Phase 5 Milestone 5.3, Time Machine): `app.features.strategy.STRATEGY_VERSION`/`app.features.explainability.EXPLAINABILITY_VERSION`, both `"v1"`, frozen respectively onto Volume 3 §5C's `recommendation_activation_snapshots.strategy_version` and §5B's `recommendation_product_explanations`/`recommendation_leg_explanations.explainability_version` — a sixth and seventh independent kind of version (alongside `prompt_version`/`agent_version`/`weight_applied`/model identity), since Strategy's qualification/ranking rules and Explainability's template logic can each change on their own schedule, independent of the AI committee's own versioning. Neither is a global "AI version" — Volume 3 §5's own five-separate-columns principle, applied twice more. See `CHANGELOG.md` v5.7 entry for full reasoning.
 **v5.6 note (MINOR):** §8 gains a note documenting Milestone 5.2's actual Deterministic V1 implementation against the original question table below — built in `app.features.explainability`/`app.orchestration.explainability` (ai-orchestrator), persisted to Volume 3 §5B's two new tables. No LLM narrative layer, no live model calls (`narrative_summary` reserved, unpopulated). One real correction to this section's original sourcing is disclosed inline: "why not another bet" is answered from the Strategy Engine's own deterministic rejection trace (§9, `RejectedCandidate`/`RejectionReason`), not a Public Betting Agent — no such agent exists in the implemented 12-agent committee. See `CHANGELOG.md` v5.6 entry for full reasoning.
 **v5.3 note (MINOR):** §3.1/§4.3 document the shared-vs-personalized execution split built for the proactive Recommendation Worker (Milestone 4.9): Probability Modeling → EV → Risk Manager, consensus computation, and Meta Agent review each run exactly once per `(recommendation_id, candidate)` pair, shared across every user; Bankroll Coach runs separately, once per user who needs a stake number, reusing the shared chain's already-computed probability/EV; Elite second-pass reconciliation is computed at most once per candidate per cycle and reused across every Elite-tier subscriber, with entitlement/tier controlling only whether it triggers, never how many times the underlying evidence gets re-analyzed. Candidate generation (V1: home/away moneyline, home/away spread, over/under total, no player props, one reference sportsbook per game) is also documented here for the first time. See `CHANGELOG.md` v5.3 (Volume 4) entry for full reasoning.
@@ -257,7 +258,19 @@ Guardrails, all enforced before a weight update is allowed to write to `agents.c
 
 ### 6.2 Why Not Just Deactivate Underperforming Agents
 
-Resist the urge to remove a chronically low-weighted agent entirely. A near-zero weight already neutralizes its influence on the consensus; removing it destroys the historical record needed for `postgame_reviews.underperforming_agents` (Volume 3 §7) and any future re-evaluation if conditions change (e.g., a Referee Tendencies Agent that's been unreliable for years could become relevant again after a rule change). Weight toward zero, don't delete.
+Resist the urge to remove a chronically low-weighted agent entirely. A near-zero weight already neutralizes its influence on the consensus; removing it destroys the historical record needed for underperforming-agent evidence and any future re-evaluation if conditions change (e.g., a Referee Tendencies Agent that's been unreliable for years could become relevant again after a rule change). Weight toward zero, don't delete. **Corrected reference (Milestone 5.5, 2026-08-27):** the historical record this section originally cited, `postgame_reviews.underperforming_agents` (Volume 3 §7), is confirmed unbuilt/unfit legacy schema (Milestone 5.4) — the real historical record is `recommendation_product_postgame_reviews.underperforming_agents` (Volume 3 §5D) and, at the per-observation level, `adaptive_weight_proposal_observations.classification = 'underperforming'` (Volume 3 §5E).
+
+**Implementation note (v5.9, Milestone 5.5, Propose-Only V1, 2026-08-27).** Built in `app.features.adaptive_weighting` (pure) / `app.orchestration.adaptive_weighting`, persisted to Volume 3 §5E's `adaptive_weight_proposals`/`adaptive_weight_proposal_observations`. Mapping this section's own text onto what actually ships:
+
+- **"200 recommendations" (§6.1)** means 200 classifiable graded-leg observations PER AGENT — see §5E's full definition. This is a Phase-5-architecture reinterpretation of language written before the product/leg layer existed, not a contradiction of the original intent (sustained, per-agent statistical evidence before any influence changes).
+- **`learning_rate` (§6.1's formula) = `0.25`** — an APPROVED V1 PRODUCT-POLICY DEFAULT (`ADAPTIVE_WEIGHT_LEARNING_RATE`), NOT an empirically-derived or optimal value, frozen onto every persisted evaluation so a future change is historically traceable. Subject to future review once real graded evidence exists.
+- **Guardrails enforced exactly as specified**, application-enforced (the sample-size count and 90-day window are business-logic conditions no database constraint can express on their own) with a database-level append-only/idempotency backstop identical in design to Milestone 5.4's grading tables.
+- **V1 is PROPOSE-ONLY, not autonomous.** `agents.current_weight` is never written by this milestone — every evaluation persists what it WOULD propose (`raw_proposed_weight`, `guardrail_adjusted_proposed_weight`) with `applied_weight` always `NULL`. Applying a proposal is a separate, not-yet-authorized future capability, per explicit instruction not to assume "adaptive" implies "autonomous."
+- **Global weights only** — no per-sport or per-market-type segmentation is built, though `market_type` remains reachable from every persisted observation's own foreign-key chain for a future segmented-weighting capability to use without re-deriving lost provenance.
+- **CLV plays no role** — it remains unavailable (Milestone 5.4, reaffirmed).
+- **No LLM (Large Language Model) participates anywhere in this calculation** — ROI, sample counting, `performance_delta`, guardrail checks, and the proposed-weight formula are all pure arithmetic over already-graded, already-frozen evidence; confirmed by source-inspection regression test, not just by design intent.
+- **Confidence calibration (§5)'s single aggregate `confidence_calibration_score`** is deliberately left `NULL` in V1 — the bucket-level calculation itself is well-defined, but no Blueprint-authorized formula exists yet for collapsing per-bucket calibration into the one scalar column requires; inventing one was explicitly out of scope for this milestone.
+- **Empirical validation remains pending.** Zero real graded recommendations exist in this system as of this milestone (live-verified) — every proposal this engine can currently produce is proven correct against deterministic fixtures only, never described as statistically proven, optimal, or profit-maximizing.
 
 ---
 
@@ -475,17 +488,22 @@ Postgame Review Grading Engine (§9.6) writes deterministic per-leg/per-product
 correct_agents / underperforming_agents identified per graded product (§9.6)
       │
       ▼
-aggregated into agent_performance_scores over the evaluation window (NOT YET BUILT)
+per-agent classifiable observations aggregated into a PROPOSED weight
+  evaluation (Section 6, Volume 3 §5E's adaptive_weight_proposals) --
+  sample-size and 90-day-window guardrails enforced, NOT agent_performance_scores
+  (that table's only 2 rows predate this architecture and are disregarded)
       │
       ▼
-adaptive weighting algorithm (Section 6) updates agents.current_weight,
-  subject to sample-size and max-change guardrails (NOT YET BUILT)
+proposal persisted append-only; agents.current_weight is NEVER
+  automatically written (PROPOSE-ONLY V1, Milestone 5.5) -- promotion into
+  agents.current_weight is a separate, NOT YET AUTHORIZED future capability
       │
       ▼
-next recommendation cycle uses updated weights
+next recommendation cycle continues using whatever weight is
+  CURRENTLY in agents.current_weight, unaffected by any proposal
 ```
 
-**Status as of Milestone 5.4: the first two steps above are built and live-proven; every step from "aggregated into `agent_performance_scores`" onward remains explicitly unimplemented (Decision BW)** — Milestone 5.4 produces the evidence this loop will eventually consume, it does not close the loop itself. This is intentionally a slow, guarded loop once it is built — the master spec's "evaluate agents over thousands of recommendations... prevent overfitting" instruction is why every step above has a minimum-evidence gate before it's allowed to change live behavior. Speed is not the goal here; a system that reacts too quickly to short-term results is exactly the failure mode this section exists to prevent.
+**Status as of Milestone 5.5: every step through "proposal persisted append-only" is built and fixture-proven; the loop still does not close.** Milestone 5.4 produces the graded evidence; Milestone 5.5 produces a fully-computed, guardrail-checked, historically-traceable PROPOSAL of what each agent's weight would become — but `agents.current_weight` itself is never touched by any code in either milestone. Promoting a proposal into a real weight change is a separate, not-yet-authorized future capability (propose-then-promote, per explicit instruction not to assume autonomous mutation is desirable merely because the feature is named "Adaptive"). This is intentionally a slow, guarded loop — the master spec's "evaluate agents over thousands of recommendations... prevent overfitting" instruction is why every step above has a minimum-evidence gate before it's allowed to change live behavior, and why even a fully-computed proposal still requires a further, deliberate step before it can. Speed is not the goal here; a system that reacts too quickly to short-term results — or that automatically acts on its own conclusions before they've been reviewed — is exactly the failure mode this section exists to prevent.
 
 ---
 

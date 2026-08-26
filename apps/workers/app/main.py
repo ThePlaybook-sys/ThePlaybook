@@ -7,6 +7,7 @@ from fastapi import Depends, FastAPI
 from pydantic import BaseModel
 
 from app import supabase_client
+from app.adaptive_weighting_worker import run_adaptive_weighting_worker_cycle
 from app.internal_auth import require_internal_token
 from app.postgame_grading_worker import run_postgame_grading_worker_cycle
 from app.recommendation_worker import run_recommendation_worker_cycle
@@ -115,6 +116,35 @@ async def internal_run_postgame_grading_cycle() -> RunPostgameGradingCycleRespon
         )
 
     return RunPostgameGradingCycleResponse(status=result.status, game_ids=result.game_ids, response=result.response, error=result.error)
+
+
+class RunAdaptiveWeightingCycleResponse(BaseModel):
+    status: str
+    response: dict | None = None
+    error: str | None = None
+
+
+@app.post(
+    "/v1/internal/adaptive-weighting/run",
+    dependencies=[Depends(require_internal_token)],
+    response_model=RunAdaptiveWeightingCycleResponse,
+)
+async def internal_run_adaptive_weighting_cycle() -> RunAdaptiveWeightingCycleResponse:
+    """Milestone 5.5's Adaptive Weighting Worker trigger. An external
+    scheduler (Railway Cron Job, or equivalent -- unconfigured, same
+    disclosed open item as the Recommendation Worker's and Postgame
+    Grading Worker's own triggers) calls this on a schedule; this
+    endpoint never self-schedules. Reachable only via
+    `INTERNAL_SERVICE_TOKEN`."""
+    ai_orchestrator_base_url = os.environ["RAILWAY_SERVICE_AI_ORCHESTRATOR_URL"]
+    internal_token = os.environ["INTERNAL_SERVICE_TOKEN"]
+
+    async with httpx.AsyncClient(timeout=120.0) as orchestrator_client:
+        result = await run_adaptive_weighting_worker_cycle(
+            ai_orchestrator_client=orchestrator_client, ai_orchestrator_base_url=ai_orchestrator_base_url, internal_token=internal_token
+        )
+
+    return RunAdaptiveWeightingCycleResponse(status=result.status, response=result.response, error=result.error)
 
 
 if os.environ.get("RAILWAY_ENVIRONMENT_NAME", "dev") == "dev":

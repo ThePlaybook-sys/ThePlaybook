@@ -115,3 +115,32 @@ async def run_postgame_grading(
             f"ai-orchestrator postgame-grading returned {response.status_code}: {response.text}"
         )
     return response.json()
+
+
+async def run_adaptive_weighting(
+    client: httpx.AsyncClient, *, base_url: str, internal_token: str, evaluation_window_days: int
+) -> dict:
+    """Calls `POST {base_url}/v1/internal/adaptive-weighting/run` once per
+    Adaptive Weighting Worker cycle (Milestone 5.5). This service reads
+    no evidence itself and makes no weighting decision -- the window is
+    purely a function of wall-clock time (`now` minus
+    `evaluation_window_days`), so there is nothing to discover here
+    unlike the Postgame Grading Worker's own game-candidate discovery.
+    `ai-orchestrator`'s own endpoint owns every evidence read, guardrail
+    check, and PROPOSE-ONLY persistence decision (Decision 21 -- no
+    duplicated weighting logic in this service). Raises
+    `AiOrchestratorCallError` on any non-2xx response or transport
+    failure, exactly like every other call in this module."""
+    try:
+        response = await client.post(
+            f"{base_url}/v1/internal/adaptive-weighting/run",
+            json={"evaluation_window_days": evaluation_window_days},
+            headers={"X-Internal-Token": internal_token, "Content-Type": "application/json"},
+        )
+    except httpx.HTTPError as exc:
+        raise AiOrchestratorCallError(f"transport failure calling ai-orchestrator adaptive-weighting: {exc}") from exc
+    if response.status_code != 200:
+        raise AiOrchestratorCallError(
+            f"ai-orchestrator adaptive-weighting returned {response.status_code}: {response.text}"
+        )
+    return response.json()

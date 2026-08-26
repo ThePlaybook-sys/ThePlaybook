@@ -1,5 +1,6 @@
 import dataclasses
 import os
+from datetime import datetime, timedelta, timezone
 
 import httpx
 import sentry_sdk
@@ -13,7 +14,9 @@ from app.models.anthropic_adapter import AnthropicModelAdapter
 from app.models.openai_adapter import OpenAIModelAdapter
 from app.models.router import AdapterRegistry
 from app.features.strategy import EvaluatedCandidate, GameCandidates
+from app.features.adaptive_weighting import ADAPTIVE_WEIGHT_MIN_WINDOW_DAYS, EvaluationWindowTooShortError
 from app.features.grading import GRADING_VERSION
+from app.orchestration.adaptive_weighting import evaluate_committee
 from app.orchestration.postgame_grading import grade_game, grade_pending_bankroll_preservation_products
 from app.orchestration.postgame_review_narrative import generate_and_persist_postgame_review
 from app.orchestration.recommendation_worker import RecommendationWorkerError, run_game_recommendation
@@ -360,6 +363,79 @@ async def internal_run_postgame_grading(payload: RunPostgameGradingRequest) -> R
         postgame_reviews_generated=review_stats["generated"],
         postgame_reviews_failed=review_stats["failed"],
         postgame_reviews_skipped=review_stats["skipped"],
+    )
+
+
+class RunAdaptiveWeightingRequest(BaseModel):
+    """Milestone 5.5's Adaptive Agent Weighting entry point request.
+    `evaluation_window_days` defaults to the Blueprint's own rolling
+    90-day minimum (Decision 8) -- a caller may widen it, but
+    `app.orchestration.adaptive_weighting.evaluate_committee` rejects
+    anything narrower, never silently widening it back up."""
+
+    evaluation_window_days: int = ADAPTIVE_WEIGHT_MIN_WINDOW_DAYS
+
+
+class AgentEvaluationResponseItem(BaseModel):
+    agent_id: str
+    agent_name: str
+    status: str
+    proposal_status: str
+    sample_size: int
+    roi: float | None
+    performance_delta: float | None
+    guardrail_adjusted_proposed_weight: float | None
+
+
+class RunAdaptiveWeightingResponse(BaseModel):
+    evaluation_window_start: str
+    evaluation_window_end: str
+    committee_average_roi: float | None
+    agents: list[AgentEvaluationResponseItem]
+
+
+@app.post(
+    "/v1/internal/adaptive-weighting/run",
+    dependencies=[Depends(require_internal_token)],
+    response_model=RunAdaptiveWeightingResponse,
+)
+async def internal_run_adaptive_weighting(payload: RunAdaptiveWeightingRequest) -> RunAdaptiveWeightingResponse:
+    """Milestone 5.5's Adaptive Agent Weighting entry point -- reachable
+    only via `INTERNAL_SERVICE_TOKEN`, called by `apps/workers` on a
+    schedule (`worker-scheduled`, Decision 21 -- no new Railway service).
+
+    **PROPOSE-ONLY (Decision 2): this endpoint NEVER writes
+    `agents.current_weight`.** It computes and persists, for every agent,
+    what weight change the Blueprint's Section 6.1 formula and guardrails
+    would produce -- nothing more. Applying a proposal is a separate,
+    not-yet-authorized future capability. See
+    `app.orchestration.adaptive_weighting`'s own module docstring for the
+    full evidence-gathering and guardrail design."""
+    now = datetime.now(timezone.utc).date()
+    window_end = now
+    window_start = window_end - timedelta(days=payload.evaluation_window_days)
+
+    headers = supabase_client.auth_headers()
+    async with supabase_client.new_client(timeout=60.0) as client:
+        try:
+            result = await evaluate_committee(
+                client, headers, evaluation_window_start=window_start, evaluation_window_end=window_end
+            )
+        except EvaluationWindowTooShortError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    return RunAdaptiveWeightingResponse(
+        evaluation_window_start=result.evaluation_window_start,
+        evaluation_window_end=result.evaluation_window_end,
+        committee_average_roi=result.committee_average_roi,
+        agents=[
+            AgentEvaluationResponseItem(
+                agent_id=a.agent_id, agent_name=a.agent_name, status=a.status, proposal_status=a.proposal_status,
+                sample_size=a.sample_size, roi=a.roi, performance_delta=a.performance_delta,
+                guardrail_adjusted_proposed_weight=a.guardrail_adjusted_proposed_weight,
+            )
+            for a in result.agents
+        ],
     )
 
 
