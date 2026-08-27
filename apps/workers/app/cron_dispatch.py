@@ -59,19 +59,21 @@ _TARGET_PATHS = {
 
 
 class CronDispatchError(Exception):
-    """Raised for any failure dispatching to `worker-scheduled` -- the
-    caller (`main`) is the only place this is caught, converting it into
-    a non-zero exit code rather than a Python traceback as the job's
+    """Raised for any failure dispatching to `base_url` -- the caller
+    (`main`) is the only place this is caught, converting it into a
+    non-zero exit code rather than a Python traceback as the job's
     final state."""
 
 
 async def dispatch(*, target: str, base_url: str, internal_token: str, client: httpx.AsyncClient) -> dict:
-    """POSTs to the one `worker-scheduled` endpoint `target` names.
-    Returns the parsed JSON response on any 2xx. Raises `CronDispatchError`
-    on a non-2xx response or transport failure -- this function makes no
+    """POSTs to the one internal endpoint `target` names, on whichever
+    service `base_url` points at (`worker-scheduled` for three of the
+    four targets, `sports-intel-layer` for `master-refresh`). Returns the
+    parsed JSON response on any 2xx. Raises `CronDispatchError` on a
+    non-2xx response or transport failure -- this function makes no
     judgment about WHETHER the underlying cycle found anything to do,
-    only whether the call itself succeeded; `worker-scheduled`'s own
-    endpoints already return an honest `status`/`no_eligible_run`-style
+    only whether the call itself succeeded; the target endpoint's own
+    response already returns an honest `status`/`no_eligible_run`-style
     result for "nothing to do this cycle", which is success, not an
     error, from this dispatcher's point of view."""
     if target not in _TARGET_PATHS:
@@ -84,9 +86,9 @@ async def dispatch(*, target: str, base_url: str, internal_token: str, client: h
             json={},
         )
     except httpx.HTTPError as exc:
-        raise CronDispatchError(f"transport failure calling worker-scheduled{path}: {exc}") from exc
+        raise CronDispatchError(f"transport failure calling {base_url}{path}: {exc}") from exc
     if response.status_code != 200:
-        raise CronDispatchError(f"worker-scheduled{path} returned {response.status_code}: {response.text}")
+        raise CronDispatchError(f"{base_url}{path} returned {response.status_code}: {response.text}")
     return response.json()
 
 
