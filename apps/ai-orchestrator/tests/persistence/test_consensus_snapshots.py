@@ -51,8 +51,37 @@ async def test_read_game_level_agent_outputs_flattens_embedded_agent():
             "evidence_classification": "data_backed",
             "weight_applied": 1.05,
             "would_change_mind_if": "If the starting QB is ruled out.",
+            "prompt_name": None,
+            "prompt_version": None,
+            "model_name": None,
+            "provider": None,
+            "used_fallback": None,
         }
     ]
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_read_game_level_agent_outputs_carries_prompt_model_provenance_when_present():
+    row = {
+        "raw_output": {"agent_name": "injury_intelligence_agent", "directional_lean": "home", "evidence_classification": "data_backed"},
+        "agent_confidence": 0.6,
+        "weight_applied": 1.05,
+        "prompt_name": "injury_intelligence_agent",
+        "prompt_version": 3,
+        "model_name": "claude-x",
+        "provider": "anthropic",
+        "used_fallback": False,
+        "agents": {"name": "injury_intelligence_agent", "category": "context"},
+    }
+    respx.get(f"{SUPABASE_URL}/rest/v1/recommendation_agent_outputs").mock(return_value=httpx.Response(200, json=[row]))
+    async with httpx.AsyncClient(base_url=SUPABASE_URL) as client:
+        result = await read_game_level_agent_outputs(client, _headers(), recommendation_id="r1")
+    assert result[0]["prompt_name"] == "injury_intelligence_agent"
+    assert result[0]["prompt_version"] == 3
+    assert result[0]["model_name"] == "claude-x"
+    assert result[0]["provider"] == "anthropic"
+    assert result[0]["used_fallback"] is False
 
 
 @pytest.mark.asyncio

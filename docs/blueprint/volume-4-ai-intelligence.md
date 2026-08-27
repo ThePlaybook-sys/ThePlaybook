@@ -169,8 +169,10 @@ Applied in §4.1 as the last step before the 0.55 "No Bet Today" check (§4.2): 
 8. Meta Agent (§2.6) reviews the consensus output and applies its confidence_adjustment, if any
 9. Recommendation Strategy Engine decides final output shape (Section 9)
 10. Explainability Engine formats the package into the question-answer structure (Section 8)
-11. Package + full snapshot written to recommendation_snapshots (Volume 3 §5)
+11. Package + full snapshot composed into the Time Machine activation-snapshot manifest (Volume 3 §5C, Milestone 5.3) — NOT the legacy `recommendation_snapshots` (Volume 3 §5), which is confirmed unfit for the Phase 5 product layer and remains untouched
 ```
+
+**Step 11 corrected (v5.9, Pre-Phase-6 Operational Readiness Gate, 2026-08-27) — this numbered list predates Milestone 5.3 and still named the legacy table `recommendation_snapshots` as the pipeline's final write target.** The authoritative mechanism, in production since Milestone 5.3, is the additive activation-snapshot manifest (`recommendation_activation_snapshots` + its two join tables, composing already-frozen Milestone 5.1/5.2 rows by FK) plus the internal-only `app.orchestration.reconstruction.reconstruct_recommendation_product` read path — see §5C's own correction note and Volume 3 §5C for the full reasoning already on record. This edit updates the numbered list itself to match; it does not introduce a new decision.
 
 **Steps 9/10 reordered (v5.0, Phase 5 Milestone 5.1, Decision R, 2026-08-25) — a genuine self-contradiction in this document's earlier text, not a new decision being introduced here.** The list above originally read Explainability (step 9) then Strategy (step 10), while Section 9's own text already said Strategy "sits after Consensus and before Explainability" — the two couldn't both be true. Strategy also structurally has to run first: Explainability's question list (Section 8) includes "why this bet type" and "why not alternatives," neither of which is answerable before Strategy has actually decided a shape. Corrected here to match Section 9's own text and the underlying dependency, not the other way around.
 
