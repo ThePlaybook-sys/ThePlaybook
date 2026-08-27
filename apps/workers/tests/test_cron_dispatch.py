@@ -49,6 +49,23 @@ async def test_dispatch_adaptive_weighting_posts_to_correct_path():
 
 
 @pytest.mark.asyncio
+@respx.mock
+async def test_dispatch_master_refresh_posts_to_correct_path():
+    """Pre-Phase-6 Operational Readiness Gate, Decision 6 -- unlike the
+    other three targets, `master-refresh` lives on `sports-intel-layer`,
+    not `worker-scheduled`, but `dispatch` itself is agnostic to which
+    service `base_url` points at; only the caller (a differently-
+    configured cron service) knows the difference."""
+    route = respx.post(f"{BASE_URL}/v1/internal/master-refresh/run").mock(
+        return_value=httpx.Response(200, json={"status": "success", "run_id": "r1", "games_in_slate": 0})
+    )
+    async with httpx.AsyncClient() as client:
+        result = await dispatch(target="master-refresh", base_url=BASE_URL, internal_token="secret", client=client)
+    assert result["status"] == "success"
+    assert route.calls.last.request.headers["X-Internal-Token"] == "secret"
+
+
+@pytest.mark.asyncio
 async def test_dispatch_rejects_unknown_target():
     async with httpx.AsyncClient() as client:
         with pytest.raises(CronDispatchError):
