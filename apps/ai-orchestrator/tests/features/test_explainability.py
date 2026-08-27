@@ -78,6 +78,24 @@ def test_contributing_agents_empty_for_prop_candidate_direction_none():
     assert build_contributing_agents(rows, candidate_direction=None) == []
 
 
+def test_contributing_agents_carries_prompt_model_provenance_from_agent_row():
+    rows = [_agent_row(prompt_name="injury_intelligence_agent", prompt_version=3, model_name="claude-x", provider="anthropic", used_fallback=True)]
+    contributions = build_contributing_agents(rows, candidate_direction="home")
+    assert contributions[0].prompt_name == "injury_intelligence_agent"
+    assert contributions[0].prompt_version == 3
+    assert contributions[0].model_name == "claude-x"
+    assert contributions[0].provider == "anthropic"
+    assert contributions[0].used_fallback is True
+
+
+def test_contributing_agents_provenance_none_when_row_predates_capture():
+    rows = [_agent_row()]  # no prompt/model keys at all -- historical row
+    contributions = build_contributing_agents(rows, candidate_direction="home")
+    assert contributions[0].prompt_name is None
+    assert contributions[0].model_name is None
+    assert contributions[0].used_fallback is None
+
+
 def test_contributing_agents_to_json_excludes_internal_supports_field():
     contributions = [
         AgentContribution(
@@ -89,8 +107,25 @@ def test_contributing_agents_to_json_excludes_internal_supports_field():
     assert json_rows == [{
         "agent_name": "a", "weight_applied": 1.0, "confidence": 0.6, "directional_lean": "home",
         "evidence_classification": "data_backed", "participation_status": "successful",
+        "prompt_name": None, "prompt_version": None, "model_name": None, "provider": None, "used_fallback": None,
     }]
     assert "supports" not in json_rows[0]
+
+
+def test_contributing_agents_to_json_carries_prompt_model_provenance_when_present():
+    contributions = [
+        AgentContribution(
+            agent_name="a", weight_applied=1.0, confidence=0.6, directional_lean="home",
+            evidence_classification="data_backed", participation_status="successful", supports=True,
+            prompt_name="a", prompt_version=3, model_name="claude-x", provider="anthropic", used_fallback=False,
+        )
+    ]
+    json_rows = contributing_agents_to_json(contributions)
+    assert json_rows[0]["prompt_name"] == "a"
+    assert json_rows[0]["prompt_version"] == 3
+    assert json_rows[0]["model_name"] == "claude-x"
+    assert json_rows[0]["provider"] == "anthropic"
+    assert json_rows[0]["used_fallback"] is False
 
 
 # --- select_would_change_mind_if ---

@@ -983,6 +983,16 @@ Normalized evidence rows, never opaque JSON — one row per graded leg that actu
 
 ---
 
+## 5F. Physical Deletion Prohibition — Phase 5 Evidentiary Records (Pre-Phase-6 Operational Readiness Gate, 2026-08-27)
+
+**Physical `DELETE` of any Phase 5 evidentiary/historical row is prohibited, by policy, for every table listed below.** The Phase 5 Closeout Audit found that `UPDATE` immutability on these tables is DB-enforced (`BEFORE UPDATE` block triggers, live-verified on every one), while physical `DELETE` protection is partly structural/incidental rather than an explicit DB-level guarantee: no table here has a `DELETE`-blocking trigger, and one concrete path exists today — `recommendation_legs.recommendation_product_id → recommendation_products(id)` is `ON DELETE CASCADE` — under which an **ungraded** product's legs could cascade-delete if a future code path ever physically deleted a `recommendation_products` row (a graded leg is already protected, since `recommendation_leg_grade_events.recommendation_leg_id → recommendation_legs(id)` is `NO ACTION` and would block the cascade).
+
+**Decision:** no new trigger is added here, and the schema is left unchanged. Volume 5/Phase 6 has no stated requirement for physically deleting a recommendation, product, leg, grade, review, or weighting proposal — every "remove" concept already has a soft-delete mechanism (`recommendation_products.deleted_at`/`.status='withdrawn'`, `recommendation_product_lifecycle_events.event_type='SOFT_DELETED'`, Volume 3 §5A/§5C). Phase 6 is expected to remain soft-delete-only for all of the tables below; this section makes that expectation explicit and binding rather than assumed. If a future phase's API genuinely requires physical deletion of any of these tables, the correct sequence is: STOP, return a specific DB-level preservation proposal (e.g. an explicit `block_*_deletes()` trigger mirroring the existing `block_*_updates()` pattern, or converting the one `ON DELETE CASCADE` above to `NO ACTION`), and get it approved before that API is built — never add the capability first and reconcile the schema after.
+
+**Tables this prohibition covers:** `recommendation_products`, `recommendation_legs`, `recommendation_product_explanations`, `recommendation_leg_explanations`, `recommendation_activation_snapshots`, `recommendation_activation_snapshot_legs`, `recommendation_activation_snapshot_source_products`, `recommendation_product_lifecycle_events`, `recommendation_leg_grade_events`, `recommendation_product_grade_events`, `recommendation_product_postgame_reviews`, `adaptive_weight_proposals`, `adaptive_weight_proposal_observations`, and the pre-existing `consensus_snapshots`/`recommendation_agent_outputs`. (`user_recommendation_selections` is deliberately excluded from this list — its `ON DELETE CASCADE` from `auth.users` is an intentional, already-approved account-deletion behavior, Volume 3 §5A, a different category of concern than committee/grading/weighting evidentiary history.)
+
+---
+
 ## 6. Bet Verification & Performance Attribution
 
 ### `bet_slips`

@@ -91,6 +91,19 @@ class AgentContribution:
     evidence_classification: str
     participation_status: str  # always "successful" -- see module docstring
     supports: bool  # True = lean_factor 1.0 (supports); False = 0.3 (opposes)
+    #: Pre-Phase-6 Operational Readiness Gate (Section 10, 2026-08-27) --
+    #: the same per-agent prompt/model provenance already frozen on
+    #: `recommendation_agent_outputs` since Milestone 4.8 (prompt_name/
+    #: prompt_version) and Milestone 5.3 (model_name/provider/
+    #: used_fallback), now threaded through so reconstruction can surface
+    #: it without a second, undocumented join. All five are `None` for
+    #: any historical row written before the corresponding column
+    #: existed -- never inferred or backfilled.
+    prompt_name: str | None = None
+    prompt_version: int | None = None
+    model_name: str | None = None
+    provider: str | None = None
+    used_fallback: bool | None = None
 
 
 def build_contributing_agents(agent_rows: list[dict], *, candidate_direction: str | None) -> list[AgentContribution]:
@@ -117,6 +130,11 @@ def build_contributing_agents(agent_rows: list[dict], *, candidate_direction: st
                 evidence_classification=row["evidence_classification"],
                 participation_status="successful",
                 supports=factor == 1.0,
+                prompt_name=row.get("prompt_name"),
+                prompt_version=row.get("prompt_version"),
+                model_name=row.get("model_name"),
+                provider=row.get("provider"),
+                used_fallback=row.get("used_fallback"),
             )
         )
     return contributions
@@ -125,8 +143,10 @@ def build_contributing_agents(agent_rows: list[dict], *, candidate_direction: st
 def contributing_agents_to_json(contributions: list[AgentContribution]) -> list[dict]:
     """The exact, approved persisted shape -- agent identity, weight_applied,
     agent confidence, directional lean, evidence classification,
-    participation status. `supports` (an internal derived convenience, not
-    part of the approved field list) is deliberately excluded here."""
+    participation status, and (Pre-Phase-6 Operational Readiness Gate,
+    Section 10) prompt/model provenance. `supports` (an internal derived
+    convenience, not part of the approved field list) is deliberately
+    excluded here."""
     return [
         {
             "agent_name": c.agent_name,
@@ -135,6 +155,11 @@ def contributing_agents_to_json(contributions: list[AgentContribution]) -> list[
             "directional_lean": c.directional_lean,
             "evidence_classification": c.evidence_classification,
             "participation_status": c.participation_status,
+            "prompt_name": c.prompt_name,
+            "prompt_version": c.prompt_version,
+            "model_name": c.model_name,
+            "provider": c.provider,
+            "used_fallback": c.used_fallback,
         }
         for c in contributions
     ]

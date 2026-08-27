@@ -43,13 +43,25 @@ async def read_game_level_agent_outputs(client: httpx.AsyncClient, headers: dict
     original, unchanged caller) reads only the keys it needs and ignores
     the rest. Used by `app.features.explainability.select_would_change_mind_if`
     to verbatim-quote the highest-weighted supporting agent's own
-    invalidation condition, never a synthesized one."""
+    invalidation condition, never a synthesized one.
+
+    **Pre-Phase-6 Operational Readiness Gate addition (Section 10,
+    2026-08-27):** also extracts `prompt_name`/`prompt_version`
+    (Milestone 4.8) and `model_name`/`provider`/`used_fallback`
+    (Milestone 5.3) -- additive only, same discipline as
+    `would_change_mind_if` above; existing callers (consensus,
+    Adaptive Weighting) ignore keys they don't need. `None` on any row
+    written before the corresponding column existed -- read back exactly
+    as stored, never inferred."""
     response = await client.get(
         "/rest/v1/recommendation_agent_outputs",
         params={
             "recommendation_id": f"eq.{recommendation_id}",
             "candidate_key": "is.null",
-            "select": "raw_output,agent_confidence,weight_applied,agents(name,category)",
+            "select": (
+                "raw_output,agent_confidence,weight_applied,prompt_name,prompt_version,"
+                "model_name,provider,used_fallback,agents(name,category)"
+            ),
         },
         headers=headers,
     )
@@ -73,6 +85,11 @@ async def read_game_level_agent_outputs(client: httpx.AsyncClient, headers: dict
                 "evidence_classification": raw_output.get("evidence_classification"),
                 "weight_applied": row["weight_applied"],
                 "would_change_mind_if": raw_output.get("would_change_mind_if"),
+                "prompt_name": row.get("prompt_name"),
+                "prompt_version": row.get("prompt_version"),
+                "model_name": row.get("model_name"),
+                "provider": row.get("provider"),
+                "used_fallback": row.get("used_fallback"),
             }
         )
     return flattened

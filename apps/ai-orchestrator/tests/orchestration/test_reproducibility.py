@@ -176,6 +176,13 @@ async def test_reconstruction_is_unaffected_by_live_mutations_after_activation()
     respx.get(f"{SUPABASE_URL}/rest/v1/recommendation_product_explanations").mock(
         return_value=httpx.Response(200, json=[{"id": "prod-expl-1", "why_this_shape": "exactly one candidate qualified"}])
     )
+    # Downstream evidence (Pre-Phase-6 Operational Readiness Gate, Section
+    # 9) -- none exists yet for a just-activated product; reconstruction
+    # must read these and correctly find nothing, not skip reading them.
+    respx.get(f"{SUPABASE_URL}/rest/v1/recommendation_product_lifecycle_events").mock(return_value=httpx.Response(200, json=[]))
+    respx.get(f"{SUPABASE_URL}/rest/v1/recommendation_product_grade_events").mock(return_value=httpx.Response(200, json=[]))
+    respx.get(f"{SUPABASE_URL}/rest/v1/recommendation_product_postgame_reviews").mock(return_value=httpx.Response(200, json=[]))
+    respx.get(f"{SUPABASE_URL}/rest/v1/recommendation_leg_grade_events").mock(return_value=httpx.Response(200, json=[]))
 
     # --- Step 4: reconstruct. Never touches the mutated tables above. ---
     async with httpx.AsyncClient(base_url=SUPABASE_URL) as client:

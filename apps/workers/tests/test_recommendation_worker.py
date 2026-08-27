@@ -159,3 +159,70 @@ async def test_finalize_strategy_failure_is_isolated_and_never_raises():
     assert result.games[0].status == "dispatched"
     assert result.strategy is None
     assert result.strategy_error is not None
+
+
+# --- Pre-Phase-6 Operational Readiness Gate, Decision 5: a game
+# ai-orchestrator reports as "skipped_already_computed" must not be
+# treated as a fresh candidate source for Strategy, and a cycle where
+# EVERY game was already-computed must not re-finalize Strategy at all
+# (finalize_slate_strategy has no idempotency of its own for a repeated
+# master_refresh_run_id -- see the completion report). ---
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_skipped_already_computed_game_excluded_from_strategy_input():
+    respx.get(f"{SUPABASE_URL}/rest/v1/master_refresh_runs").mock(return_value=httpx.Response(200, json=[{"id": "run-1"}]))
+    respx.get(f"{SUPABASE_URL}/rest/v1/games").mock(return_value=httpx.Response(200, json=[{"id": "g1"}, {"id": "g2"}]))
+
+    def _respond(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        if body["game_id"] == "g1":
+            # Already fully computed on an earlier cycle -- no new candidates this time.
+            return httpx.Response(200, json={"recommendation_id": "r1", "candidates": [], "status": "skipped_already_computed"})
+        return httpx.Response(200, json={"recommendation_id": "r2", "candidates": [], "status": "computed"})
+
+    respx.post(f"{AI_ORCHESTRATOR_URL}/v1/internal/recommendation-worker/run-game").mock(side_effect=_respond)
+    strategy_route = respx.post(f"{AI_ORCHESTRATOR_URL}/v1/internal/recommendation-worker/finalize-strategy").mock(
+        return_value=httpx.Response(
+            200, json={"outcome": "bankroll_preservation", "recommendation_product_ids": ["p1"], "leg_count": 0, "no_bet_game_count": 0}
+        )
+    )
+
+    async with httpx.AsyncClient(base_url=SUPABASE_URL) as db_client, httpx.AsyncClient() as orch_client:
+        result = await run_recommendation_worker_cycle(
+            db_client, _headers(), ai_orchestrator_client=orch_client,
+            ai_orchestrator_base_url=AI_ORCHESTRATOR_URL, internal_token="secret",
+        )
+
+    # Both games still count as successfully "dispatched" (the call itself
+    # succeeded) -- but only g2, which actually computed something new
+    # this cycle, is fed into Strategy.
+    assert all(g.status == "dispatched" for g in result.games)
+    assert strategy_route.call_count == 1
+    sent_games = json.loads(strategy_route.calls.last.request.content)["games"]
+    assert [g["game_id"] for g in sent_games] == ["g2"]
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_every_game_already_computed_never_calls_finalize_strategy_again():
+    respx.get(f"{SUPABASE_URL}/rest/v1/master_refresh_runs").mock(return_value=httpx.Response(200, json=[{"id": "run-1"}]))
+    respx.get(f"{SUPABASE_URL}/rest/v1/games").mock(return_value=httpx.Response(200, json=[{"id": "g1"}]))
+    respx.post(f"{AI_ORCHESTRATOR_URL}/v1/internal/recommendation-worker/run-game").mock(
+        return_value=httpx.Response(200, json={"recommendation_id": "r1", "candidates": [], "status": "skipped_already_computed"})
+    )
+    # No finalize-strategy mock registered at all -- a repeated call here
+    # would create a SECOND, duplicate slate-level decision for a run
+    # that was already finalized; if the code called it anyway, respx
+    # would raise AllMockedAssertionError and fail this test.
+
+    async with httpx.AsyncClient(base_url=SUPABASE_URL) as db_client, httpx.AsyncClient() as orch_client:
+        result = await run_recommendation_worker_cycle(
+            db_client, _headers(), ai_orchestrator_client=orch_client,
+            ai_orchestrator_base_url=AI_ORCHESTRATOR_URL, internal_token="secret",
+        )
+
+    assert result.games[0].status == "dispatched"
+    assert result.strategy is None
+    assert result.strategy_error is None
