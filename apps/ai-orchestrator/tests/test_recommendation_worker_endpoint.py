@@ -87,7 +87,9 @@ def test_run_game_success_round_trip_with_no_qualifying_sportsbook(monkeypatch):
     )
     respx.get(f"{SUPABASE_URL}/rest/v1/odds_snapshots").mock(return_value=httpx.Response(200, json=[]))
     respx.get(f"{SUPABASE_URL}/rest/v1/subscriptions").mock(return_value=httpx.Response(200, json=[]))
+    respx.get(f"{SUPABASE_URL}/rest/v1/recommendations").mock(return_value=httpx.Response(200, json=[]))
     respx.post(f"{SUPABASE_URL}/rest/v1/recommendations").mock(return_value=httpx.Response(201, json=[{"id": "r1"}]))
+    respx.patch(f"{SUPABASE_URL}/rest/v1/recommendations").mock(return_value=httpx.Response(204))
     respx.post(f"{SUPABASE_URL}/rest/v1/recommendation_agent_outputs").mock(return_value=httpx.Response(201, json=[{}]))
     mock_prompt_registry_route(SUPABASE_URL)
 

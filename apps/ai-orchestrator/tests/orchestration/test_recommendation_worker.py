@@ -94,6 +94,13 @@ def _mock_common(*, game: dict | None = None, odds_rows: list | None = None, sub
     respx.get(f"{SUPABASE_URL}/rest/v1/agents").mock(return_value=httpx.Response(200, json=[{"id": "a1", "current_weight": 1.0}]))
     respx.get(f"{SUPABASE_URL}/rest/v1/user_profiles").mock(return_value=httpx.Response(200, json=[]))
     mock_prompt_registry_route(SUPABASE_URL)
+    # Pre-Phase-6 Operational Readiness Gate, Decision 5: the correlation
+    # pre-flight check (GET, `[]` = no existing row -- not a repeat) and
+    # the end-of-cycle completion marker (PATCH). Tests that specifically
+    # exercise the skip/idempotency behavior override the GET route
+    # themselves, after calling this helper.
+    respx.get(f"{SUPABASE_URL}/rest/v1/recommendations").mock(return_value=httpx.Response(200, json=[]))
+    respx.patch(f"{SUPABASE_URL}/rest/v1/recommendations").mock(return_value=httpx.Response(204))
 
 
 @pytest.mark.asyncio
@@ -361,3 +368,95 @@ async def test_one_subscriber_bankroll_coach_failure_does_not_block_the_next(mon
     candidate_result = result.candidates[0]
     assert candidate_result.status == "evaluated"
     assert candidate_result.bankroll_coach_user_count == 1  # u_broken's failure isolated, u_ok still counted
+
+
+# --- Pre-Phase-6 Operational Readiness Gate, Decision 5: pre-compute
+# idempotency -- skip recomputation for an already-completed correlation,
+# but never block a retry of a genuinely incomplete one. ---
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_same_run_same_game_completed_result_skips_second_committee_computation(monkeypatch):
+    monkeypatch.setenv("REFERENCE_SPORTSBOOK_PREFERENCE", "draftkings")
+    _mock_common(game=_game_row())
+    # Overrides _mock_common's default `[]` -- this correlation already
+    # has a row AND already completed.
+    respx.get(f"{SUPABASE_URL}/rest/v1/recommendations").mock(
+        return_value=httpx.Response(200, json=[{"id": "r1", "cycle_completed_at": "2026-08-27T00:00:00+00:00"}])
+    )
+    create_route = respx.post(f"{SUPABASE_URL}/rest/v1/recommendations").mock(return_value=httpx.Response(201, json=[{"id": "r1"}]))
+    output_route = respx.post(f"{SUPABASE_URL}/rest/v1/recommendation_agent_outputs").mock(return_value=httpx.Response(201, json=[{}]))
+    adapter = FakeModelAdapter(provider="anthropic", script=[])  # never called if the skip works
+    registry = AdapterRegistry(adapters={"anthropic": adapter})
+
+    async with httpx.AsyncClient(base_url=SUPABASE_URL) as client:
+        result = await run_game_recommendation(
+            client, _headers(), game_id="g1", correlation_id="corr-1", prompt_version="v1", agent_version="v1",
+            routing_rules=_routing_rules(), adapter_registry=registry,
+        )
+
+    assert result.status == "skipped_already_computed"
+    assert result.recommendation_id == "r1"
+    assert result.candidates == []
+    # The whole point: NO committee computation happened at all.
+    assert create_route.call_count == 0
+    assert output_route.call_count == 0
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_same_run_same_game_failed_incomplete_result_permits_retry(monkeypatch):
+    monkeypatch.setenv("REFERENCE_SPORTSBOOK_PREFERENCE", "draftkings")
+    _mock_common(game=_game_row(), odds_rows=[])
+    # A `recommendations` row already exists for this correlation (Milestone
+    # 4.9's own upsert created it on the FIRST, crashed attempt), but
+    # `cycle_completed_at` is still NULL -- the cycle never reached its end.
+    respx.get(f"{SUPABASE_URL}/rest/v1/recommendations").mock(
+        return_value=httpx.Response(200, json=[{"id": "r1", "cycle_completed_at": None}])
+    )
+    respx.post(f"{SUPABASE_URL}/rest/v1/recommendations").mock(return_value=httpx.Response(201, json=[{"id": "r1"}]))
+    output_route = respx.post(f"{SUPABASE_URL}/rest/v1/recommendation_agent_outputs").mock(return_value=httpx.Response(201, json=[{}]))
+    patch_route = respx.patch(f"{SUPABASE_URL}/rest/v1/recommendations").mock(return_value=httpx.Response(204))
+    adapter = FakeModelAdapter(provider="anthropic", script=[])
+    registry = AdapterRegistry(adapters={"anthropic": adapter})
+
+    async with httpx.AsyncClient(base_url=SUPABASE_URL) as client:
+        result = await run_game_recommendation(
+            client, _headers(), game_id="g1", correlation_id="corr-1", prompt_version="v1", agent_version="v1",
+            routing_rules=_routing_rules(), adapter_registry=registry,
+        )
+
+    # Retry permitted: the committee actually ran (game-level fan-out
+    # attempted -- 6 agents, all isolated-failed against the empty
+    # script, matching test_game_skipped_when_no_odds_... above), and the
+    # cycle reached its own normal end this time, so the completion
+    # marker gets set.
+    assert result.status == "computed"
+    assert patch_route.call_count == 1
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_new_run_same_game_permits_new_computation(monkeypatch):
+    monkeypatch.setenv("REFERENCE_SPORTSBOOK_PREFERENCE", "draftkings")
+    _mock_common(game=_game_row(), odds_rows=[])
+    # A DIFFERENT correlation_id (new master_refresh_run_id + same
+    # game_id) -- genuinely never seen before, per-`eq.` filtering means
+    # this returns `[]` regardless of what a PRIOR run's correlation_id
+    # looked like. _mock_common's default `[]` already models this; no
+    # override needed, this test exists to name the scenario explicitly.
+    create_route = respx.post(f"{SUPABASE_URL}/rest/v1/recommendations").mock(return_value=httpx.Response(201, json=[{"id": "r2"}]))
+    patch_route = respx.patch(f"{SUPABASE_URL}/rest/v1/recommendations").mock(return_value=httpx.Response(204))
+    adapter = FakeModelAdapter(provider="anthropic", script=[])
+    registry = AdapterRegistry(adapters={"anthropic": adapter})
+
+    async with httpx.AsyncClient(base_url=SUPABASE_URL) as client:
+        result = await run_game_recommendation(
+            client, _headers(), game_id="g1", correlation_id="run-2:g1", prompt_version="v1", agent_version="v1",
+            routing_rules=_routing_rules(), adapter_registry=registry,
+        )
+
+    assert result.status == "computed"
+    assert create_route.call_count == 1
+    assert patch_route.call_count == 1

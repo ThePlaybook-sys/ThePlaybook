@@ -75,6 +75,7 @@ from app.orchestration.consensus import (
 from app.orchestration.cycle import run_bankroll_coach_evaluation, run_candidate_evaluation, run_recommendation_cycle
 from app.persistence.games import get_game
 from app.persistence.odds_snapshots import read_odds_snapshots
+from app.persistence.recommendations import mark_recommendation_cycle_completed, read_recommendation_by_correlation_id
 from app.persistence.subscriptions import read_active_subscribers
 
 #: The 6 game-level (Milestone 4.4) Context & Data agents -- run once per
@@ -124,6 +125,15 @@ class GameRecommendationResult:
     sportsbook_used: str | None
     game_skipped_reason: str | None
     candidates: list[CandidateRunResult] = field(default_factory=list)
+    #: Pre-Phase-6 Operational Readiness Gate, Decision 5 -- "computed"
+    #: (the normal path: the agent committee actually ran this call) or
+    #: "skipped_already_computed" (this exact `correlation_id` already
+    #: reached `cycle_completed_at` on a PRIOR call; nothing here was
+    #: recomputed, `candidates` is `[]`). Callers (`apps/workers`) must
+    #: treat a skipped game as contributing no NEW strategy input this
+    #: cycle -- it already contributed its own, in the earlier cycle that
+    #: actually computed it.
+    status: str = "computed"
 
 
 def _parse_captured_at(row: dict) -> dict:
@@ -287,13 +297,41 @@ async def run_game_recommendation(
     """Runs one full Recommendation Worker cycle for `game_id`. Raises
     `RecommendationWorkerError` if the game itself can't be found --
     every other failure is isolated at the candidate or user level (see
-    module docstring)."""
+    module docstring).
+
+    **Pre-Phase-6 Operational Readiness Gate, Decision 5.** Before doing
+    ANY of the expensive work below (game-level fan-out, candidate
+    generation, the Decision & Advisory chain, consensus, Bankroll
+    Coach), checks whether this exact `correlation_id` already reached
+    `recommendations.cycle_completed_at` on a prior call -- if so, returns
+    immediately with `status="skipped_already_computed"` and empty
+    `candidates`, recomputing nothing. This is the DB-authoritative check
+    Decision 5 requires: a `recommendations` row existing is NOT
+    sufficient (Milestone 4.9's own correlation-id upsert creates that
+    row as the very FIRST step, before any real work happens -- a crash
+    partway through would otherwise look identical to a completed run);
+    only `cycle_completed_at IS NOT NULL` means the cycle genuinely ran
+    to its normal end. A genuinely new Master Refresh run always
+    produces a new `correlation_id` (Milestone 4.9's own `f"{run_id}:
+    {game_id}"` derivation, unchanged here), so this can never block a
+    legitimately new cycle for the same game."""
     retry_engine = retry_engine or RetryEngine()
     now = now or datetime.now(timezone.utc)
 
     game = await get_game(client, headers, game_id=game_id)
     if game is None:
         raise RecommendationWorkerError(f"game_id={game_id!r} not found -- cannot run recommendation")
+
+    existing = await read_recommendation_by_correlation_id(client, headers, correlation_id=correlation_id)
+    if existing is not None and existing.get("cycle_completed_at") is not None:
+        return GameRecommendationResult(
+            recommendation_id=existing["id"],
+            fan_out_status="skipped_already_computed",
+            sportsbook_used=None,
+            game_skipped_reason=None,
+            candidates=[],
+            status="skipped_already_computed",
+        )
 
     recommendation_id, fan_out_result = await run_recommendation_cycle(
         client,
@@ -348,6 +386,14 @@ async def run_game_recommendation(
         except Exception as exc:  # noqa: BLE001 -- deliberate: one candidate's failure never blocks the rest
             result = CandidateRunResult(candidate=candidate, status="failed", error=str(exc))
         candidate_results.append(result)
+
+    # Pre-Phase-6 Operational Readiness Gate, Decision 5: the LAST step,
+    # unconditionally, once every candidate has been attempted (success
+    # or isolated failure -- both mean the cycle itself reached its
+    # normal end). Any exception raised anywhere above this line leaves
+    # `cycle_completed_at` NULL, which is exactly what keeps a crashed
+    # attempt retryable.
+    await mark_recommendation_cycle_completed(client, headers, recommendation_id=recommendation_id, completed_at_iso=now.isoformat())
 
     return GameRecommendationResult(
         recommendation_id=recommendation_id,

@@ -126,6 +126,18 @@ async def run_recommendation_worker_cycle(
     # dispatch is OMITTED here, never represented as no_bet -- it was
     # never evaluated at all, which is a different fact from "evaluated,
     # nothing qualified."
+    #
+    # Pre-Phase-6 Operational Readiness Gate, Decision 5: a game whose
+    # ai-orchestrator response came back `status="skipped_already_computed"`
+    # is ALSO omitted here, for the same reason -- it contributed no NEW
+    # candidates THIS cycle (its own strategy_input was already relayed
+    # in the earlier cycle that actually computed it). `finalize_slate_
+    # strategy` has no idempotency of its own for a repeated
+    # master_refresh_run_id (a real, separate, pre-existing gap this
+    # readiness gate did not attempt to close -- see the completion
+    # report) -- omitting already-computed games here is what keeps a
+    # repeated cron fire against a fully-completed run from calling it
+    # again at all (see the `if strategy_games:` guard below).
     strategy_games = [
         {
             "game_id": g.game_id,
@@ -133,7 +145,7 @@ async def run_recommendation_worker_cycle(
             "candidates": [c["strategy_input"] for c in g.response["candidates"] if c.get("strategy_input")],
         }
         for g in games
-        if g.status == "dispatched"
+        if g.status == "dispatched" and g.response.get("status") != "skipped_already_computed"
     ]
 
     strategy_result: dict | None = None

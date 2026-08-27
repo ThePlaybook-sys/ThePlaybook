@@ -96,6 +96,10 @@ class RunGameRecommendationResponse(BaseModel):
     sportsbook_used: str | None
     game_skipped_reason: str | None
     candidates: list[CandidateRunResponseItem]
+    #: Pre-Phase-6 Operational Readiness Gate, Decision 5 -- "computed" or
+    #: "skipped_already_computed". See `app.orchestration.
+    #: recommendation_worker.GameRecommendationResult.status`.
+    status: str = "computed"
 
 
 def _build_real_adapter_registry() -> AdapterRegistry:
@@ -161,6 +165,7 @@ async def internal_run_game_recommendation(payload: RunGameRecommendationRequest
         fan_out_status=result.fan_out_status,
         sportsbook_used=result.sportsbook_used,
         game_skipped_reason=result.game_skipped_reason,
+        status=result.status,
         candidates=[
             CandidateRunResponseItem(
                 candidate_key=candidate_key(c.candidate),

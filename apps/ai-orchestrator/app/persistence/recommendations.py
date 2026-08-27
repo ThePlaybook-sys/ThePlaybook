@@ -120,6 +120,55 @@ async def create_recommendation_cycle(
     return rows[0]["id"]
 
 
+async def read_recommendation_by_correlation_id(client: httpx.AsyncClient, headers: dict, *, correlation_id: str) -> dict | None:
+    """Pre-Phase-6 Operational Readiness Gate, Decision 5. Reads back the
+    `recommendations` row for this correlation, if one exists yet --
+    `None` when this is genuinely the first attempt at this
+    `(master_refresh_run_id, game_id)` pair. Returns `id`/
+    `cycle_completed_at` only: this is a cheap pre-flight check, not a
+    full row read."""
+    response = await client.get(
+        "/rest/v1/recommendations",
+        params={"correlation_id": f"eq.{correlation_id}", "select": "id,cycle_completed_at"},
+        headers=headers,
+    )
+    if response.status_code != 200:
+        raise RecommendationsError(
+            f"failed to read recommendation by correlation_id={correlation_id!r}: {response.status_code} {response.text}"
+        )
+    rows = response.json()
+    return rows[0] if rows else None
+
+
+async def mark_recommendation_cycle_completed(
+    client: httpx.AsyncClient, headers: dict, *, recommendation_id: str, completed_at_iso: str
+) -> None:
+    """Pre-Phase-6 Operational Readiness Gate, Decision 5. Stamps
+    `cycle_completed_at` -- called exactly once, as the LAST step of a
+    successful `run_game_recommendation` call, regardless of whether
+    individual candidates within it succeeded or were isolated failures
+    (per-candidate failure isolation is unchanged and orthogonal to this
+    marker: the CYCLE, as a process, reached its normal end). Never
+    called on any other path -- a cycle that raises before reaching here
+    leaves this row's marker `NULL`, which is exactly what makes a
+    crashed/incomplete attempt safely retryable. `completed_at_iso` is
+    caller-supplied (mirrors `app.persistence.master_refresh_runs.
+    complete_master_refresh_run`'s own `completed_at_iso` parameter) so
+    the timestamp is injectable/deterministic in tests, never a bare
+    `now()` string PostgREST would store literally rather than evaluate."""
+    response = await client.patch(
+        "/rest/v1/recommendations",
+        json={"cycle_completed_at": completed_at_iso},
+        params={"id": f"eq.{recommendation_id}"},
+        headers={**headers, "Content-Type": "application/json"},
+    )
+    if response.status_code not in (200, 204):
+        raise RecommendationsError(
+            f"failed to mark recommendation cycle completed for recommendation_id={recommendation_id!r}: "
+            f"{response.status_code} {response.text}"
+        )
+
+
 async def resolve_agent(client: httpx.AsyncClient, headers: dict, *, agent_name: str) -> dict:
     """Reads `agents.id`/`agents.current_weight` by `name`. Raises
     `AgentConfigError` when no row matches -- never returns a
