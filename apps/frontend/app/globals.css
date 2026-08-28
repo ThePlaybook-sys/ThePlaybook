@@ -1,0 +1,101 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Quant Broadcast / Desk Open design tokens (Volume 5 v5.0 §4, Phase 6
+ * Milestone 1). Dark foundation only for V1 — Quant Broadcast is
+ * specified as a "premium dark foundation"; no light-theme variant is
+ * built this milestone. Every visual value in the product should trace
+ * back to one of these custom properties, never a hardcoded literal in
+ * component code.
+ */
+:root {
+  color-scheme: dark;
+
+  /* Surface levels — gives the four-layer progressive disclosure model
+     (Volume 5 §5) and Time Machine's staged narrative a real spatial
+     hierarchy: page < card < elevated-detail. */
+  --surface-page: #0a0c10;
+  --surface-card: #12151b;
+  --surface-elevated: #1a1e26;
+  --border-default: #262b34;
+
+  /* Text roles */
+  --text-primary: #f3f5f7;
+  --text-secondary: #9aa2ad;
+  --text-meta: #656d78;
+
+  /* Primary accent — interactive/primary-action emphasis only, never
+     reused for state or team meaning. */
+  --accent-primary: #4c8bf5;
+
+  /* State triad — win/loss/push, confidence-floor pass/fail, freshness.
+     Structurally separate from --team-identity below so a team's brand
+     color can never be mistaken for a state signal. */
+  --state-positive: #34c77b;
+  --state-negative: #f0554f;
+  --state-neutral: #8891a3;
+
+  /* Narrow team/game-identity channel. This default is a neutral
+     fallback; a real team color is applied per-instance (e.g. a
+     matchup header's accent edge) and must never expand beyond that
+     scoped context per Volume 5 §12's team-color usage rule. */
+  --team-identity: #7c8591;
+
+  /* Typography roles: display (verdict headlines) / heading / body /
+     label (meta, timestamps, badges) / data (confidence, EV, price —
+     tabular figures). */
+  --text-display-size: 2rem;
+  --text-display-leading: 1.15;
+  --text-display-weight: 700;
+
+  --text-heading-size: 1.25rem;
+  --text-heading-leading: 1.3;
+  --text-heading-weight: 600;
+
+  --text-body-size: 0.9375rem;
+  --text-body-leading: 1.55;
+
+  --text-label-size: 0.75rem;
+  --text-label-leading: 1.4;
+  --text-label-tracking: 0.02em;
+
+  --text-data-size: 1.5rem;
+  --text-data-leading: 1.2;
+  --text-data-weight: 600;
+
+  /* Spacing — single base-4 grid, replacing the ad hoc per-file inline
+     rem values in the prior /demo code. */
+  --space-xs: 0.25rem;
+  --space-sm: 0.5rem;
+  --space-md: 1rem;
+  --space-lg: 1.5rem;
+  --space-xl: 2rem;
+  --space-2xl: 3rem;
+
+  /* Radius — restrained, per Desk Open's non-rounded-consumer-app
+     identity. */
+  --radius-sm: 0.25rem;
+  --radius-md: 0.375rem;
+  --radius-lg: 0.625rem;
+
+  /* Motion — communicates real state change only (§9's principle: no
+     continuous/ambient animation, since no server-push mechanism
+     exists to justify implying continuous "live" activity). */
+  --motion-micro: 120ms;
+  --motion-state: 240ms;
+}
+
+body {
+  background-color: var(--surface-page);
+  color: var(--text-primary);
+}
+
+/* Accessibility foundation (Volume 5 v5.0 §8 baseline): every
+   interactive element gets a real, visible keyboard-focus indicator —
+   never suppressed, never left to the browser default alone. */
+:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 2px;
+}

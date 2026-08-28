@@ -41,7 +41,10 @@ jobs:
       - name: Install dependencies
         working-directory: apps/frontend
         run: npm install
-      - name: Build (acts as the frontend test gate at this phase)
+      - name: Test
+        working-directory: apps/frontend
+        run: npm test
+      - name: Build
         working-directory: apps/frontend
         run: npm run build
 

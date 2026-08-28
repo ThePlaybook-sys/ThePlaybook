@@ -1445,3 +1445,35 @@ A one-line cross-reference was added to §7's `postgame_reviews` description (`o
 **Alternatives considered:** Leaving the original Phase 6 section as written and treating the Pass 2/3 planning output as an unwritten side-channel understanding. Rejected — this project's own phase-gating discipline requires the roadmap itself to state a phase's actual milestones/acceptance criteria/exclusions; an implementer reading only the roadmap should not be able to reconstruct a materially wrong scope (chat backend, a new stake writer) from stale text.
 
 **Expected impact:** Phase 7 (Twilio)/Phase 8 (OCR)/Phase 9 (Analytics), which all declare "Phase 6 complete" as a dependency, are unaffected in substance — their dependency is on core frontend existing, which this entry doesn't change, only clarifies what "core frontend" actually contains. No other phase's scope changes.
+
+---
+
+## v5.0.1 (Volume 5) — 2026-08-28 — PATCH
+
+**Volumes affected:** Volume 5 (Frontend & UX Architecture)
+
+**Reason:** The v5.0 rewrite's §4 (Design System Foundations) deliberately specified token *roles* without committing final values, flagging exact palette/type-scale/spacing-scale/radius-scale/motion-duration numbers as a Phase 6 Milestone 1 implementation decision. Milestone 1 has now made those decisions.
+
+**Decision:** No change to §4's role/principle text. This entry (and a short header note) records that concrete values now exist in code — `apps/frontend/app/globals.css` (CSS custom properties) and `apps/frontend/tailwind.config.ts` (the Tailwind theme mapping those properties to utility classes) — and that those files, not this document, are the source of truth for exact values from this point forward. Concretely: a single dark foundation (no light theme in V1) with named surface/text/accent/state-triad/team-identity color roles; Inter as the sole typeface (via `next/font/google`, no runtime CDN calls, real tabular-figure support for the data-numeral role); a 4px-base spacing scale; a restrained 2–3-step radius scale; two motion-duration tiers (micro/state, no continuous/ambient animation given no server-push mechanism exists yet to justify implying live activity).
+
+**Alternatives considered:** Duplicating the exact values into this document as well as the code. Rejected — two sources of truth for the same numbers drift the moment one changes and the other doesn't; the document instead points at the code.
+
+**Expected impact:** No architectural change. Establishes the pattern for all future Phase 6 milestones: this volume specifies roles/behavior, `apps/frontend`'s own token/config files are authoritative for literal values.
+
+---
+
+## v4.1 (apps/frontend) — 2026-08-28 — Phase 6 Milestone 1: Design System
+
+**Volumes affected:** None directly (implementation, not a Blueprint decision) — see the Volume 5 v5.0.1 entry above for the corresponding documentation update.
+
+**Reason:** Phase 6's entry gate (classification A) authorized implementation starting with Milestone 1 — the design-system foundation every later product screen builds on.
+
+**Decision:** Added Tailwind CSS 3.4.10 (+ PostCSS 8.4.41, Autoprefixer 10.4.20) as the token-consumption layer Volume 5 §4 specifies (CSS custom properties in `app/globals.css`, mapped through `tailwind.config.ts`) — the frontend previously had zero styling dependencies. Added Vitest 2.0.5 + React Testing Library 16.0.0 + jsdom 24.1.1 as the frontend's first test framework (previously zero test infrastructure existed in `apps/frontend`); wired `npm test` into the CI `test-frontend` job ahead of the existing `npm run build` step. Built four reusable low-level primitives under `apps/frontend/components/ds/` — `Surface` (page/card/elevated spatial levels), `Text` (display/heading/body/label/data typography roles), `StateBadge` (the positive/negative/neutral state triad, the one component allowed to render those colors directly), `Container` (responsive mobile-priority/desktop-optimized wrapper) — each with unit tests (8 tests total, all passing). Root layout now loads Inter via `next/font/google` and applies the dark-foundation tokens; no product screens were built (that's Milestone 3).
+
+**Dependency decisions recorded (per HQ's explicit M1 instruction):** Tailwind CSS chosen over a CSS-in-JS or vanilla-CSS-modules approach because Volume 5 §4 specifically describes a CSS-custom-property-token-consumed-by-Tailwind-config architecture. Inter chosen as the sole typeface for real tabular-figure support and to avoid "AI-generated-looking UI clichés" (Volume 5 §12). Vitest chosen over Jest for lower configuration overhead and native Vite/esbuild transform reuse. A component-gallery/showcase route was deliberately not built — no such route exists in the approved Phase 6 IA, and validation instead happens via the new automated primitive tests plus a real production build.
+
+**Disclosed, not fixed (flagged for a future decision, out of this milestone's scope):** `npm audit` reports 6 vulnerabilities on the frontend after installing these dependencies — one is a moderate, dev-server-only esbuild advisory inherited transitively via Vitest's Vite dependency (does not affect production builds or CI test execution); the remainder are pre-existing, already present before this milestone, rooted entirely in Next.js 14.2.35's own bundled dependencies (its internal PostCSS, and Next.js's own advisories) — fixing them requires an unprompted major Next.js upgrade (to v16), which is an out-of-scope architectural change for a design-system milestone and was not made. Also disclosed: `apps/frontend` has never had ESLint configured (`next lint` prompts for first-time setup interactively) and CI has never gated on it — pre-existing, not introduced or fixed this milestone.
+
+**Alternatives considered:** Configuring ESLint as part of this milestone. Rejected — out of M1's stated scope (styling foundation, tokens, primitives), and CI doesn't currently gate on it; flagged instead of silently expanded into.
+
+**Expected impact:** No product behavior changed — `/` still renders its placeholder, `/demo` is untouched. Establishes the foundation Milestone 3 (Core Recommendation Experience) builds real screens against. Full validation: `tsc --noEmit` clean, `npm test` 8/8 passing, `npm run build` clean production build with all existing routes intact.
