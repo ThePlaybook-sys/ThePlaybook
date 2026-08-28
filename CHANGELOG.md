@@ -1375,3 +1375,73 @@ A one-line cross-reference was added to §7's `postgame_reviews` description (`o
 **Expected impact:** No other service touched. `cron-master-refresh` confirmed, via two live executions after this fix, structurally unable to reach the real SportsDataIO-calling endpoint regardless of trigger mechanism. `apps/workers` full regression: 38/38 passing after the error-message fix. The v5.3.1 CHANGELOG/Volume 2 entries stand as written — historically accurate records of what was believed and done at the time — corrected by this entry, not retroactively edited.
 
 **Full technical detail:** This entry, plus the v5.3.2 note in Volume 2, and the Pre-Phase-6 Operational Readiness Gate final closeout report delivered to Mac.
+
+---
+
+## v3.1 (Volume 1) — 2026-08-28 — PATCH
+
+**Volumes affected:** Volume 1 (Business, Product Vision, UX, Pricing, Customer Journeys)
+
+**Reason:** Phase 6 Product/UX planning (three passes, HQ Final Decision 4) found that §2.1's pricing copy ("all agents," "every agent") was written against the originally-specified 22-agent committee (Volume 4 §1, v2.0). Only 12 agents are actually implemented as of the Phase 5 close (Volume 4 §8 v5.6 note). Shipping "all agents"/"every agent" language in live pricing copy would materially overstate what Elite/Pro tiers actually deliver — a direct trust risk in a product whose core positioning is honesty.
+
+**Decision:** §2.1's tier table copy corrected: Pro's "all agents" → "full AI committee analysis"; Elite's "direct access to postgame review detail on every agent" → "direct access to postgame review detail across the committee." Per HQ's explicit instruction, this does not hardcode "12" into permanent pricing copy (a number that will go stale as the committee grows) — any UI surface that needs the literal current count should derive it from live system data, not from this document or from hardcoded frontend copy.
+
+**Alternatives considered:** Hardcoding "12 agents" directly into the pricing table. Rejected per HQ's explicit instruction — turns a point-in-time implementation fact into a permanent product promise that goes stale the moment the committee grows.
+
+**Expected impact:** No pricing, tier structure, or entitlement logic changed — copy only. Volume 4 §1/§8 already carry the 12-vs-22 disclosure and are unchanged by this entry. Downstream: Phase 6 frontend copy must follow this same rule (derive agent count from system data where a count is shown, never hardcode 22).
+
+---
+
+## v4.24 (Volume 3) — 2026-08-28 — PATCH
+
+**Volumes affected:** Volume 3 (Database Architecture)
+
+**Reason:** Phase 6 planning (Pass 3 §14 backend research) found that §10's named list of tables following the `auth.uid() = user_id` RLS pattern omits `subscriptions` and `user_recommendation_selections`, even though both carry that exact live pattern today. A self-acknowledged gap: the `20260825120000_recommendation_products_schema.sql` migration's own comment already flagged this omission for `subscriptions` at the time it was written, per this project's blueprint-vs-reality process, but the Volume 3 text itself was never corrected to match.
+
+**Decision:** §10's named list extended to explicitly include `subscriptions` and `user_recommendation_selections` alongside the tables already listed there.
+
+**Alternatives considered:** Leaving the gap undocumented since the policies themselves are correct and live. Rejected — Volume 3's own stated purpose is to be the authoritative schema/RLS reference; an incomplete list undermines that even when the underlying database is correct.
+
+**Expected impact:** Documentation-only. No schema or policy change — both tables' RLS policies are already live and correctly scoped; this closes a documentation completeness gap ahead of Phase 6 building the first client code that will actually depend on this RLS boundary being correctly understood.
+
+---
+
+## v5.10 (Volume 4) — 2026-08-28 — PATCH
+
+**Volumes affected:** Volume 4 (AI Intelligence Architecture)
+
+**Reason:** Phase 6 planning (HQ Final Decision 4) requires that any Phase 6 UI referencing "the committee" or an agent count reflect the real, currently-implemented 12-agent roster, not the originally-specified 22-agent design this volume's §1 still describes as the volume's subject. §8's v5.6 note and inline table correction already disclose the 12-vs-22 gap for the explainability-sourcing question specifically; this entry makes the same fact easy to find from §1, where a reader (or a future Phase 6 engineer) is most likely to look first.
+
+**Decision:** §1 gains a pointer alongside its "22-agent committee (21 fan-out agents plus the Meta Agent reviewer, v2.0)" description, directing readers to the v5.6 note (§8) and the Volume 1 v3.1 pricing-copy correction for the current, implemented count (12). §1's original text is left intact — it accurately describes the original design target, which the committee may still grow toward; only the pointer is new.
+
+**Alternatives considered:** Rewriting §1 to say "12-agent committee" outright. Rejected — would silently erase the documented original design target (22) rather than disclosing the gap, and would itself go stale the next time an agent is added, the same problem HQ flagged for Volume 1's pricing copy.
+
+**Expected impact:** Documentation-only, no architectural change. Reinforces (does not alter) the already-live v5.6 correction.
+
+---
+
+## v5.0 (Volume 5) — 2026-08-28 — MAJOR
+
+**Volumes affected:** Volume 5 (Frontend & UX Architecture)
+
+**Reason:** Volume 5 (v4.0, last revised 2026-08-06) predates the entire Phase 5 product-layer architecture — `recommendation_products`/`recommendation_legs`/the explanation tables/activation snapshots/lifecycle events/grading tables did not exist when it was last written. A three-pass Phase 6 Product/UX planning process (repository archaeology against the real Phase 4-5 schema and code, two rounds of HQ review and correction) produced a complete, evidence-based replacement architecture, formally approved by HQ as the Phase 6 baseline. Volume 5's body no longer describes the product Phase 4-5 actually built, and building Phase 6 against its original text would reference a data model, component shapes, and a chat-first landing route that don't exist.
+
+**Decision:** Volume 5's body (§3 Navigation, §4 Design System Foundations, §5 Component Specifications, §6 Key Screen States, §7 Notifications, §9-10) rewritten to match the approved Phase 6 architecture: a five-destination IA (`/today`, `/recommendations`, `/track-record`, `/history`, `/account`) replacing the original 13-route table; `/chat` demoted from default-landing-route to a future, unbuilt entry point (no NL Engine exists — Volume 4 §7's `conversation_messages` was never built); dashboard-first onboarding (not chat-first) collecting only `jurisdiction_state`; component contracts rewritten against the real `recommendation_products`/`recommendation_legs`/explanation-table shape and four-layer progressive disclosure; the AI Transparency Meter's `agent_agreement` field corrected to reference the actual `agreement_variance > 0.10` threshold (Volume 4 v5.2), not the original, structurally-unreachable `0.25`; Notifications (§7) reclassified as a future capability (no `notifications` table exists in any migration); Track Record scoped to only what's directly stored or cheaply derivable (sample size, product-level win/loss/push/void record, type breakdown) — units/ROI/EV/CLV/calibration/projected/verified performance explicitly excluded as unbuilt. The original v1.0-v4.0 version notes remain in the header block, undeleted, as the historical record of the volume's prior design; `CHANGELOG.md`'s existing v1.0/v2.0/v3.0/v4.0 entries for Volume 5 are likewise left standing, not rewritten.
+
+**Alternatives considered:** A MINOR patch-style correction, leaving the original route table/component shapes in place with corrective notes appended (Volume 4's pattern for the single Public Betting Agent line). Rejected for this volume specifically — the scale of drift (the entire product data model, not one field) means patch-style annotation would leave the primary body actively misleading for anyone implementing against it; a structural replacement, with the change fully accounted for in this entry per the four-field format, better serves a document whose whole job is to be an accurate implementation reference.
+
+**Expected impact:** This is the authoritative Phase 6 frontend specification going forward. No backend/database/AI architecture changed by this entry — Volumes 2/3/4 are unaffected. Downstream: the Engineering Roadmap's Phase 6 section (`v4.5` entry below) is updated to point here instead of the superseded original component/route spec.
+
+---
+
+## v4.5 (Engineering Roadmap) — 2026-08-28 — MINOR
+
+**Volumes affected:** Engineering Roadmap & Build Order (companion document)
+
+**Reason:** Phase 6's roadmap section (written before Phase 4-5 existed) cited the original Volume 5 v4.0 component/route spec, assumed `/chat` as the default landing route, and assigned the `user_recommendation_selections` production writer to this phase (added 2026-08-27, Milestone 5.4 inspection) — HQ's three-pass Phase 6 planning review (Final Decision 5) explicitly removed that writer from Phase 6 scope as new business logic, not UI/API exposure, to be placed on the roadmap separately by HQ later.
+
+**Decision:** Phase 6's section rewritten to match the approved architecture: milestones reordered to design-system → thin read-only API exposure → core recommendation experience → history/Time Machine → Track Record → onboarding/account/auth → responsive/accessibility polish; the `user_recommendation_selections` writer removed from this phase's scope (carried forward as an explicitly unplaced future capability, not a silent Phase 6.5); `/chat`-as-landing-route language removed (chat's build is deferred pending a future NL Engine milestone; onboarding is dashboard-first); an explicit exclusions list added (chat backend, bet verification/OCR, parlay intelligence, personalized stake writer, notifications, Market Integrity, Bet Timing, Adaptive Weighting promotion, new ranking/recommendation-ordering logic) so a UI gap discovered mid-implementation is flagged rather than silently built around.
+
+**Alternatives considered:** Leaving the original Phase 6 section as written and treating the Pass 2/3 planning output as an unwritten side-channel understanding. Rejected — this project's own phase-gating discipline requires the roadmap itself to state a phase's actual milestones/acceptance criteria/exclusions; an implementer reading only the roadmap should not be able to reconstruct a materially wrong scope (chat backend, a new stake writer) from stale text.
+
+**Expected impact:** Phase 7 (Twilio)/Phase 8 (OCR)/Phase 9 (Analytics), which all declare "Phase 6 complete" as a dependency, are unaffected in substance — their dependency is on core frontend existing, which this entry doesn't change, only clarifies what "core frontend" actually contains. No other phase's scope changes.

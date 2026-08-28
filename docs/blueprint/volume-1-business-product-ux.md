@@ -1,10 +1,11 @@
 # The Playbook — Volume 1
 ## Business, Product Vision, User Experience, Pricing, Customer Journeys
 
-**Version:** v3.0
-**Last updated:** 2026-08-05
+**Version:** v3.1
+**Last updated:** 2026-08-28
 **Status:** Foundational — downstream volumes inherit these decisions
 **Depends on:** Master Prompt (source spec)
+**v3.1 note (PATCH):** §2.1's pricing copy corrected — "all agents"/"every agent" language was written against the originally-specified 22-agent committee (Volume 4 §1); only 12 are implemented as of the Phase 5 close. Corrected to non-agent-count-specific language per Phase 6 Product/UX planning (HQ Final Decision 4) — any UI surface needing the literal current count should derive it from live system data, never hardcode a number here or in frontend copy. See `CHANGELOG.md` v3.1 entry for full reasoning. Note: §1's chat-first framing is unaffected by this — Phase 6 planning deferred chat's *build sequencing* (dashboard ships first; chat has no backend yet), not this volume's long-term product vision; see Volume 5 v5.0 and the Engineering Roadmap v4.5 entry for the sequencing decision.
 **v3.0 note:** Chat-first positioning confirmed in §1 — `/chat` is now the default landing surface, dashboard is the reference library. See `v3.0-amendments-conversational-intelligence.md` §1 for full reasoning.
 **v4.0 review note:** Reviewed as part of the internal markdown-consistency review (2026-08-06) alongside Volumes 2–5. Confirmed to require no changes — none of that round's four approved changes (multi-sport schema, Recommendation Worker, data quality metadata, environment policy) touch business model, pricing, personas, or product principles. Version number intentionally stays at v3.0; this note exists so a future review doesn't re-check the same ground assuming it was skipped.
 **Read next:** Volume 2 (System Architecture) once this is locked
@@ -36,8 +37,8 @@ Pay-per-pick (à la carte) rewards volume, not accuracy — it pressures the AI 
 | Tier | Price (recommend) | Who it's for | Unlocks |
 |---|---|---|---|
 | **Free / Scout** | $0 | Trial, lead gen | Daily consensus summary only (no individual agent breakdown), 1 sport, delayed line data (15 min), no bet slip verification |
-| **Playbook Pro** | $39–49/mo | Core paying user | Full recommendation engine, all agents, explainability, real-time lines, all launch sports, Betting DNA profile, bet slip OCR |
-| **Playbook Elite** | $99–149/mo | Serious/high-volume bettor | Everything in Pro + parlay construction tools, portfolio projection engine, priority agent compute (faster/deeper reasoning passes), early access to new sports, direct access to postgame review detail on every agent |
+| **Playbook Pro** | $39–49/mo | Core paying user | Full recommendation engine, full AI committee analysis, explainability, real-time lines, all launch sports, Betting DNA profile, bet slip OCR |
+| **Playbook Elite** | $99–149/mo | Serious/high-volume bettor | Everything in Pro + parlay construction tools, portfolio projection engine, priority agent compute (faster/deeper reasoning passes), early access to new sports, direct access to postgame review detail across the committee |
 | **Playbook Syndicate** (future) | Custom/annual | Small groups, content creators, semi-pro | Multi-seat, API access to recommendation feed, white-label dashboard option |
 
 Annual pricing at ~2 months free is the standard SaaS lever and should apply to Pro/Elite from launch — it converts your best users into 12-month retained revenue immediately and smooths cash flow, which matters more than optimizing per-user margin at this stage.
