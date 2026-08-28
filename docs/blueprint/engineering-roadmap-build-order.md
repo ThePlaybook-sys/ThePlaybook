@@ -1,8 +1,9 @@
 # The Playbook — Engineering Roadmap & Build Order
 
-**Version:** v4.4
-**Last updated:** 2026-08-27
+**Version:** v4.5
+**Last updated:** 2026-08-28
 **Type:** Companion document — not a Volume. Volumes 1–5 describe *what* the system is. This document describes *the order in which to build it* and *how to know each piece is actually done* before moving to the next.
+**v4.5 note:** Phase 6's section fully rewritten — written before Phase 4/5 existed, it cited the original Volume 5 v4.0 component/route spec, assumed `/chat` as the default landing route, and (as of a 2026-08-27 addition) assigned the `user_recommendation_selections` production writer to this phase. A three-pass Phase 6 Product/UX planning review (HQ-approved) replaced the IA/component/onboarding architecture (now matching Volume 5 v5.0) and explicitly removed the stake writer from this phase's scope as new business logic. See `CHANGELOG.md` v4.5 entry for full reasoning.
 **v2.0 note:** Amended per external architecture review, which arrived before any phase began building — no phase needed to be reopened, but Phases 1, 4, 5, and 6 gained new scope. See `v2.0-amendments-architecture-review.md` §7 for the full impact summary.
 **v3.0 note:** Amended per conversational-first UX and intelligence pipeline additions — Phases 1, 3, 4, 5, and 6 gained new scope (`daily_game_intelligence`, Redis, named vendors, worker cadences, Kelly Criterion, session memory, chat-first landing route). See `v3.0-amendments-conversational-intelligence.md` §12 for the full impact summary.
 **v4.0 note:** Amended per the internal markdown-consistency review — Phases 1, 3, and 4 gained new scope (normalized multi-sport core, Recommendation Worker), and a Technical Debt & Feature Backlog section added. See `CHANGELOG.md` v4.0 entry for full detail.
@@ -277,37 +278,43 @@ Phases 7, 8, and 9 are the first genuine parallelization point — everything be
 
 ---
 
-## Phase 6 — Dashboard / Core Frontend
+## Phase 6 — Product / UI / UX Frontend (v4.5 — fully rewritten)
 
-**Implements:** Volume 5 §2–§6
+**Implements:** Volume 5 v5.0 in full, per the three-pass Phase 6 Product/UX planning review (repository archaeology, HQ-approved architecture — Quant Broadcast/Desk Open visual direction, five-destination IA, four-layer recommendation detail, Time Machine six-stage stepper, narrowed Track Record scope).
 
 **Milestones:**
-1. Design tokens implemented and consumed by Tailwind config (Volume 5 §4)
-2. Core component library built (Recommendation Card, Game Card, Explainability Panel, etc.)
-   - **Owns the `user_recommendation_selections` (Volume 3 §5A) production writer (assigned 2026-08-27, Milestone 5.4 inspection)** — the durable selection/presentation event fires only once a real user views/selects a recommendation through this phase's own UI; also owns Bankroll Coach's personalized selection state capture at that moment, this table's materiality/idempotency behavior, and a Time Machine proof against a genuinely persisted user selection.
-3. Navigation/routing per Volume 5 §3 live
-4. Onboarding flow complete, ending in a live first recommendation in the same session
-5. No Bet Today and Bankroll Preservation states implemented as distinct UI treatments
+1. **Design system** — Quant Broadcast/Desk Open tokens (Volume 5 §4) implemented and consumed by Tailwind config; base low-level UI primitives built. No product screens yet.
+2. **Thin read-only API exposure** — routes exposing already-existing Phase 1-5 data/logic only (recommendation feed/detail, Time Machine reconstruction, grading/track-record aggregation, own-tier read). No new betting intelligence, no new recommendation-ranking logic, no new analytical engines, no new entitlement-existence logic. RLS preserved exactly as-is.
+3. **Core recommendation experience** — `/today`, `/recommendations`, `/recommendations/[displayId]` (four layers), all legitimate card/state variants including No Bet Today and Bankroll Preservation as distinct, equally-weighted treatments. No artificial "top pick" — a single qualifying recommendation may receive hero treatment, multiple recommendations render as an unordered semantic set with neutral display ordering only (Volume 5 §5).
+4. **History / Time Machine** — `/history`, `/history/[displayId]`, the stable six-stage vertical stepper (Volume 5 §5), translating `reconstruct_recommendation_product()`'s output into bettor-facing language, never a raw audit log by default.
+5. **Track Record** — `/track-record`, product-level (never leg-level-blended) win/loss/push/void record + sample-size-aware zero/low/mature states, scoped to only what's directly stored or cheaply derivable. Units/ROI/EV/CLV/calibration/projected/verified performance excluded — future capability, no placeholder charts.
+6. **Onboarding / Account / Auth** — `/onboarding` (dashboard-first, `jurisdiction_state` only), `/account` (profile, own-tier display, auth/session state), real customer signup/login/logout wired to the already-proven Phase 2 Supabase Auth backend (frontend currently has zero Supabase awareness — adding the SDK dependency and client env-var exposure is in scope; no new backend/auth architecture is).
+7. **Responsive / accessibility / polish** — mobile-priority for Today/cards/Layers 1-2, desktop-optimized for Layers 3-4/Time Machine/Track Record (Volume 5 §8); WCAG 2.1 AA audit; loading/unavailable/error states across all built screens.
+
+**Explicitly out of scope for this phase (do not silently build when a UI gap reveals the need — flag and stop instead):** conversational backend (`conversation_messages`, NL intent classification — Volume 4 §7 remains unbuilt), bet-slip verification/OCR, "My Bets," parlay construction/intelligence, the `user_recommendation_selections` personalized-stake writer (schema exists, remains an explicitly unplaced future capability — not this phase's job to build, not silently deferred to an unofficial "Phase 6.5"), notifications infrastructure (Volume 5 §7, no `notifications` table exists), Market Integrity, Bet Timing & Execution Intelligence, Adaptive Weighting promotion, any new recommendation/ranking algorithm.
 
 **Key Tasks:**
-- Implement design tokens first, before any component — matches the LEGO/component-library sequencing from the Designer Guide and Volume 1 §3
-- Build components against the exact prop shapes from Volume 5 §5, not ad hoc shapes that "seem close enough" to what the API returns
-- Build the four-step onboarding flow from Volume 1 §6 / Volume 5 §6, with the same-session first-recommendation requirement as a hard completion gate for this milestone
-- Build both distinct empty/alternate states (No Bet Today, Bankroll Preservation) rather than one generic fallback
-- **v2.0 addition:** build the AI Transparency Meter and Recommendation Timeline components as part of the Explainability Panel work (`v2.0-amendments-architecture-review.md` §4)
-- **v3.0 addition (biggest re-scope in this phase):** `/chat` is now the default landing route, not `/dashboard` (Volume 5 §3) — build the four-level progressive response format (Volume 4 §7) as core chat behavior, not an optional feature. The onboarding modal from Milestone 4 now layers on top of `/chat`, not `/dashboard`.
+- Implement design tokens first, before any component (Volume 5 §4)
+- Build components against the real Phase 5 data model (Volume 5 §5) — `recommendation_products`/`recommendation_legs`/the explanation tables/activation snapshots/grade events — not the pre-Phase-5 shapes this section originally cited
+- Build the minimal onboarding flow (Volume 5 §6) — `jurisdiction_state` only; do not ask questions with no current product consumer
+- Build No Bet Today and Bankroll Preservation as distinct, first-class UI treatments, not one generic empty state
+- Before implementing the Track Record milestone, verify existing product-grade event semantics genuinely support the proposed Win/Loss/Push/Void presentation for every currently-active recommendation type; if an outcome can't be honestly represented at the product level, narrow the UI rather than inventing an aggregation rule
+- Any agent-count/committee-size UI language must derive from live system data, never hardcode the originally-specified 22 (Volume 1 v3.1, Volume 4 v5.10)
 
-**Dependencies:** Phase 5 complete (needs a working recommendation pipeline to render real data against) and Phase 2 (needs auth for onboarding).
+**Dependencies:** Phase 5 complete (needs a working recommendation pipeline to render real data against) and Phase 2 (needs auth for onboarding — already formally closed and live-proven, per Phase 2's own closure record below).
 
 **Acceptance Criteria:**
-- A new user can complete onboarding and see either a real recommendation or a correctly-differentiated No Bet Today / Bankroll Preservation state, in the same session, with no dead-end or blank screen at any step
-- Every component consuming backend data uses the typed contracts from Volume 5 §5 with no untyped `any` shortcuts on the data layer
-- Mobile-width rendering verified for the dashboard and recommendation feed specifically, per Volume 5 §8's mobile-first requirement
+- A new user can complete onboarding (jurisdiction only) and reach `/today`, seeing either a real recommendation or a correctly-differentiated No Bet Today / Bankroll Preservation state, with no dead-end or blank screen at any step
+- No screen implies a business ranking (top pick, best bet, #1) that isn't backed by a persisted field
+- Every component consuming backend data uses typed contracts with no untyped `any` shortcuts on the data layer
+- No Category C metric (units, ROI, EV, CLV, calibration, projected/verified performance) appears anywhere in the shipped Track Record UI
+- Mobile-priority rendering verified for `/today` and the recommendation feed/cards specifically; desktop rendering verified for Layers 3-4, Time Machine, and Track Record
 
 **Testing Requirements:**
-- Full onboarding flow tested as an automated end-to-end test, not just manually clicked through once
-- Visual regression testing on the core component set once the design system is locked, to catch accidental drift from the token system
-- Accessibility audit against the WCAG 2.1 AA baseline from Volume 5 §8 — keyboard navigation and screen-reader labeling specifically, before this phase is called done
+- Full onboarding flow tested as an automated end-to-end test, not just manually clicked through once, mirroring the proof pattern already established for Phase 2 (`scripts/phase2_e2e_test.py`)
+- Contract test on every thin read-only route confirming it returns only existing data/logic, no new server-side computation
+- Visual regression testing on the core component set once the design system is locked
+- Accessibility audit against the WCAG 2.1 AA baseline (Volume 5 §8) — keyboard navigation and screen-reader labeling specifically, before this phase is called done
 
 ---
 
