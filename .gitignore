@@ -6,6 +6,7 @@ venv/
 node_modules/
 .next/
 next-env.d.ts
+*.tsbuildinfo
 
 .env
 .env.local
