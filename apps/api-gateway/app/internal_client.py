@@ -49,3 +49,25 @@ async def call_sports_intel_layer(
             return await client.request(method, path, json=json, headers=_internal_headers())
     except httpx.HTTPError as exc:
         raise InternalServiceError(f"sports-intel-layer call failed: {method} {path}: {exc}") from exc
+
+
+async def call_ai_orchestrator(
+    method: str, path: str, *, json: dict | None = None, timeout: float = 10.0
+) -> httpx.Response:
+    """Phase 6 Milestone 2 -- the same seam as `call_sports_intel_layer`
+    above, pointed at `ai-orchestrator` instead, for the one route that
+    needs it: the Time Machine reconstruction proxy. `AI_ORCHESTRATOR_URL`
+    is a new env var (mirrors `SPORTS_INTEL_LAYER_URL`'s own convention
+    exactly -- this repo's established pattern for "where is this other
+    internal service," not a Railway-auto-injected name), set to
+    `http://ai-orchestrator.railway.internal:8080` per the PORT=8080
+    convention this project's Pre-Phase-6 gate already confirmed live for
+    every internal service."""
+    base_url = os.environ.get("AI_ORCHESTRATOR_URL")
+    if not base_url:
+        raise HTTPException(status_code=500, detail="AI_ORCHESTRATOR_URL not configured")
+    try:
+        async with httpx.AsyncClient(base_url=base_url, timeout=timeout) as client:
+            return await client.request(method, path, json=json, headers=_internal_headers())
+    except httpx.HTTPError as exc:
+        raise InternalServiceError(f"ai-orchestrator call failed: {method} {path}: {exc}") from exc

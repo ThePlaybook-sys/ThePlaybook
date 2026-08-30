@@ -1,9 +1,10 @@
 # The Playbook — Volume 5
 ## Frontend & UX Architecture: Dashboards, Navigation, Components, Notifications, Onboarding, Accessibility
 
-**Version:** v5.0.1
+**Version:** v5.0.2
 **Last updated:** 2026-08-28
 **Depends on:** Volume 1 (v3.1 — personas, tiers, journeys), Volume 3 (v4.24 — the real Phase 5 product/explanation/activation-snapshot/grading schema), Volume 4 (v5.10 — explainability mapping, consensus/agreement-variance semantics, 12-agent committee reality)
+**v5.0.2 note (PATCH):** New §11 documents the six real API routes Phase 6 Milestone 2 shipped (`apps/api-gateway`) — exact routes, tier-gating behavior, data sources, and the neutral-ordering/freshness/Track-Record-scope rules those routes actually enforce, plus a real RLS-policy gap found during implementation and deliberately preserved (not fixed) in the API layer. See `CHANGELOG.md` v5.0.2 entry for full reasoning.
 **v5.0.1 note (PATCH):** Phase 6 Milestone 1 (Design System) implemented the §4 token roles this volume deliberately left as candidate structural values pending an implementation pass. Concrete values (palette, Inter as the typeface, exact type/spacing/radius/motion scale) now live in `apps/frontend/app/globals.css` and `apps/frontend/tailwind.config.ts` — those files are the single source of truth for exact values going forward, not this document, to avoid the two drifting apart. §4's role/principle text is unchanged and still governs; only "what number" questions it left open are now answered, in code. See `CHANGELOG.md` v5.0.1 entry and `PROGRESS.md`'s Milestone 1 entry for the full dependency/decision record.
 **v5.0 note (MAJOR):** Full structural rewrite. This volume's v1.0–v4.0 body was written before Phase 4/5 built the real product layer (`recommendation_products`/`recommendation_legs`/explanation tables/activation snapshots/lifecycle events/grading tables did not exist yet) and no longer describes the product Phase 4-5 actually built. Replaced by the Phase 6 Product/UX architecture produced across three planning passes (repository archaeology against the real schema/code, two rounds of HQ review) and formally approved as the Phase 6 baseline. Headline changes: a five-destination IA (`/today`, `/recommendations`, `/track-record`, `/history`, `/account`) replaces the original 13-route table; `/chat` is demoted from default-landing-route to a deferred future entry point (no NL Engine or `conversation_messages` was ever built — Volume 4 §7 remains unimplemented); onboarding is dashboard-first, not chat-first, and collects only `jurisdiction_state`; component contracts are rewritten against the real product/leg/explanation schema and a four-layer progressive-disclosure model; the Transparency Meter's agreement formula is corrected to the real `> 0.10` threshold; Notifications is reclassified future (no `notifications` table exists); Track Record is scoped to only what's directly stored or cheaply derivable. The v1.0–v4.0 notes below are left standing as the historical record of this volume's prior design — not deleted, not silently rewritten. See `CHANGELOG.md` v5.0 entry for the full four-field reasoning, and the Engineering Roadmap v4.5 entry for the matching Phase 6 milestone update.
 **v4.0 note:** `data_quality` in the AI Transparency Meter (§5) now computed from `daily_game_intelligence`'s concrete per-category metadata (Volume 3 §4.1) instead of vague cache-freshness language. See `CHANGELOG.md` v4.0 entry for full reasoning. **[Superseded by v5.0 — see the corrected Transparency Meter contract in §5 below.]**
@@ -239,6 +240,27 @@ Re-checked against the real Phase 4-5 implementation (2026-08-28), not just the 
 - Authoritative cross-product recommendation ordering/display sort (when multiple recommendations exist on one slate) was flagged as genuinely open during Phase 6 planning (Pass 3 §8) and needs an explicit HQ decision before `/today`/`/recommendations` display-order is finalized — no rank field is persisted anywhere in the schema today.
 
 ---
+
+## 11. API Read Contracts (Phase 6 Milestone 2 -- v5.0.2)
+
+Every route below is a thin, read-only exposure of already-existing Phase 1-5 data/logic (`apps/api-gateway`) -- none computes a probability, EV, stake, ranking, or new explainability. Auth: bearer JWT via the existing `get_current_user` dependency on every route.
+
+| Route | Purpose | Tier-gating | Data source |
+|---|---|---|---|
+| `GET /v1/recommendations/today` | Today's cards (§2) | Per-row, mirrors `recommendation_products_tier_gated_select` | `recommendation_products`/`recommendation_legs`, `games`, `master_refresh_runs`, activation snapshots |
+| `GET /v1/recommendations` | Broader feed (`since`/`until`/`limit`) | Same | Same |
+| `GET /v1/recommendations/{displayId}` | Layers 1-4 detail (§5) | Same (404, not 403, when ungated) | + explanations, `recommendation_agent_outputs`, `agents`, `consensus_snapshots` |
+| `GET /v1/recommendations/{displayId}/reconstruction` | Time Machine | Same | Proxies `ai-orchestrator`'s internal wrapper around `reconstruct_recommendation_product` (Milestone 5.3) -- reused verbatim, never rebuilt here |
+| `GET /v1/track-record` | Sample size + product-level W/L/P/V + type breakdown (§6) -- A/B metrics only | Applied to the underlying grade-event aggregation itself (a free user's aggregate never reflects Elite-only rows) | `recommendation_product_grade_events` (latest per product, correction-aware) |
+| `GET /v1/user/subscription` | Own tier/status only | N/A (own row) | `subscriptions` |
+
+**Neutral ordering (HQ Final Decision 1):** game-scoped cards order by `games.scheduled_start`; slate-scoped cards (no single game) fall back to `recommendation_activation_snapshots.activated_at`. Never EV or confidence. No response field is named or implies "primary"/"top"/"best" -- multiple same-day recommendations are an unordered-by-intelligence set with a neutral chronological display order.
+
+**Freshness (HQ Final Decision 10):** `decidedAt` on every card is `activated_at` -- recommendation decision time. Source/intelligence freshness (`master_refresh_runs.completed_at`) is a separate, page-level concept this API doesn't attach to individual cards. No response anywhere uses a generic `updatedAt`.
+
+**Track Record scope, precisely (HQ Final Decision 2/5):** `sampleSize`/`record` count `WIN`/`LOSS`/`PUSH`/`VOID_NO_ACTION`/`MIXED_SETTLED` only -- `NOT_APPLICABLE` (no_bet/bankroll_preservation) and `PENDING_MISSING_DATA` are excluded entirely, not zero-filled. `MIXED_SETTLED` (the real, wired `multiple_singles` product-level outcome) is its own bucket, never folded into `win`/`loss`. The unit of observation is always the product, via de-duplication on the latest `computed_at` per `recommendation_product_id` (so a correction supersedes, never double-counts). `sampleStatus` (`zero`/`low`/`mature`) uses a disclosed n=30 threshold -- a conventional statistical minimum, not a Blueprint-derived value; open to revision. Units/ROI/EV/CLV/calibration/projected/verified performance remain absent -- no live writer exists for any of them.
+
+**A real gap in the underlying RLS policy, found and preserved, not fixed:** `recommendation_products_tier_gated_select` only special-cases `min_required_tier in ('free','pro','elite')` -- a hypothetical `'syndicate'` value (schema-permitted, never set by any code) would be denied to every caller, including a syndicate subscriber, since neither the `free` branch nor either `exists` sub-clause matches it. `app.entitlement.tier_permits` (api-gateway) mirrors this literally rather than "fixing" it, since fixing it in the API would expose more than the database's own real policy currently does. Dormant today; flagged for whoever eventually assigns `min_required_tier='syndicate'` to a row.
 
 ## Changelog Entry for This Version
 
