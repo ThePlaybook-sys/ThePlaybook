@@ -19,6 +19,7 @@ from app.features.grading import GRADING_VERSION
 from app.orchestration.adaptive_weighting import evaluate_committee
 from app.orchestration.postgame_grading import grade_game, grade_pending_bankroll_preservation_products
 from app.orchestration.postgame_review_narrative import generate_and_persist_postgame_review
+from app.orchestration.reconstruction import ReconstructionError, reconstruct_recommendation_product
 from app.orchestration.recommendation_worker import RecommendationWorkerError, run_game_recommendation
 from app.orchestration.strategy_finalize import finalize_slate_strategy
 from app.persistence.model_config import list_active_model_routing_rules, list_active_models
@@ -442,6 +443,32 @@ async def internal_run_adaptive_weighting(payload: RunAdaptiveWeightingRequest) 
             for a in result.agents
         ],
     )
+
+
+@app.get(
+    "/v1/internal/reconstruction/{recommendation_product_id}",
+    dependencies=[Depends(require_internal_token)],
+)
+async def internal_get_reconstruction(recommendation_product_id: str) -> dict:
+    """Phase 6 Milestone 2 -- a thin serialization wrapper around
+    Milestone 5.3's already-tested `reconstruct_recommendation_product`
+    (`app.orchestration.reconstruction`). Reachable only via
+    `INTERNAL_SERVICE_TOKEN`, called only by `api-gateway`'s Time
+    Machine proxy route, which is where tier-gating and per-user
+    ownership scoping happen -- this endpoint does none of that itself,
+    exactly like the function it wraps. `dataclasses.asdict` recurses
+    through every nested dataclass field automatically; nothing here
+    re-derives, re-ranks, or narrates anything the reconstruction
+    itself didn't already produce."""
+    headers = supabase_client.auth_headers()
+    async with supabase_client.new_client(timeout=30.0) as client:
+        try:
+            result = await reconstruct_recommendation_product(
+                client, headers, recommendation_product_id=recommendation_product_id
+            )
+        except ReconstructionError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return dataclasses.asdict(result)
 
 
 if os.environ.get("RAILWAY_ENVIRONMENT_NAME", "dev") == "dev":

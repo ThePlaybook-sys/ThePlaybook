@@ -40,6 +40,16 @@ from app.demo_routes import router as demo_router  # noqa: E402
 app.include_router(demo_login_router)
 app.include_router(demo_router)
 
+# Phase 6 Milestone 2 -- thin read-only exposure of existing Phase 1-5
+# data (Volume 5 v5.0). See each module's own docstring for scope.
+from app.recommendations import router as recommendations_router  # noqa: E402
+from app.subscription import router as subscription_router  # noqa: E402
+from app.track_record import router as track_record_router  # noqa: E402
+
+app.include_router(recommendations_router)
+app.include_router(track_record_router)
+app.include_router(subscription_router)
+
 
 if os.environ.get("RAILWAY_ENVIRONMENT_NAME", "dev") == "dev":
 
