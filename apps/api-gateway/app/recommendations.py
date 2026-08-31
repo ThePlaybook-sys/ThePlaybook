@@ -7,6 +7,30 @@ tier-gating this module applies uniformly, and
 (`/reconstruction`) that reuses Milestone 5.3's `reconstruct_
 recommendation_product` instead of re-deriving history itself.
 
+**Milestone 2.1 (additive contract correction, HQ-authorized): product
+grade summary.** `recommendation_products.status` stays exactly
+`'active'|'withdrawn'` -- lifecycle status -- and is never overloaded
+with a `'graded'` value; grade state is a separate dimension, carried in
+the new `grade` field below, sourced from `recommendation_product_
+grade_events` (Milestone 5.4). `grade` is `null` for an ungraded product
+and otherwise `{outcome, gradedAt, isCorrection, correctedAt}`. The
+current-outcome resolution (`_current_grade` below) mirrors the exact
+rule `app.track_record.get_track_record` already established in this
+codebase: the correction chain is append-only and a correction always
+lands with a strictly later `computed_at` than the row it supersedes, so
+the latest row by `computed_at` is the authoritative current outcome --
+no new merge/reconciliation algorithm is invented here. `PENDING_
+MISSING_DATA` never appears at product scope (`app.orchestration.
+postgame_grading._maybe_rollup_product`, ai-orchestrator, skips
+persisting a product-level row entirely while any leg is still
+non-terminal), so a present `grade.outcome` is always one of
+`WIN|LOSS|PUSH|VOID_NO_ACTION|NOT_APPLICABLE|MIXED_SETTLED`. Per-leg
+grade exposure was inspected and is not added: no field in the approved
+Volume 5 §5 component contracts (card or four-layer detail) reads a
+per-leg outcome -- `MIXED_SETTLED` is already the authoritative
+product-level rollup value, so the frontend never needs to derive it
+from legs.
+
 **Ordering (HQ Final Decision 1):** no cross-product rank/priority field
 exists anywhere in the schema. A game-scoped product orders by its own
 game's `scheduled_start` (the real kickoff time, confirmed populated and
@@ -107,6 +131,47 @@ async def _read_legs_by_product_ids(client: httpx.AsyncClient, product_ids: list
     return legs_by_product
 
 
+async def _read_grade_events_by_product_ids(client: httpx.AsyncClient, product_ids: list[str]) -> dict[str, list[dict]]:
+    if not product_ids:
+        return {}
+    response = await client.get(
+        "/rest/v1/recommendation_product_grade_events",
+        params={
+            "recommendation_product_id": f"in.({','.join(product_ids)})",
+            "select": "recommendation_product_id,outcome,is_correction,computed_at",
+            "order": "computed_at.asc",
+        },
+        headers=postgrest_headers(),
+    )
+    response.raise_for_status()
+    events_by_product: dict[str, list[dict]] = {}
+    for row in response.json():
+        events_by_product.setdefault(row["recommendation_product_id"], []).append(row)
+    return events_by_product
+
+
+def _current_grade(events: list[dict]) -> dict | None:
+    """Resolves the authoritative CURRENT grade for one product from its
+    append-only recommendation_product_grade_events rows (chronological,
+    oldest first -- see caller). See module docstring: the latest row by
+    computed_at is always the current outcome, mirroring app.track_
+    record.get_track_record's own resolution rule rather than inventing
+    a second one. `gradedAt` is the ORIGINAL grade's timestamp (when the
+    product was first graded); `correctedAt` is only set when the
+    current row is itself a correction, giving the frontend a real date
+    for the "result corrected [date]" sub-label (Volume 5 §5) without it
+    ever reconstructing the chain itself."""
+    if not events:
+        return None
+    original, current = events[0], events[-1]
+    return {
+        "outcome": current["outcome"],
+        "gradedAt": original["computed_at"],
+        "isCorrection": current["is_correction"],
+        "correctedAt": current["computed_at"] if current["is_correction"] else None,
+    }
+
+
 def _order_key(product: dict, games_by_id: dict[str, dict], snapshots_by_product: dict[str, dict]) -> str:
     """Neutral chronological order key -- see module docstring. Falls
     back to `created_at` only in the (should-never-happen) case a
@@ -141,6 +206,7 @@ def _serialize_product(
     game: dict | None,
     decided_at: str | None,
     explanation: dict | None,
+    grade: dict | None = None,
 ) -> dict:
     return {
         "displayId": product["display_id"],
@@ -151,6 +217,7 @@ def _serialize_product(
         "withdrawnAt": product.get("withdrawn_at"),
         "withdrawalReason": product.get("withdrawal_reason"),
         "decidedAt": decided_at,
+        "grade": grade,
         "game": (
             {
                 "homeTeam": game["home_team"],
@@ -180,11 +247,12 @@ async def _visible_products_with_context(
     product_ids = [p["id"] for p in visible]
     game_ids = [p["game_id"] for p in visible if p.get("game_id")]
 
-    games_by_id, snapshots_by_product, legs_by_product, explanations_by_product = (
+    games_by_id, snapshots_by_product, legs_by_product, explanations_by_product, grade_events_by_product = (
         await _read_games_by_ids(client, game_ids),
         await _read_activation_snapshots_by_product_ids(client, product_ids),
         await _read_legs_by_product_ids(client, product_ids),
         await _read_explanations_by_product_ids(client, product_ids),
+        await _read_grade_events_by_product_ids(client, product_ids),
     )
 
     serialized = []
@@ -200,6 +268,7 @@ async def _visible_products_with_context(
                     game=games_by_id.get(product.get("game_id")),
                     decided_at=snapshot["activated_at"] if snapshot else None,
                     explanation=explanations_by_product.get(product["id"]),
+                    grade=_current_grade(grade_events_by_product.get(product["id"], [])),
                 ),
             )
         )
@@ -409,6 +478,7 @@ async def get_recommendation_detail(
         snapshots = await _read_activation_snapshots_by_product_ids(client, [product["id"]])
         explanation = (await _read_explanations_by_product_ids(client, [product["id"]])).get(product["id"])
         legs = (await _read_legs_by_product_ids(client, [product["id"]])).get(product["id"], [])
+        grade_events = (await _read_grade_events_by_product_ids(client, [product["id"]])).get(product["id"], [])
 
         leg_details = []
         for leg in legs:
@@ -461,6 +531,7 @@ async def get_recommendation_detail(
             game=game,
             decided_at=snapshots.get(product["id"], {}).get("activated_at"),
             explanation=explanation,
+            grade=_current_grade(grade_events),
         )
         base["legs"] = leg_details
         base["whyNotOtherShapes"] = explanation["why_not_other_shapes"] if explanation else None

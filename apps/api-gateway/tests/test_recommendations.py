@@ -33,6 +33,7 @@ def _mock_empty_reads() -> None:
         "recommendation_activation_snapshots",
         "recommendation_legs",
         "recommendation_product_explanations",
+        "recommendation_product_grade_events",
         "master_refresh_runs",
     ):
         respx.get(f"{SUPABASE_URL}/rest/v1/{table}").mock(return_value=httpx.Response(200, json=[]))
@@ -167,6 +168,7 @@ def test_bankroll_preservation_product_survives_serialization():
         )
     )
     respx.get(f"{SUPABASE_URL}/rest/v1/recommendation_legs").mock(return_value=httpx.Response(200, json=[]))
+    respx.get(f"{SUPABASE_URL}/rest/v1/recommendation_product_grade_events").mock(return_value=httpx.Response(200, json=[]))
     respx.get(f"{SUPABASE_URL}/rest/v1/recommendation_product_explanations").mock(
         return_value=httpx.Response(
             200,
@@ -364,6 +366,7 @@ def test_neutral_ordering_uses_game_start_time_not_confidence_or_ev():
     )
     respx.get(f"{SUPABASE_URL}/rest/v1/recommendation_activation_snapshots").mock(return_value=httpx.Response(200, json=[]))
     respx.get(f"{SUPABASE_URL}/rest/v1/recommendation_product_explanations").mock(return_value=httpx.Response(200, json=[]))
+    respx.get(f"{SUPABASE_URL}/rest/v1/recommendation_product_grade_events").mock(return_value=httpx.Response(200, json=[]))
 
     def _legs_respond(request: httpx.Request) -> httpx.Response:
         product_ids = request.url.params.get("recommendation_product_id", "")
