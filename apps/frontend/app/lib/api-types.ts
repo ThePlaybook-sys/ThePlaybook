@@ -18,6 +18,24 @@ export type RecommendationType =
 
 export type RecommendationStatus = "active" | "withdrawn";
 
+export type GradeOutcome =
+  | "WIN"
+  | "LOSS"
+  | "PUSH"
+  | "VOID_NO_ACTION"
+  | "NOT_APPLICABLE"
+  | "MIXED_SETTLED";
+
+/** Milestone 2.1 -- additive, independent of RecommendationStatus.
+ * recommendation_products.status never carries a 'graded' value; grade
+ * state lives here instead, null when the product is ungraded. */
+export interface RecommendationGrade {
+  outcome: GradeOutcome;
+  gradedAt: string;
+  isCorrection: boolean;
+  correctedAt: string | null;
+}
+
 export interface GameSummary {
   homeTeam: string;
   awayTeam: string;
@@ -46,6 +64,7 @@ export interface RecommendationCardData {
   withdrawnAt: string | null;
   withdrawalReason: string | null;
   decidedAt: string | null;
+  grade: RecommendationGrade | null;
   game: GameSummary | null;
   oneLineSummary: string | null;
   legs: RecommendationLeg[];
