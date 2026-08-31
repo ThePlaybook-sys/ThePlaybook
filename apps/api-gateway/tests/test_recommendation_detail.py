@@ -82,6 +82,7 @@ def _mock_common(*, agent_outputs: list[dict] | None = None) -> None:
         )
     )
     respx.get(f"{SUPABASE_URL}/rest/v1/recommendation_legs").mock(return_value=httpx.Response(200, json=[_LEG]))
+    respx.get(f"{SUPABASE_URL}/rest/v1/recommendation_product_grade_events").mock(return_value=httpx.Response(200, json=[]))
     respx.get(f"{SUPABASE_URL}/rest/v1/recommendation_leg_explanations").mock(
         return_value=httpx.Response(
             200,
@@ -161,6 +162,7 @@ def test_detail_serializes_all_four_layers():
     body = response.json()
     # Layer 1
     assert body["displayId"] == "2026-00010"
+    assert body["grade"] is None
     # Layer 2
     leg = body["legs"][0]
     assert leg["strongestEvidence"] == "Injury Intelligence, Weather"
