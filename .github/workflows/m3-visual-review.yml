@@ -1,0 +1,39 @@
+name: M3 Visual Review Handoff (temporary/diagnostic)
+
+# One-off, temporary diagnostic workflow for the Phase 6 Milestone 3
+# mandatory visual review handoff (HQ-authorized "M3 VISUAL REVIEW
+# BLOCKER RESOLUTION"). The build sandbox's egress policy blocks direct
+# access to both Supabase and the Railway DEV frontend domain -- this
+# runs the same capture in a GitHub Actions runner, which has normal
+# internet access, exactly like scripts/phase2_e2e_test.py already does
+# for the same class of problem. Not part of the CI/CD pipeline; not
+# wired to any trigger but manual dispatch. Delete once the visual
+# review is complete and HQ has reviewed the artifact.
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  visual-review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: |
+          pip install httpx==0.27.2 playwright==1.47.0
+          playwright install --with-deps chromium
+      - name: Capture DEV screenshots
+        env:
+          # Supabase anon key is public-safe by design (meant for
+          # client-side embedding), same non-secret treatment already
+          # used in phase2-e2e.yml.
+          DEV_ANON_KEY: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5od2p0c2RlYmdpd3Nrc2h6cWlxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODU5NTUzNjcsImV4cCI6MjEwMTUzMTM2N30.pgS7J8dUqMHN52gPMt_yg-BiXiNU92zJk7Ct3gzwM2E"
+        run: python scripts/m3_visual_review.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: m3-visual-review
+          path: visual-review-output/
+          retention-days: 14
