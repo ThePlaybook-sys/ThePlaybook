@@ -1539,3 +1539,33 @@ A one-line cross-reference was added to §7's `postgame_reviews` description (`o
 **Alternatives considered:** A second, independent grade-resolution query written from scratch in api-gateway. Rejected per HQ's explicit instruction to reuse the existing resolution semantics rather than invent a new algorithm — `track_record.py`'s `order=computed_at.desc`/first-seen-per-product pattern is the same rule, applied here per-product with both endpoints of the chain (original and current) captured for the richer `gradedAt`/`correctedAt` shape the card spec needs. Filtering the grade-event query by a hardcoded `grading_version` constant. Rejected — would duplicate a value api-gateway has no other reason to know, and isn't needed: the correction chain only ever moves forward in time regardless of version, so latest-by-`computed_at` stays correct even across a future version bump.
 
 **Expected impact:** No new grading computation, no change to any existing M2 response field. `/today`, `/recommendations`, and the detail route now carry the data Milestone 3's approved Graded/Corrected/Mixed Settled card variants require. Milestone 3 resumes from this corrected contract.
+
+---
+
+## v5.0.4 (Volume 5) — 2026-08-31 — PATCH
+
+**Volumes affected:** Volume 5 (Frontend & UX Architecture)
+
+**Reason:** Phase 6 Milestone 3 built the first real screens against §5/§6's already-approved component contracts and screen states; §2's stack description didn't yet name the concrete data-fetching architecture the build actually used.
+
+**Decision:** §2 gains the Server-Component-direct-fetch pattern: `/today`, `/recommendations`, `/recommendations/[displayId]` read a `pb_session_token` session cookie via `next/headers` and fetch api-gateway directly (`API_GATEWAY_URL`), no client proxy or CORS surface, mirroring the read-only nature of these pages versus `/demo`'s interactive-tool proxy. Every fetch helper returns a discriminated `ApiResult<T>` so pages render a distinct state per outcome. No change to §5/§6's component/screen-state text — the build matches what was already specified.
+
+**Alternatives considered:** A client-side proxy route (`/demo`'s pattern). Rejected — unnecessary CORS/proxy surface for pages that never need the browser to call anything itself.
+
+**Expected impact:** Documentation only, matching the Milestone 3 code entry (below).
+
+---
+
+## v4.4 (apps/frontend) — 2026-08-31 — Phase 6 Milestone 3: Core Recommendation Experience
+
+**Volumes affected:** Volume 5 (v5.0.4 entry above) — implementation entry, not itself a Blueprint decision.
+
+**Reason:** HQ authorized Milestone 3 to build the first real product screens (`/today`, `/recommendations`, `/recommendations/[displayId]`) against M1's design system and M2/M2.1's live API, after the M2.1 contract correction unblocked the Graded/Corrected/Mixed Settled card variants.
+
+**Decision:** Built `apps/frontend/app/lib/api.ts` (server-side fetch helpers, `pb_session_token` cookie, `ApiResult<T>` per HQ's "never equate empty with error/analyzing" rule) and `app/lib/format.ts` (shared date formatting). Built `components/recommendations/`: `RecommendationCard` (Layer 1 -- Active/No Bet/Bankroll Preservation/Withdrawn, equal visual weight for passing verdicts), `GradeBadge` (Win/Loss/Push/Void/Mixed Settled, `NOT_APPLICABLE` intentionally renders nothing since it isn't a settled-bet outcome and the card's own passing headline already carries the verdict, correction sub-label with its own date), `FreshnessLabel` (`decidedAt` only, never "updated"/"refreshed" language), `EmptyState` (every honest empty/unauthenticated/error render), `RecommendationDetail` (Layers 1-4: Layer 2 evidence/risk/contributing-agent-names visible by default, Layers 3-4 behind native `<details>`/`<summary>` disclosures -- keyboard-accessible with zero JS, provenance/consensus numbers never shown outside them). Built the three pages, each handling all four `ApiResult` kinds distinctly. Set `API_GATEWAY_URL` on `frontend` (dev), `http://api-gateway.railway.internal:8080`, `skipDeploys: true`.
+
+**Full test/regression evidence:** 36/36 frontend tests passing (8 pre-existing design-system + 6 new `api.ts` fetch-helper tests with `next/headers` mocked + 14 new `RecommendationCard` tests covering every variant/grade/correction/freshness case + 8 new `RecommendationDetail` tests covering all four layers, missing-data handling, `leg_order` preservation, and disclosure accessibility). Fixed a latent test-harness gap discovered while writing these: `vitest.config.ts` never enabled `test.globals`, so React Testing Library's automatic per-test DOM cleanup was silently never registering -- added an explicit `afterEach(cleanup)` to `vitest.setup.ts`, a real fix benefiting every future frontend test file, not just this milestone's. `tsc --noEmit` clean, `npm run build` clean production build with `/today`/`/recommendations`/`/recommendations/[displayId]` all correctly marked dynamically-rendered (cookie-dependent, never statically prerendered).
+
+**Alternatives considered:** Rendering a badge for `NOT_APPLICABLE` grades. Rejected -- it isn't a settled-bet outcome (mirrors `app.track_record`'s own exclusion of it), and a badge would compete with the No Bet/Bankroll Preservation card's own already-clear passing headline. Building a global nav shell alongside these three pages. Rejected -- not part of HQ's M3 authorization ("core recommendation experience ONLY"); the five-destination IA (§3) remains a later milestone's scope.
+
+**Expected impact:** No new betting intelligence, ranking, or business logic -- every rendered value is read straight from the M2/M2.1 API response. Real, working screens now exist for HQ's mandatory visual review handoff.
