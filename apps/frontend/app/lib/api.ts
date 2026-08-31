@@ -20,6 +20,7 @@ import type {
   ApiResult,
   RecommendationCardData,
   RecommendationDetailData,
+  RecommendationReconstruction,
 } from "./api-types";
 
 export const SESSION_COOKIE = "pb_session_token";
@@ -88,5 +89,19 @@ export function getRecommendationDetail(
 ): Promise<ApiResult<RecommendationDetailData>> {
   return fetchFromGateway<RecommendationDetailData>(
     `/v1/recommendations/${encodeURIComponent(displayId)}`,
+  );
+}
+
+/** Milestone 4 (Time Machine) -- proxies ai-orchestrator's
+ * `reconstruct_recommendation_product` (Milestone 5.3), reused
+ * verbatim. This is the one and only historical-reconstruction read:
+ * /history/[displayId] composes its six stages from this plus
+ * `getRecommendationDetail` above, never deriving historical truth
+ * itself. */
+export function getRecommendationReconstruction(
+  displayId: string,
+): Promise<ApiResult<RecommendationReconstruction>> {
+  return fetchFromGateway<RecommendationReconstruction>(
+    `/v1/recommendations/${encodeURIComponent(displayId)}/reconstruction`,
   );
 }

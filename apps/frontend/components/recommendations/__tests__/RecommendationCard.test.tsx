@@ -17,6 +17,11 @@ describe("RecommendationCard", () => {
     expect(screen.getByRole("link")).toHaveAttribute("href", "/recommendations/2026-00100");
   });
 
+  it("links into a different base path when linkTo is given (Milestone 4 reuse for /history)", () => {
+    render(<RecommendationCard recommendation={makeCard({ displayId: "2026-00100" })} linkTo="/history" />);
+    expect(screen.getByRole("link")).toHaveAttribute("href", "/history/2026-00100");
+  });
+
   it("renders No Bet at equal visual weight -- no leg list, headline carries the verdict", () => {
     render(
       <RecommendationCard

@@ -2,7 +2,9 @@ import { StateBadge } from "@/components/ds";
 import { formatDateTime } from "@/app/lib/format";
 import type { GradeOutcome, RecommendationGrade } from "@/app/lib/api-types";
 
-const TONE: Record<GradeOutcome, "positive" | "negative" | "neutral"> = {
+/** Exported so Milestone 4 (Time Machine) can render the same tone/label
+ * vocabulary for historical grade events without redefining it. */
+export const GRADE_TONE: Record<GradeOutcome, "positive" | "negative" | "neutral"> = {
   WIN: "positive",
   LOSS: "negative",
   PUSH: "neutral",
@@ -11,7 +13,7 @@ const TONE: Record<GradeOutcome, "positive" | "negative" | "neutral"> = {
   MIXED_SETTLED: "neutral",
 };
 
-const LABEL: Record<GradeOutcome, string> = {
+export const GRADE_LABEL: Record<GradeOutcome, string> = {
   WIN: "Win",
   LOSS: "Loss",
   PUSH: "Push",
@@ -19,6 +21,9 @@ const LABEL: Record<GradeOutcome, string> = {
   NOT_APPLICABLE: "Not Applicable",
   MIXED_SETTLED: "Mixed Settled",
 };
+
+const TONE = GRADE_TONE;
+const LABEL = GRADE_LABEL;
 
 export interface GradeBadgeProps {
   grade: RecommendationGrade | null;

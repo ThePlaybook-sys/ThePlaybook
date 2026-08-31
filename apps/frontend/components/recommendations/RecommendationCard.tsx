@@ -49,6 +49,11 @@ export function headlineFor(recommendation: RecommendationCardData): string {
 
 export interface RecommendationCardProps {
   recommendation: RecommendationCardData;
+  /** Base path this card links into -- `/recommendations` (default) for
+   * the live feed, `/history` (Milestone 4) when the same card/data
+   * shape is reused to browse past recommendations into their Time
+   * Machine. Never changes what the card renders, only where it links. */
+  linkTo?: string;
 }
 
 /**
@@ -60,14 +65,14 @@ export interface RecommendationCardProps {
  * the API already returned them (neutral chronological, HQ Final
  * Decision 1) -- this component never reorders or ranks them.
  */
-export function RecommendationCard({ recommendation }: RecommendationCardProps) {
+export function RecommendationCard({ recommendation, linkTo = "/recommendations" }: RecommendationCardProps) {
   const isPassing =
     recommendation.recommendationType === "no_bet" ||
     recommendation.recommendationType === "bankroll_preservation";
 
   return (
     <Link
-      href={`/recommendations/${recommendation.displayId}`}
+      href={`${linkTo}/${recommendation.displayId}`}
       className="block rounded-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent-primary"
     >
       <Surface
