@@ -81,4 +81,36 @@ describe("api.ts fetch helpers", () => {
 
     expect(result).toEqual({ kind: "error", status: 502 });
   });
+
+  it("Milestone 4: getRecommendationReconstruction returns ok with the raw reconstruction shape on 200", async () => {
+    getCookie.mockReturnValue({ value: "real-jwt" });
+    global.fetch = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ strategy_version: "v1", legs: [] }), { status: 200 }),
+    ) as unknown as typeof fetch;
+    const { getRecommendationReconstruction } = await import("../api");
+
+    const result = await getRecommendationReconstruction("2026-00100");
+
+    expect(result).toEqual({ kind: "ok", data: { strategy_version: "v1", legs: [] } });
+  });
+
+  it("Milestone 4: getRecommendationReconstruction returns not_found when the activation snapshot doesn't exist -- never fabricated", async () => {
+    getCookie.mockReturnValue({ value: "real-jwt" });
+    global.fetch = vi.fn().mockResolvedValue(new Response(null, { status: 404 })) as unknown as typeof fetch;
+    const { getRecommendationReconstruction } = await import("../api");
+
+    const result = await getRecommendationReconstruction("2026-00100");
+
+    expect(result).toEqual({ kind: "not_found" });
+  });
+
+  it("Milestone 4: getRecommendationReconstruction returns error when ai-orchestrator is unreachable via the api-gateway proxy", async () => {
+    getCookie.mockReturnValue({ value: "real-jwt" });
+    global.fetch = vi.fn().mockResolvedValue(new Response(null, { status: 502 })) as unknown as typeof fetch;
+    const { getRecommendationReconstruction } = await import("../api");
+
+    const result = await getRecommendationReconstruction("2026-00100");
+
+    expect(result).toEqual({ kind: "error", status: 502 });
+  });
 });

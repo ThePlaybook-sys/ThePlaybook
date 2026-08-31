@@ -1569,3 +1569,37 @@ A one-line cross-reference was added to §7's `postgame_reviews` description (`o
 **Alternatives considered:** Rendering a badge for `NOT_APPLICABLE` grades. Rejected -- it isn't a settled-bet outcome (mirrors `app.track_record`'s own exclusion of it), and a badge would compete with the No Bet/Bankroll Preservation card's own already-clear passing headline. Building a global nav shell alongside these three pages. Rejected -- not part of HQ's M3 authorization ("core recommendation experience ONLY"); the five-destination IA (§3) remains a later milestone's scope.
 
 **Expected impact:** No new betting intelligence, ranking, or business logic -- every rendered value is read straight from the M2/M2.1 API response. Real, working screens now exist for HQ's mandatory visual review handoff.
+
+---
+
+## v5.0.5 (Volume 5) — 2026-08-31 — PATCH
+
+**Volumes affected:** Volume 5 (Frontend & UX Architecture)
+
+**Reason:** Phase 6 Milestone 4 (History / Time Machine) implemented `/history` and `/history/[displayId]` against §5's already-approved `HistoryJourneyProps` sketch and the existing reconstruction API. That section needed an implementation note reconciling the sketch against what actually got built, and §11 needed the reconstruction route's real (snake_case, `dataclasses.asdict()`) field shape documented now that the frontend directly consumes it for the first time.
+
+**Decision:** §5's Time Machine section gains an implementation note: the six stages are composed from two reads (`GET /v1/recommendations/{displayId}` for Stages 1-3, the reconstruction route for Stages 4-6), not one combined endpoint; all six render simultaneously with per-stage `<details>` disclosures for deep provenance, not "one stage expanded at a time" as the original sketch had it; and the explicit temporal-integrity rule HQ's M4 authorization added (Stage 1 never renders the product's current `status`/`grade`, only reconstruction's own historical record populates Stages 4-6) is recorded. §11 gains the reconstruction route's exact field shape.
+
+**Alternatives considered:** Building a combined backend endpoint that merges detail + reconstruction into one `HistoryJourneyProps`-shaped response. Rejected per HQ's explicit M4 instruction not to build new backend surface — composing two already-tested reads client-side is equally correct and adds no new API contract to maintain.
+
+**Expected impact:** Documentation only, matching the Milestone 4 code entry (below).
+
+---
+
+## v4.5 (apps/frontend) — 2026-08-31 — Phase 6 Milestone 4: History / Time Machine
+
+**Volumes affected:** Volume 5 (v5.0.5 entry above) — implementation entry, not itself a Blueprint decision.
+
+**Reason:** HQ authorized Milestone 4 (History / Time Machine) after M3's close-out, scoped to `/history` and `/history/[displayId]` only, reusing M2's existing reconstruction proxy and M3's design system/components -- no new reconstruction engine, no new backend route.
+
+**Decision:** `apps/frontend/app/lib/api-types.ts` gained the full `Reconstruction*` type family mirroring `ReconstructedProduct`'s `dataclasses.asdict()` shape verbatim (snake_case, unlike every other route). `api.ts` gained `getRecommendationReconstruction`. `components/recommendations/RecommendationCard` gained an optional `linkTo` prop (default `/recommendations`, `/history` for reuse here) -- no behavior change for existing callers. `components/history/`: `TimeMachineStage` (one stepper segment, always rendered) and `TimeMachine` (composes all six stages from `RecommendationDetailData` + `RecommendationReconstruction`). Built `/history` (reuses `getRecommendations` + `RecommendationCard`, zero new backend surface) and `/history/[displayId]` (fetches detail + reconstruction in parallel; on a real product with unavailable reconstruction, falls back to rendering M3's existing `RecommendationDetail` plus an honest "reconstruction unavailable" notice -- never fabricated).
+
+**Temporal integrity, enforced structurally, not just by convention:** `TimeMachine.tsx` never reads `detail.status`, `detail.grade`, `detail.withdrawnAt`, or `detail.withdrawalReason` anywhere in the file -- Stage 1 renders identity only (headline, legs, summary); withdrawal is rendered only from `reconstruction.lifecycle_events` (a real `WITHDRAWN` row, if one exists); grading only from `reconstruction.product_grade_history`/`current_product_grade`/`postgame_reviews`. Proven directly by a dedicated test giving `detail` a `LOSS` grade and a withdrawn status while `reconstruction` shows neither, asserting none of that leaks into the render.
+
+**Six-stage stability and honest incompleteness (HQ Final Decision 3, reaffirmed for M4):** all six stage headings render unconditionally. Each stage's own exact honest-empty copy: "No additional evidence recorded" (Stages 2/3), "No material changes recorded" (Stage 4), "Awaiting final result" (Stages 5/6 pre-grade), "Postgame review unavailable" (Stage 6, graded but no review yet). No stage is ever silently omitted. Grade/correction history is rendered as the full append-only list (never collapsed to just the current value) with a distinct "Correction" label; a per-leg grading breakdown appears only when a product genuinely has more than one leg, never fabricated for a single-leg product.
+
+**Full test/regression evidence:** 49/49 frontend tests passing (33 pre-existing + 2 new `RecommendationCard`/`linkTo` tests + 3 new `api.ts` reconstruction-fetch tests + 9 new `TimeMachine` tests covering six-stage structural rendering, per-stage honest-empty states, grade/correction history, temporal-integrity separation, real-lifecycle-event rendering, and single-column mobile-safe structure). `tsc --noEmit` clean. `npm run build` clean, `/history` and `/history/[displayId]` both correctly marked dynamically-rendered.
+
+**Alternatives considered:** none material beyond the one recorded in the Volume 5 entry above.
+
+**Expected impact:** No new betting intelligence, ranking, or business logic -- every historical fact rendered is read verbatim from the reconstruction route or the existing detail route. Real, working History/Time Machine screens now exist; visual validation is bounded by the same DEV data absence already carried as debt from M3.
