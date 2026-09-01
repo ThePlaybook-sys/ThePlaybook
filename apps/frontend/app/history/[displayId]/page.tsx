@@ -1,6 +1,7 @@
 import { Container } from "@/components/ds";
 import { EmptyState, RecommendationDetail } from "@/components/recommendations";
 import { TimeMachine } from "@/components/history";
+import { AppNav } from "@/components/nav/AppNav";
 import { getRecommendationDetail, getRecommendationReconstruction } from "@/app/lib/api";
 
 /**
@@ -22,26 +23,35 @@ export default async function HistoryDetailPage({
 
   if (detailResult.kind === "unauthenticated") {
     return (
-      <Container className="flex flex-col gap-lg py-xl">
-        <EmptyState headline="Sign in to see this recommendation's history." />
-      </Container>
+      <>
+        <AppNav />
+        <Container className="flex flex-col gap-lg py-xl">
+          <EmptyState headline="Sign in to see this recommendation's history." />
+        </Container>
+      </>
     );
   }
   if (detailResult.kind === "not_found") {
     return (
-      <Container className="flex flex-col gap-lg py-xl">
-        <EmptyState headline="Recommendation not found." />
-      </Container>
+      <>
+        <AppNav />
+        <Container className="flex flex-col gap-lg py-xl">
+          <EmptyState headline="Recommendation not found." />
+        </Container>
+      </>
     );
   }
   if (detailResult.kind === "error") {
     return (
-      <Container className="flex flex-col gap-lg py-xl">
-        <EmptyState
-          headline="This recommendation's history isn't available right now."
-          body="Something went wrong reaching the recommendation service. Try again shortly."
-        />
-      </Container>
+      <>
+        <AppNav />
+        <Container className="flex flex-col gap-lg py-xl">
+          <EmptyState
+            headline="This recommendation's history isn't available right now."
+            body="Something went wrong reaching the recommendation service. Try again shortly."
+          />
+        </Container>
+      </>
     );
   }
 
@@ -51,9 +61,12 @@ export default async function HistoryDetailPage({
   // than assumed to track the detail result.
   if (reconstructionResult.kind === "ok") {
     return (
-      <Container className="flex flex-col gap-lg py-xl">
-        <TimeMachine detail={detailResult.data} reconstruction={reconstructionResult.data} />
-      </Container>
+      <>
+        <AppNav />
+        <Container className="flex flex-col gap-lg py-xl">
+          <TimeMachine detail={detailResult.data} reconstruction={reconstructionResult.data} />
+        </Container>
+      </>
     );
   }
 
@@ -62,12 +75,15 @@ export default async function HistoryDetailPage({
   // renders) plus an honest note that the six-stage narrative isn't
   // available, rather than a blank page or an invented history.
   return (
-    <Container className="flex flex-col gap-lg py-xl">
-      <EmptyState
-        headline="Full Time Machine reconstruction is unavailable for this recommendation."
-        body="Showing what's available below."
-      />
-      <RecommendationDetail recommendation={detailResult.data} />
-    </Container>
+    <>
+      <AppNav />
+      <Container className="flex flex-col gap-lg py-xl">
+        <EmptyState
+          headline="Full Time Machine reconstruction is unavailable for this recommendation."
+          body="Showing what's available below."
+        />
+        <RecommendationDetail recommendation={detailResult.data} />
+      </Container>
+    </>
   );
 }

@@ -1,5 +1,6 @@
 import { Container, Text } from "@/components/ds";
 import { RecommendationCard, EmptyState } from "@/components/recommendations";
+import { AppNav } from "@/components/nav/AppNav";
 import { getRecommendations } from "@/app/lib/api";
 
 export const metadata = { title: "History — The Playbook" };
@@ -17,29 +18,32 @@ export default async function HistoryPage() {
   const result = await getRecommendations();
 
   return (
-    <Container className="flex flex-col gap-lg py-xl">
-      <Text variant="display" as="h1">
-        History
-      </Text>
+    <>
+      <AppNav />
+      <Container className="flex flex-col gap-lg py-xl">
+        <Text variant="display" as="h1">
+          History
+        </Text>
 
-      {result.kind === "unauthenticated" && <EmptyState headline="Sign in to see your recommendation history." />}
-      {result.kind === "not_found" && <EmptyState headline="No history found." />}
-      {result.kind === "error" && (
-        <EmptyState
-          headline="History isn't available right now."
-          body="Something went wrong reaching the recommendation service. Try again shortly."
-        />
-      )}
-      {result.kind === "ok" && result.data.length === 0 && (
-        <EmptyState headline="No recommendation history yet." />
-      )}
-      {result.kind === "ok" && result.data.length > 0 && (
-        <div className="flex flex-col gap-md">
-          {result.data.map((recommendation) => (
-            <RecommendationCard key={recommendation.displayId} recommendation={recommendation} linkTo="/history" />
-          ))}
-        </div>
-      )}
-    </Container>
+        {result.kind === "unauthenticated" && <EmptyState headline="Sign in to see your recommendation history." />}
+        {result.kind === "not_found" && <EmptyState headline="No history found." />}
+        {result.kind === "error" && (
+          <EmptyState
+            headline="History isn't available right now."
+            body="Something went wrong reaching the recommendation service. Try again shortly."
+          />
+        )}
+        {result.kind === "ok" && result.data.length === 0 && (
+          <EmptyState headline="No recommendation history yet." />
+        )}
+        {result.kind === "ok" && result.data.length > 0 && (
+          <div className="flex flex-col gap-md">
+            {result.data.map((recommendation) => (
+              <RecommendationCard key={recommendation.displayId} recommendation={recommendation} linkTo="/history" />
+            ))}
+          </div>
+        )}
+      </Container>
+    </>
   );
 }
