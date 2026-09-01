@@ -1713,3 +1713,39 @@ A one-line cross-reference was added to §7's `postgame_reviews` description (`o
 **Alternatives considered:** none material beyond the one recorded in the Volume 5 entry above.
 
 **Expected impact:** No new betting intelligence, ranking, grading, or business logic -- this is a pure infrastructure/defensive-coding fix restoring the sign-in/sign-up flow M6 already specified and tested, but which the actual Railway Docker build silently broke. Authentication is not weakened: the fix makes the existing Supabase Auth call actually reach the network and, separately, ensures failures are always visible -- neither adds a bypass, shortcut, or reduced validation.
+
+---
+
+## v5.1.2 (Volume 5) — 2026-09-01 — PATCH
+
+**Volumes affected:** Volume 5 (Frontend & UX Architecture)
+
+**Reason:** HQ retested the deployed DEV signup flow immediately after v5.1.1's fix. The original hang was confirmed fixed (Create Account now correctly reaches "Check your email", a real confirmation email arrives). A second, distinct defect surfaced on the very next step: clicking the confirmation link redirects to `http://localhost:3000`, which returns `ERR_CONNECTION_REFUSED` on a real mobile device.
+
+**Decision:** Root cause confirmed via Supabase's own documentation (fetched through the Supabase MCP's docs search, not guessed): `emailRedirectTo` is only honored by Supabase Auth if it matches an entry in the project's "Redirect URLs" allow-list; when it doesn't match, Supabase silently falls back to the "Site URL" default. This DEV project's Site URL has apparently never been changed off Supabase's own default (`http://localhost:3000`) -- consistent with the observed redirect target being literally that default, and with the fact that HQ's account was nonetheless genuinely confirmed server-side (`email_confirmed_at` populated) despite the bad browser redirect, which is exactly what "the confirmation succeeded, only the post-confirmation redirect target was wrong" looks like. Confirmed this is not a frontend defect: a full grep of `apps/frontend` for `localhost` found zero matches, and `AuthForm` already computes `emailRedirectTo` dynamically from `window.location.origin` (a new regression test proves this, feeding a non-localhost origin and asserting `signUp` is called with the matching redirect URL).
+
+**A genuine, disclosed access limitation, not worked around:** the Auth "Site URL"/"Redirect URLs" allow-list is a Supabase project Auth-dashboard setting. No tool in this session's Supabase MCP toolset can read or write it (confirmed by re-enumerating every available tool). No Supabase Management API access token exists in this session's environment (confirmed). Direct HTTPS to any Supabase host is denied by this sandbox's own egress policy -- previously confirmed for the project's own API subdomain, and now separately confirmed for `supabase.com` itself (the docs/marketing domain), ruling out even an unauthenticated settings read. This mirrors CLAUDE.md's credentials-and-connections discipline exactly: an external platform setting this session cannot reach is a blocking item for HQ to action directly, not something to guess around or route around with a workaround.
+
+**Alternatives considered:** Introducing a `NEXT_PUBLIC_SITE_URL` (or similar) environment variable and using it instead of `window.location.origin`. Rejected -- the frontend's own redirect computation was already confirmed correct (it evaluated to the real deployed origin, which is why HQ successfully reached "Check your email" and received a real email); adding a new env var would not change Supabase's allow-list decision and would be an unjustified code change for a problem that isn't in the code.
+
+**Expected impact:** Documentation and a new regression test only, matching the entry below. M6 remains open -- this milestone's sign-up flow cannot be declared working until HQ updates the two Supabase Auth dashboard fields named in the completion report and retests.
+
+---
+
+## v4.9 (apps/frontend) — 2026-09-01 — M6 second defect investigation: confirmation link redirects to localhost
+
+**Volumes affected:** Volume 5 (v5.1.2 entry above) — implementation entry, not itself a Blueprint decision.
+
+**Reason:** Real human DEV retest (HQ, same mobile device) found the confirmation-email redirect pointing at `localhost:3000` instead of the deployed DEV site, immediately after v5.1.1's signup-hang fix was confirmed working. Investigated per HQ's explicit instruction before concluding anything.
+
+**Decision:** No application code changed the actual redirect behavior -- there was nothing wrong to change. `components/auth/__tests__/AuthForm.test.tsx` gained one new regression test that overrides `window.location.origin` to a non-localhost deployed-style URL and asserts `signUp` is called with `options.emailRedirectTo` exactly matching `<origin>/auth/callback` -- proving the frontend's redirect computation is, and was, correct, so this class of defect can never be mistakenly attributed to (or reintroduced in) this codebase again.
+
+**HQ's account status, verified via SQL, not assumed:** `auth.users` shows exactly one row created after the v5.1.1 fix deployed (`m.dubuisson2@outlook.com`, created 2026-09-01T13:20:00Z), with `confirmed_at`/`email_confirmed_at` both populated at 2026-09-01T13:20:29Z -- roughly 29 seconds after signup, consistent with HQ clicking the confirmation link immediately. **The account is real and already confirmed**, despite the bad redirect -- HQ does not need to sign up again once the Supabase dashboard fix below is applied; normal Sign In will work.
+
+**The actual fix required (blocked on Dashboard access this session does not have):** in the DEV Supabase project's Authentication → URL Configuration page, (1) change **Site URL** from `http://localhost:3000` to `https://frontend-dev-ab32.up.railway.app`, and (2) add `https://frontend-dev-ab32.up.railway.app/auth/callback` (or the wildcard `https://frontend-dev-ab32.up.railway.app/**`) to the **Redirect URLs** allow-list. Neither change touches this repository, a migration, or a Railway variable -- both live entirely in Supabase's own project dashboard, which this session has no credential or tool to reach.
+
+**Full test/regression evidence:** 96/96 frontend tests passing (95 pre-existing + 1 new). `tsc --noEmit` clean. `npm run build` clean, unchanged route set.
+
+**Alternatives considered:** none material beyond the one recorded in the Volume 5 entry above.
+
+**Expected impact:** No code or infrastructure change ships from this entry beyond the regression test -- the actual fix is an external platform configuration action for HQ. M6 stays open until that's applied and HQ completes a real end-to-end retest (Create Account through Today).
