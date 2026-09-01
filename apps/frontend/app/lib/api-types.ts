@@ -314,6 +314,37 @@ export interface RecommendationReconstruction {
   postgame_reviews: ReconstructionPostgameReview[];
 }
 
+/** `apps/api-gateway/app/track_record.py`'s response, camelCase (unlike
+ * the reconstruction route, this one is not a pass-through -- it's
+ * built by this codebase's own handler, so it already matches every
+ * other M2/M3 route's casing convention). */
+export interface TrackRecordCounts {
+  win: number;
+  loss: number;
+  push: number;
+  voidNoAction: number;
+  mixedSettled: number;
+}
+
+export type SampleStatus = "zero" | "low" | "mature";
+
+export interface TrackRecordTypeBreakdown extends TrackRecordCounts {
+  sampleSize: number;
+}
+
+export interface TrackRecordData {
+  sampleSize: number;
+  sampleStatus: SampleStatus;
+  record: TrackRecordCounts;
+  /** May contain a zero-sampleSize entry for `no_bet`/`bankroll_preservation`
+   * (every product graded `NOT_APPLICABLE` still creates a `by_type`
+   * entry server-side, even though it's never tallied into it -- see
+   * `track_record.py`'s own docstring). Callers must filter to
+   * `sampleSize > 0` before rendering, so those two types are never
+   * shown as a 0-0-0-0-0 "record" that could read as a losing streak. */
+  byRecommendationType: Record<string, TrackRecordTypeBreakdown>;
+}
+
 /** Discriminated result type every server-side fetch helper returns --
  * callers render a distinct honest state per outcome, never treating
  * "empty" and "error"/"unauthenticated" as the same thing (HQ's
