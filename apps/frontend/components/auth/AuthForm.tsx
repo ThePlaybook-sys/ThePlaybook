@@ -38,32 +38,48 @@ export function AuthForm() {
     setError(null);
     setAwaitingConfirmation(false);
 
-    const supabase = createClient();
-    const { data, error: authError } =
-      mode === "sign-in"
-        ? await supabase.auth.signInWithPassword({ email, password })
-        : await supabase.auth.signUp({
-            email,
-            password,
-            options: { emailRedirectTo: `${window.location.origin}/auth/callback` },
-          });
+    // Every path below -- including one this codebase already hit in
+    // real DEV validation (a misconfigured Supabase client throwing
+    // synchronously, before any network call) -- must reach a visible
+    // terminal state. A bare `await` with no try/catch left the button
+    // stuck on "Please wait..." forever on any thrown exception, since
+    // `setSubmitting(false)` was never reached. Never again: every code
+    // path here ends in `finally { setSubmitting(false) }`.
+    try {
+      const supabase = createClient();
+      const { data, error: authError } =
+        mode === "sign-in"
+          ? await supabase.auth.signInWithPassword({ email, password })
+          : await supabase.auth.signUp({
+              email,
+              password,
+              options: { emailRedirectTo: `${window.location.origin}/auth/callback` },
+            });
 
-    setSubmitting(false);
+      if (authError) {
+        setError(authError.message);
+        return;
+      }
 
-    if (authError) {
-      setError(authError.message);
-      return;
+      if (!data.session) {
+        // Real, honest state under email-confirmation-required config --
+        // never fabricated, never treated as an error.
+        setAwaitingConfirmation(true);
+        return;
+      }
+
+      router.refresh();
+      router.push("/");
+    } catch {
+      // Any unexpected exception (a misconfigured client, a network
+      // failure that throws rather than resolving with `error`, etc.)
+      // -- surfaced honestly rather than left silent. Never the raw
+      // exception message, which could leak internals the user can't
+      // act on.
+      setError("Something went wrong. Try again.");
+    } finally {
+      setSubmitting(false);
     }
-
-    if (!data.session) {
-      // Real, honest state under email-confirmation-required config --
-      // never fabricated, never treated as an error.
-      setAwaitingConfirmation(true);
-      return;
-    }
-
-    router.refresh();
-    router.push("/");
   }
 
   if (awaitingConfirmation) {

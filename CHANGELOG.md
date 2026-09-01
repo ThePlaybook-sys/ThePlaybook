@@ -1675,3 +1675,41 @@ A one-line cross-reference was added to §7's `postgame_reviews` description (`o
 **Alternatives considered:** none material beyond the ones recorded in the Volume 5 entry above.
 
 **Expected impact:** No new betting intelligence, ranking, grading, or business logic -- every authenticated read is one of M2/M3's/M5's already-existing routes, or Phase 2's already-existing profile route, consumed for the first time by a real frontend page. A real, working sign-in-through-sign-out journey now exists across every Phase 6 destination.
+
+---
+
+## v5.1.1 (Volume 5) — 2026-09-01 — PATCH
+
+**Volumes affected:** Volume 5 (Frontend & UX Architecture)
+
+**Reason:** HQ performed real human DEV validation of M6's sign-in/sign-up flow immediately after close-out and found "Create Account" hanging forever on "Please wait..." -- a real deployed-user defect, not visual polish, blocking M6's actual close.
+
+**Decision:** Root cause identified through direct investigation, not guessed: no new Supabase auth user existed for the attempted signup (confirmed via SQL against `auth.users` -- the newest row was from Phase 2's E2E tests on 2026-08-10), meaning the request never reached Supabase's network layer at all. Traced to `apps/frontend/Dockerfile`: it never declared `ARG`/`ENV` for `NEXT_PUBLIC_SUPABASE_URL`/`NEXT_PUBLIC_SUPABASE_ANON_KEY`. Confirmed via Railway's own documentation that Dockerfile builds are isolated from service variables by design unless explicitly opted into with `ARG` -- so both were `undefined` when `next build` ran in the Docker build stage, and Next.js statically inlined `undefined` into every reference in the browser bundle. `createBrowserClient(undefined, undefined)` throws synchronously on first construction, and `AuthForm`'s submit handler had no try/catch around it, so the thrown exception fired before `setSubmitting(false)` was ever reached -- exactly reproducing the observed stuck button, with no error, no redirect, and no email-confirmation state.
+
+**Fix, two layers:** (1) `Dockerfile` now declares both variables as build `ARG`s with a matching `ENV` before `RUN npm run build`, so Railway's own build-time variable injection actually reaches the client bundle. (2) `AuthForm.handleSubmit` now wraps the entire Supabase client creation and auth call in try/catch/finally -- `finally { setSubmitting(false) }` guarantees the pending state always clears, and any unexpected exception (this one, or a future network/library failure) now surfaces a visible "Something went wrong. Try again." message and re-enables the form, rather than freezing silently. This closes the same class of defect regardless of its future cause, not just this one instance.
+
+**Alternatives considered:** Removing the non-null assertions (`process.env.NEXT_PUBLIC_SUPABASE_URL!`) from `supabase/client.ts`/`server.ts` and adding a runtime guard there instead. Rejected as treating the symptom, not the cause -- the real defect is that Railway's build never had the values in the first place; a guard would only produce an earlier, still-unrecoverable failure without fixing why the values are missing.
+
+**Testing:** Two new `AuthForm` tests directly reproduce the real defect and its fix -- a client that throws synchronously (the exact failure class observed) and a rejected auth promise (e.g. a real network failure) -- both asserting an error message appears and the button is re-enabled, never left disabled. A third new test asserts the pending "Please wait..." state renders and disables the button while a request is genuinely in flight, then clears once it resolves. A new `Dockerfile.test.ts` regression guard asserts both `ARG`/`ENV` declarations exist before `RUN npm run build`, so this exact infrastructure gap cannot silently recur. 95/95 frontend tests passing (91 pre-existing + 4 new). `tsc --noEmit` clean, `npm run build` clean.
+
+**Expected impact:** Documentation only, matching the fix entry (below).
+
+---
+
+## v4.8 (apps/frontend) — 2026-09-01 — M6 defect fix: Create Account hanging on "Please wait..."
+
+**Volumes affected:** Volume 5 (v5.1.1 entry above) — implementation entry, not itself a Blueprint decision.
+
+**Reason:** Real human DEV validation (HQ, on a mobile device against the actual deployed DEV site) found signup completely broken -- the button never leaves "Please wait...", no redirect, no error, no check-your-email state, and no form restoration. Classified an M6 blocker, not visual polish, per HQ's explicit instruction.
+
+**Decision:** `apps/frontend/Dockerfile` gained `ARG NEXT_PUBLIC_SUPABASE_URL`/`ARG NEXT_PUBLIC_SUPABASE_ANON_KEY` plus matching `ENV` lines before `RUN npm run build` -- Railway does not inject service variables into a Dockerfile build stage unless the Dockerfile opts in with `ARG` (confirmed via Railway's own docs, not assumed), so both `NEXT_PUBLIC_*` values were `undefined` in every previously-built client bundle. `components/auth/AuthForm.tsx`'s `handleSubmit` is now wrapped in try/catch/finally: `finally` guarantees `setSubmitting(false)` always runs; `catch` surfaces a generic "Something went wrong. Try again." message on any unexpected exception rather than leaving the UI silently frozen. `sign-in` was equally broken by the same root cause (both modes share the same browser Supabase client) even though HQ's report specifically observed it via Create Account.
+
+**Verification the attempted signup never reached Supabase:** queried `auth.users` directly -- the most recent row is a Phase 2 E2E test user from 2026-08-10; no row exists for HQ's attempted signup at any point on 2026-09-01. Confirms the failure was entirely client-side, before any network request, consistent with a synchronous throw at `createClient()` rather than a Supabase-side rejection or timeout.
+
+**Tests added:** `AuthForm` gained three cases directly reproducing this defect class -- a client that throws synchronously (the exact real failure), a rejected auth promise (a real network-failure shape), and a genuine pending-state check (button shows "Please wait..." and is disabled only while a request is actually in flight, clearing once it resolves). A new `apps/frontend/__tests__/Dockerfile.test.ts` asserts both build `ARG`/`ENV` declarations exist before `RUN npm run build`, as a structural regression guard against this exact infrastructure gap recurring silently.
+
+**Full test/regression evidence:** 95/95 frontend tests passing (91 pre-existing + 4 new: 3 `AuthForm` cases + 1 `Dockerfile` structural case). `tsc --noEmit` clean. `npm run build` clean, all 21 routes compiled unchanged.
+
+**Alternatives considered:** none material beyond the one recorded in the Volume 5 entry above.
+
+**Expected impact:** No new betting intelligence, ranking, grading, or business logic -- this is a pure infrastructure/defensive-coding fix restoring the sign-in/sign-up flow M6 already specified and tested, but which the actual Railway Docker build silently broke. Authentication is not weakened: the fix makes the existing Supabase Auth call actually reach the network and, separately, ensures failures are always visible -- neither adds a bypass, shortcut, or reduced validation.
