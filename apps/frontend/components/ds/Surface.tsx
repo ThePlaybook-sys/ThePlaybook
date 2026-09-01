@@ -4,8 +4,8 @@ type SurfaceLevel = "page" | "card" | "elevated";
 
 const LEVEL_CLASS: Record<SurfaceLevel, string> = {
   page: "bg-surface-page",
-  card: "bg-surface-card border border-border rounded-md",
-  elevated: "bg-surface-elevated border border-border rounded-lg",
+  card: "bg-surface-card border border-border rounded-md shadow-lg",
+  elevated: "bg-surface-elevated border border-border rounded-lg shadow-xl",
 };
 
 export type SurfaceProps = HTMLAttributes<HTMLDivElement> & {

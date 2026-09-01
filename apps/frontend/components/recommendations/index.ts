@@ -1,4 +1,4 @@
-export { RecommendationCard, headlineFor, LegLine } from "./RecommendationCard";
+export { RecommendationCard, headlineFor, LegLine, formatOdds, formatPoint } from "./RecommendationCard";
 export type { RecommendationCardProps } from "./RecommendationCard";
 export { RecommendationDetail } from "./RecommendationDetail";
 export type { RecommendationDetailProps } from "./RecommendationDetail";

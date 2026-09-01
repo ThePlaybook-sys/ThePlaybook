@@ -15,7 +15,7 @@ export interface CommandHeaderProps {
  */
 export function CommandHeader({ freshness }: CommandHeaderProps) {
   return (
-    <div className="flex flex-col gap-xs border-b border-border pb-md">
+    <div className="mansa-illuminated-edge-bottom flex flex-col gap-xs border-b border-transparent pb-md">
       <div className="flex flex-wrap items-baseline justify-between gap-sm">
         <div className="flex items-baseline gap-sm">
           <Text variant="display" as="h1">

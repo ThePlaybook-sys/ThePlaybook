@@ -39,10 +39,8 @@ export function AppNav() {
                 key={link.href}
                 href={link.href}
                 aria-current={isActive ? "page" : undefined}
-                className={`flex min-h-[44px] shrink-0 items-center whitespace-nowrap border-b-2 text-label ${
-                  isActive
-                    ? "border-accent text-text-primary"
-                    : "border-transparent text-text-secondary"
+                className={`flex min-h-[44px] shrink-0 items-center whitespace-nowrap border-b-2 border-transparent text-label ${
+                  isActive ? "mansa-illuminated-edge-bottom text-text-primary" : "text-text-secondary"
                 }`}
               >
                 {link.label}

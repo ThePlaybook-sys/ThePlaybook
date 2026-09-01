@@ -4,11 +4,11 @@ import type { RecommendationCardData, RecommendationLeg } from "@/app/lib/api-ty
 import { GradeBadge } from "./GradeBadge";
 import { FreshnessLabel } from "./FreshnessLabel";
 
-function formatOdds(americanOdds: number): string {
+export function formatOdds(americanOdds: number): string {
   return americanOdds > 0 ? `+${americanOdds}` : `${americanOdds}`;
 }
 
-function formatPoint(point: number | null): string {
+export function formatPoint(point: number | null): string {
   if (point == null) {
     return "";
   }
