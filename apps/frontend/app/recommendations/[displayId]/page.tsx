@@ -17,7 +17,7 @@ export default async function RecommendationDetailPage({
   return (
     <>
       <AppNav />
-      <Container className="flex flex-col gap-lg py-xl">
+      <Container as="main" className="flex flex-col gap-lg py-xl">
         {result.kind === "unauthenticated" && <EmptyState headline="Sign in to see this recommendation." />}
         {result.kind === "not_found" && <EmptyState headline="Recommendation not found." />}
         {result.kind === "error" && (

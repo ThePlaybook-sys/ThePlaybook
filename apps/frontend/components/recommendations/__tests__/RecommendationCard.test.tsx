@@ -32,7 +32,7 @@ describe("RecommendationCard", () => {
         })}
       />,
     );
-    expect(screen.getByText("The Playbook Is Passing On This Game")).toBeInTheDocument();
+    expect(screen.getByText("MANSA Is Passing On This Game")).toBeInTheDocument();
     expect(screen.getByText("no candidate qualified")).toBeInTheDocument();
     expect(screen.queryByText("-135")).not.toBeInTheDocument();
   });
@@ -48,7 +48,7 @@ describe("RecommendationCard", () => {
         })}
       />,
     );
-    expect(screen.getByText("The Playbook Is Passing Today")).toBeInTheDocument();
+    expect(screen.getByText("MANSA Is Passing Today")).toBeInTheDocument();
   });
 
   it("renders the withdrawn treatment with its reason", () => {
@@ -111,5 +111,28 @@ describe("RecommendationCard", () => {
     expect(screen.getByText(/^Decided /)).toBeInTheDocument();
     expect(screen.queryByText(/updated/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/refreshed/i)).not.toBeInTheDocument();
+  });
+
+  it("real M7 fix: uses the valid `accent` token, not the non-generated `accent-primary`, for hover/focus styling", () => {
+    const { container } = render(<RecommendationCard recommendation={makeCard()} />);
+    const link = container.querySelector("a");
+    expect(link?.className).toContain("focus-visible:outline-accent");
+    expect(link?.className).not.toContain("accent-primary");
+  });
+
+  it("keeps the headline shrinkable (min-w-0) so a long team name wraps instead of overflowing next to the badge column", () => {
+    render(
+      <RecommendationCard
+        recommendation={makeCard({
+          game: {
+            awayTeam: "A Very Long Team Name FC",
+            homeTeam: "Chiefs",
+            scheduledStart: "2026-08-28T18:00:00Z",
+            status: "scheduled",
+          },
+        })}
+      />,
+    );
+    expect(screen.getByText(/A Very Long Team Name FC @ Chiefs/)).toHaveClass("min-w-0");
   });
 });

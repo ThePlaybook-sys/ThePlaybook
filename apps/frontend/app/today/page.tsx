@@ -3,7 +3,7 @@ import { RecommendationCard, EmptyState } from "@/components/recommendations";
 import { AppNav } from "@/components/nav/AppNav";
 import { getToday } from "@/app/lib/api";
 
-export const metadata = { title: "Today — The Playbook" };
+export const metadata = { title: "Today — MANSA" };
 
 /**
  * Today's recommendation feed (Volume 5 v5.0 §2/§6). Server Component --
@@ -18,7 +18,7 @@ export default async function TodayPage() {
   return (
     <>
       <AppNav />
-      <Container className="flex flex-col gap-lg py-xl">
+      <Container as="main" className="flex flex-col gap-lg py-xl">
         <Text variant="display" as="h1">
           Today
         </Text>

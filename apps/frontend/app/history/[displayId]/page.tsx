@@ -1,5 +1,5 @@
-import { Container } from "@/components/ds";
-import { EmptyState, RecommendationDetail } from "@/components/recommendations";
+import { Container, Text } from "@/components/ds";
+import { EmptyState, RecommendationDetail, headlineFor } from "@/components/recommendations";
 import { TimeMachine } from "@/components/history";
 import { AppNav } from "@/components/nav/AppNav";
 import { getRecommendationDetail, getRecommendationReconstruction } from "@/app/lib/api";
@@ -25,7 +25,7 @@ export default async function HistoryDetailPage({
     return (
       <>
         <AppNav />
-        <Container className="flex flex-col gap-lg py-xl">
+        <Container as="main" className="flex flex-col gap-lg py-xl">
           <EmptyState headline="Sign in to see this recommendation's history." />
         </Container>
       </>
@@ -35,7 +35,7 @@ export default async function HistoryDetailPage({
     return (
       <>
         <AppNav />
-        <Container className="flex flex-col gap-lg py-xl">
+        <Container as="main" className="flex flex-col gap-lg py-xl">
           <EmptyState headline="Recommendation not found." />
         </Container>
       </>
@@ -45,7 +45,7 @@ export default async function HistoryDetailPage({
     return (
       <>
         <AppNav />
-        <Container className="flex flex-col gap-lg py-xl">
+        <Container as="main" className="flex flex-col gap-lg py-xl">
           <EmptyState
             headline="This recommendation's history isn't available right now."
             body="Something went wrong reaching the recommendation service. Try again shortly."
@@ -63,7 +63,10 @@ export default async function HistoryDetailPage({
     return (
       <>
         <AppNav />
-        <Container className="flex flex-col gap-lg py-xl">
+        <Container as="main" className="flex flex-col gap-lg py-xl">
+          <Text variant="display" as="h1">
+            {headlineFor(detailResult.data)}
+          </Text>
           <TimeMachine detail={detailResult.data} reconstruction={reconstructionResult.data} />
         </Container>
       </>
@@ -77,7 +80,7 @@ export default async function HistoryDetailPage({
   return (
     <>
       <AppNav />
-      <Container className="flex flex-col gap-lg py-xl">
+      <Container as="main" className="flex flex-col gap-lg py-xl">
         <EmptyState
           headline="Full Time Machine reconstruction is unavailable for this recommendation."
           body="Showing what's available below."

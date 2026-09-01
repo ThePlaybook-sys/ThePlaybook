@@ -22,10 +22,10 @@ export function TimeMachineStage({ index, title, children }: TimeMachineStagePro
   return (
     <li className="flex gap-md">
       <div className="flex flex-col items-center" aria-hidden="true">
-        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border-default text-label text-text-secondary">
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border text-label text-text-secondary">
           {index}
         </span>
-        <span className="mt-xs w-px flex-1 bg-border-default" />
+        <span className="mt-xs w-px flex-1 bg-border" />
       </div>
       <div className="flex flex-1 flex-col gap-sm pb-xl">
         <Text variant="heading" as="h2">

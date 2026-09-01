@@ -42,7 +42,7 @@ export function OnboardingForm() {
           required
           value={jurisdictionState}
           onChange={(event) => setJurisdictionState(event.target.value)}
-          className="min-h-[44px] rounded-sm border border-border-default bg-surface-page px-md py-sm text-base text-text-primary"
+          className="min-h-[44px] rounded-sm border border-border bg-surface-page px-md py-sm text-base text-text-primary"
         >
           <option value="" disabled>
             Select your state

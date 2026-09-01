@@ -61,4 +61,16 @@ describe("Container", () => {
     );
     expect(screen.getByText("Inside")).toBeInTheDocument();
   });
+
+  it("defaults to a div but can render as a real <main> landmark (M7 accessibility pass)", () => {
+    const { container, rerender } = render(<Container data-testid="c">Inside</Container>);
+    expect(container.querySelector("div[data-testid='c']")).not.toBeNull();
+
+    rerender(
+      <Container as="main" data-testid="c">
+        Inside
+      </Container>,
+    );
+    expect(screen.getByRole("main")).toBeInTheDocument();
+  });
 });

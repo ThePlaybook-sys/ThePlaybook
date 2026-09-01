@@ -18,11 +18,11 @@ function formatPoint(point: number | null): string {
 export function LegLine({ leg }: { leg: RecommendationLeg }) {
   return (
     <div className="flex items-baseline justify-between gap-md">
-      <Text variant="body" as="span">
+      <Text variant="body" as="span" className="min-w-0">
         {leg.selection}
         {formatPoint(leg.point)}
       </Text>
-      <div className="flex items-baseline gap-sm">
+      <div className="flex shrink-0 items-baseline gap-sm">
         <Text variant="label" as="span">
           {Math.round(leg.finalAggregateConfidence * 100)}%
         </Text>
@@ -36,10 +36,10 @@ export function LegLine({ leg }: { leg: RecommendationLeg }) {
 
 export function headlineFor(recommendation: RecommendationCardData): string {
   if (recommendation.recommendationType === "no_bet") {
-    return "The Playbook Is Passing On This Game";
+    return "MANSA Is Passing On This Game";
   }
   if (recommendation.recommendationType === "bankroll_preservation") {
-    return "The Playbook Is Passing Today";
+    return "MANSA Is Passing Today";
   }
   if (recommendation.game) {
     return `${recommendation.game.awayTeam} @ ${recommendation.game.homeTeam}`;
@@ -73,17 +73,19 @@ export function RecommendationCard({ recommendation, linkTo = "/recommendations"
   return (
     <Link
       href={`${linkTo}/${recommendation.displayId}`}
-      className="block rounded-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent-primary"
+      className="block rounded-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
     >
       <Surface
         level="card"
-        className="flex flex-col gap-sm p-md transition-colors hover:border-accent-primary"
+        className="flex flex-col gap-sm p-md transition-colors hover:border-accent"
         data-recommendation-type={recommendation.recommendationType}
         data-recommendation-status={recommendation.status}
       >
         <div className="flex items-start justify-between gap-md">
-          <Text variant="heading">{headlineFor(recommendation)}</Text>
-          <div className="flex flex-col items-end gap-xs">
+          <Text variant="heading" className="min-w-0">
+            {headlineFor(recommendation)}
+          </Text>
+          <div className="flex shrink-0 flex-col items-end gap-xs">
             {recommendation.status === "withdrawn" && <StateBadge tone="neutral" label="Withdrawn" />}
             <GradeBadge grade={recommendation.grade} />
           </div>
@@ -92,7 +94,7 @@ export function RecommendationCard({ recommendation, linkTo = "/recommendations"
         {recommendation.oneLineSummary && <Text variant="body">{recommendation.oneLineSummary}</Text>}
 
         {!isPassing && recommendation.legs.length > 0 && (
-          <div className="flex flex-col gap-xs border-t border-border-default pt-sm">
+          <div className="flex flex-col gap-xs border-t border-border pt-sm">
             {recommendation.legs.map((leg) => (
               <LegLine key={`${leg.legOrder}-${leg.marketType}-${leg.selection}`} leg={leg} />
             ))}

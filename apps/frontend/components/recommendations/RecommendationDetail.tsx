@@ -80,7 +80,7 @@ function LegDetailSection({ leg }: { leg: RecommendationLegDetail }) {
 
       {leg.wouldChangeMindIf && (
         <details>
-          <summary className="cursor-pointer text-label text-text-secondary">Deeper reasoning</summary>
+          <summary className="inline-flex min-h-[44px] cursor-pointer items-center text-label text-text-secondary">Deeper reasoning</summary>
           <div className="mt-sm">
             <Text variant="label">Would change our mind if</Text>
             <Text variant="body">{leg.wouldChangeMindIf}</Text>
@@ -90,7 +90,7 @@ function LegDetailSection({ leg }: { leg: RecommendationLegDetail }) {
 
       {(leg.agentContributions.length > 0 || leg.consensus) && (
         <details>
-          <summary className="cursor-pointer text-label text-text-secondary">Full transparency</summary>
+          <summary className="inline-flex min-h-[44px] cursor-pointer items-center text-label text-text-secondary">Full transparency</summary>
           <div className="mt-sm flex flex-col gap-md">
             {leg.consensus && (
               <div className="flex flex-col gap-xs">
@@ -152,10 +152,10 @@ export function RecommendationDetail({ recommendation }: RecommendationDetailPro
     <div className="flex flex-col gap-lg">
       <Surface level="card" className="flex flex-col gap-sm p-lg">
         <div className="flex items-start justify-between gap-md">
-          <Text variant="display" as="h1">
+          <Text variant="display" as="h1" className="min-w-0">
             {headlineFor(recommendation)}
           </Text>
-          <div className="flex flex-col items-end gap-xs">
+          <div className="flex shrink-0 flex-col items-end gap-xs">
             {recommendation.status === "withdrawn" && <StateBadge tone="neutral" label="Withdrawn" />}
             <GradeBadge grade={recommendation.grade} />
           </div>
@@ -177,7 +177,7 @@ export function RecommendationDetail({ recommendation }: RecommendationDetailPro
 
       {hasProductLayer3 && (
         <details>
-          <summary className="cursor-pointer text-label text-text-secondary">Why not another shape</summary>
+          <summary className="inline-flex min-h-[44px] cursor-pointer items-center text-label text-text-secondary">Why not another shape</summary>
           <Surface level="elevated" className="mt-sm flex flex-col gap-sm p-md">
             {recommendation.whyNotOtherShapes && (
               <div>

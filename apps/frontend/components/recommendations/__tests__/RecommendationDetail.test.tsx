@@ -90,7 +90,7 @@ describe("RecommendationDetail", () => {
         })}
       />,
     );
-    expect(screen.getByText("The Playbook Is Passing On This Game")).toBeInTheDocument();
+    expect(screen.getByText("MANSA Is Passing On This Game")).toBeInTheDocument();
     expect(screen.getByText("no candidate qualified")).toBeInTheDocument();
   });
 

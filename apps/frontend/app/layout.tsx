@@ -14,7 +14,7 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "The Playbook",
+  title: "MANSA",
   description: "AI-powered sports betting operating system",
 };
 

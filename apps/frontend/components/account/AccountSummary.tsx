@@ -11,7 +11,7 @@ export interface AccountSummaryProps {
 
 function Row({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex items-baseline justify-between border-b border-border-default py-xs last:border-b-0">
+    <div className="flex items-baseline justify-between border-b border-border py-xs last:border-b-0">
       <Text variant="label" as="span">
         {label}
       </Text>
@@ -69,14 +69,14 @@ export function AccountSummary({ email, profile, subscription }: AccountSummaryP
 
       <Surface level="card" className="flex flex-col gap-md p-lg">
         <Link href="/account/how-it-works" className="text-body text-accent underline">
-          How The Playbook Works
+          How MANSA Works
         </Link>
       </Surface>
 
       <form action="/auth/sign-out" method="post">
         <button
           type="submit"
-          className="min-h-[44px] w-full rounded-sm border border-border-default px-md py-sm text-base text-text-secondary"
+          className="min-h-[44px] w-full rounded-sm border border-border px-md py-sm text-base text-text-secondary"
         >
           Sign Out
         </button>

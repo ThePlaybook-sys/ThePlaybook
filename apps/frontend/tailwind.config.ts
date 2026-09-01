@@ -21,10 +21,13 @@ const config: Config = {
           meta: "var(--text-meta)",
         },
         accent: "var(--accent-primary)",
+        // rgb()/<alpha-value> (not a bare var()) so opacity modifiers
+        // (bg-state-positive/15) actually work -- see globals.css's
+        // --state-* comment for why a plain var() silently drops them.
         state: {
-          positive: "var(--state-positive)",
-          negative: "var(--state-negative)",
-          neutral: "var(--state-neutral)",
+          positive: "rgb(var(--state-positive) / <alpha-value>)",
+          negative: "rgb(var(--state-negative) / <alpha-value>)",
+          neutral: "rgb(var(--state-neutral) / <alpha-value>)",
         },
         team: "var(--team-identity)",
         border: {
