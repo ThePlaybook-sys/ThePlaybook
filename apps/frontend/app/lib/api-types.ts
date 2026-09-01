@@ -345,6 +345,38 @@ export interface TrackRecordData {
   byRecommendationType: Record<string, TrackRecordTypeBreakdown>;
 }
 
+/** `GET /v1/user/profile` (Phase 2 Milestone 4, unchanged) is a thin
+ * `response.json()[0]` passthrough of the raw `user_profiles` row --
+ * snake_case verbatim, unlike every M2/M3 route's camelCase, the same
+ * "real backend contract, not renormalized here" pattern already
+ * documented for the reconstruction route. Only the fields M6 actually
+ * reads are typed; the row carries more (persona_classification,
+ * betting_experience, etc.) that M6 does not surface. */
+export interface UserProfile {
+  id: string;
+  display_name: string | null;
+  jurisdiction_state: string | null;
+  onboarding_completed_at: string | null;
+}
+
+/** `PATCH /v1/user/profile` body -- `jurisdiction_state` is the only
+ * field M6's onboarding form collects (HQ's explicit "keep onboarding
+ * short" instruction); every other field on `OnboardingComplete`
+ * (Phase 2 Milestone 4) stays optional/unset here. */
+export interface OnboardingUpdate {
+  jurisdiction_state: string;
+}
+
+/** `GET /v1/user/subscription` (Phase 6 Milestone 2, unchanged) --
+ * already camelCase, this route's own handler builds the response
+ * rather than passing a raw row through. */
+export interface SubscriptionData {
+  tier: string | null;
+  status: string | null;
+  billingPeriod: string | null;
+  currentPeriodEnd: string | null;
+}
+
 /** Discriminated result type every server-side fetch helper returns --
  * callers render a distinct honest state per outcome, never treating
  * "empty" and "error"/"unauthenticated" as the same thing (HQ's

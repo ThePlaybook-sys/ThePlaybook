@@ -1,30 +1,32 @@
 /**
- * Server-side fetch helpers for Phase 6 Milestone 3's read-only pages.
- * These run only in React Server Components (never in the browser --
- * `next/headers`'s `cookies()` is server-only by construction), calling
- * api-gateway directly over Railway's private network. No client-side
- * proxy route and no CORS configuration exist for these paths: unlike
- * `/demo`'s interactive tool, `/today`, `/recommendations`, and the
- * detail page never need the browser to call anything itself.
+ * Server-side fetch helpers for every Phase 6 authenticated page. These
+ * run only in React Server Components/Server Actions/Route Handlers
+ * (never in the browser), calling api-gateway directly over Railway's
+ * private network. No client-side proxy route and no CORS
+ * configuration exist for these paths: unlike `/demo`'s interactive
+ * tool, these pages never need the browser to call anything itself.
  *
- * `SESSION_COOKIE` is the one shared primitive this reads that M6 (auth
- * UI) doesn't exist to set yet -- HQ's M3 authorization allows shared
- * primitives genuinely necessary for M3. Nothing here issues, refreshes,
- * or validates a session; it only reads whatever raw Supabase access
- * token cookie is already present and forwards it as a Bearer token,
- * letting api-gateway's own `get_current_user` be the sole authority on
- * whether it's valid.
+ * Milestone 6 replaces M3's placeholder raw `pb_session_token` cookie
+ * read (which never issued, refreshed, or validated anything itself --
+ * see that module's own prior docstring) with the real Supabase SSR
+ * session `middleware.ts` now keeps fresh. This is not an architecture
+ * conflict: M3's own comment already named this exact gap as M6's job
+ * to close. api-gateway's contract is unchanged either way -- it only
+ * ever wanted `Authorization: Bearer <supabase access token>`, and lets
+ * its own `get_current_user` be the sole authority on whether that
+ * token is valid.
  */
-import { cookies } from "next/headers";
 import type {
   ApiResult,
+  OnboardingUpdate,
   RecommendationCardData,
   RecommendationDetailData,
   RecommendationReconstruction,
+  SubscriptionData,
   TrackRecordData,
+  UserProfile,
 } from "./api-types";
-
-export const SESSION_COOKIE = "pb_session_token";
+import { createClient } from "./supabase/server";
 
 function gatewayUrl(): string {
   const url = process.env.API_GATEWAY_URL;
@@ -34,8 +36,19 @@ function gatewayUrl(): string {
   return url;
 }
 
-async function fetchFromGateway<T>(path: string): Promise<ApiResult<T>> {
-  const token = cookies().get(SESSION_COOKIE)?.value;
+async function getAccessToken(): Promise<string | null> {
+  const supabase = createClient();
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+  return session?.access_token ?? null;
+}
+
+async function callGateway<T>(
+  path: string,
+  init?: { method?: "GET" | "PATCH"; body?: unknown },
+): Promise<ApiResult<T>> {
+  const token = await getAccessToken();
   if (!token) {
     return { kind: "unauthenticated" };
   }
@@ -43,7 +56,12 @@ async function fetchFromGateway<T>(path: string): Promise<ApiResult<T>> {
   let response: Response;
   try {
     response = await fetch(`${gatewayUrl()}${path}`, {
-      headers: { Authorization: `Bearer ${token}` },
+      method: init?.method ?? "GET",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        ...(init?.body ? { "Content-Type": "application/json" } : {}),
+      },
+      body: init?.body ? JSON.stringify(init.body) : undefined,
       // Every page reading this is per-user and time-sensitive
       // (freshness/withdrawal state) -- never let Next.js cache a
       // response meant for one viewer's session.
@@ -67,7 +85,7 @@ async function fetchFromGateway<T>(path: string): Promise<ApiResult<T>> {
 }
 
 export function getToday(): Promise<ApiResult<RecommendationCardData[]>> {
-  return fetchFromGateway<RecommendationCardData[]>("/v1/recommendations/today");
+  return callGateway<RecommendationCardData[]>("/v1/recommendations/today");
 }
 
 export function getRecommendations(params?: {
@@ -80,7 +98,7 @@ export function getRecommendations(params?: {
   if (params?.until) search.set("until", params.until);
   if (params?.limit) search.set("limit", String(params.limit));
   const query = search.toString();
-  return fetchFromGateway<RecommendationCardData[]>(
+  return callGateway<RecommendationCardData[]>(
     `/v1/recommendations${query ? `?${query}` : ""}`,
   );
 }
@@ -88,7 +106,7 @@ export function getRecommendations(params?: {
 export function getRecommendationDetail(
   displayId: string,
 ): Promise<ApiResult<RecommendationDetailData>> {
-  return fetchFromGateway<RecommendationDetailData>(
+  return callGateway<RecommendationDetailData>(
     `/v1/recommendations/${encodeURIComponent(displayId)}`,
   );
 }
@@ -102,7 +120,7 @@ export function getRecommendationDetail(
 export function getRecommendationReconstruction(
   displayId: string,
 ): Promise<ApiResult<RecommendationReconstruction>> {
-  return fetchFromGateway<RecommendationReconstruction>(
+  return callGateway<RecommendationReconstruction>(
     `/v1/recommendations/${encodeURIComponent(displayId)}/reconstruction`,
   );
 }
@@ -112,5 +130,29 @@ export function getRecommendationReconstruction(
  * `/track-record` renders exactly the counts and sample status this
  * route already returns. */
 export function getTrackRecord(): Promise<ApiResult<TrackRecordData>> {
-  return fetchFromGateway<TrackRecordData>("/v1/track-record");
+  return callGateway<TrackRecordData>("/v1/track-record");
+}
+
+/** Milestone 6 -- reuses the existing Phase 2 `GET /v1/user/profile`
+ * route verbatim. `not_found` genuinely means "no user_profiles row
+ * yet" (should not happen post-signup given the DB trigger, but the
+ * route itself can 404, so it's handled honestly rather than assumed
+ * impossible). */
+export function getUserProfile(): Promise<ApiResult<UserProfile>> {
+  return callGateway<UserProfile>("/v1/user/profile");
+}
+
+/** Milestone 6 -- reuses the existing Phase 2 `PATCH /v1/user/profile`
+ * route verbatim. Only `jurisdiction_state` is ever sent from M6's
+ * onboarding form (HQ's explicit "keep onboarding short" instruction);
+ * every other optional field on that route's own schema is left unset. */
+export function updateOnboarding(update: OnboardingUpdate): Promise<ApiResult<UserProfile>> {
+  return callGateway<UserProfile>("/v1/user/profile", { method: "PATCH", body: update });
+}
+
+/** Milestone 6 -- reuses the existing M2 `GET /v1/user/subscription`
+ * route verbatim. Displays only the authenticated user's own tier/
+ * status; no entitlement reinterpretation happens here. */
+export function getSubscription(): Promise<ApiResult<SubscriptionData>> {
+  return callGateway<SubscriptionData>("/v1/user/subscription");
 }

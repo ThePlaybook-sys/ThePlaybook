@@ -1,5 +1,6 @@
 import { Container } from "@/components/ds";
 import { RecommendationDetail, EmptyState } from "@/components/recommendations";
+import { AppNav } from "@/components/nav/AppNav";
 import { getRecommendationDetail } from "@/app/lib/api";
 
 /** Recommendation detail -- Layers 1-4 progressive disclosure (Volume 5
@@ -14,16 +15,19 @@ export default async function RecommendationDetailPage({
   const result = await getRecommendationDetail(params.displayId);
 
   return (
-    <Container className="flex flex-col gap-lg py-xl">
-      {result.kind === "unauthenticated" && <EmptyState headline="Sign in to see this recommendation." />}
-      {result.kind === "not_found" && <EmptyState headline="Recommendation not found." />}
-      {result.kind === "error" && (
-        <EmptyState
-          headline="This recommendation isn't available right now."
-          body="Something went wrong reaching the recommendation service. Try again shortly."
-        />
-      )}
-      {result.kind === "ok" && <RecommendationDetail recommendation={result.data} />}
-    </Container>
+    <>
+      <AppNav />
+      <Container className="flex flex-col gap-lg py-xl">
+        {result.kind === "unauthenticated" && <EmptyState headline="Sign in to see this recommendation." />}
+        {result.kind === "not_found" && <EmptyState headline="Recommendation not found." />}
+        {result.kind === "error" && (
+          <EmptyState
+            headline="This recommendation isn't available right now."
+            body="Something went wrong reaching the recommendation service. Try again shortly."
+          />
+        )}
+        {result.kind === "ok" && <RecommendationDetail recommendation={result.data} />}
+      </Container>
+    </>
   );
 }
