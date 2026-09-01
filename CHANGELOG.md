@@ -1603,3 +1603,39 @@ A one-line cross-reference was added to §7's `postgame_reviews` description (`o
 **Alternatives considered:** none material beyond the one recorded in the Volume 5 entry above.
 
 **Expected impact:** No new betting intelligence, ranking, or business logic -- every historical fact rendered is read verbatim from the reconstruction route or the existing detail route. Real, working History/Time Machine screens now exist; visual validation is bounded by the same DEV data absence already carried as debt from M3.
+
+---
+
+## v5.0.6 (Volume 5) — 2026-09-01 — PATCH
+
+**Volumes affected:** Volume 5 (Frontend & UX Architecture)
+
+**Reason:** Phase 6 Milestone 5 (Track Record) implemented `/track-record` against the already-shipped, unchanged M2 `GET /v1/track-record` route. §5's `TrackRecordSummaryProps` sketch predated this route's real response shape and needed correcting: it omitted `mixedSettled` from `record`/`byRecommendationType`, and omitted each `byRecommendationType` entry's own `sampleSize` -- both fields `track_record.py` has returned since Milestone 2.
+
+**Decision:** §5's Track Record Summary sketch is corrected to the route's real shape. An implementation note records the frontend-only `sampleSize > 0` filter applied to `byRecommendationType` before rendering, which excludes the zero-sample `no_bet`/`bankroll_preservation` entries the route's own `by_type.setdefault(...)` creates for every `NOT_APPLICABLE`-graded product (never tallied, but still given an entry) -- a real, disclosed quirk of the existing handler, not changed here since M5's authorization scoped this milestone to the frontend only. The note also records that no win-rate or other derived percentage is computed anywhere in the component -- the route returns none, so none is shown, per HQ's explicit M5 STOP condition.
+
+**Alternatives considered:** Fixing `track_record.py`'s `by_type.setdefault` to skip `NOT_APPLICABLE`-only types server-side. Rejected -- out of M5's explicit scope (frontend only, no new backend surface or algorithm change), and the frontend-side filter fully satisfies HQ's "must not be styled as failed or successful wagers" requirement without touching a route four milestones of other work already depend on.
+
+**Expected impact:** Documentation only, matching the Milestone 5 code entry (below).
+
+---
+
+## v4.6 (apps/frontend) — 2026-09-01 — Phase 6 Milestone 5: Track Record
+
+**Volumes affected:** Volume 5 (v5.0.6 entry above) — implementation entry, not itself a Blueprint decision.
+
+**Reason:** HQ authorized Milestone 5 (Track Record) after M4's close-out, scoped to `/track-record` only, reusing the existing M2 `GET /v1/track-record` route verbatim -- no new backend route, no new grading or performance algorithm, and an explicit, extensive exclusion list (units, ROI, CLV, EV realization, calibration, projected/verified performance, hypothetical bankroll framing, any win-rate percentage, any synthetic score).
+
+**Decision:** `apps/frontend/app/lib/api-types.ts` gained `TrackRecordCounts`, `SampleStatus`, `TrackRecordTypeBreakdown`, and `TrackRecordData`, matching the route's real camelCase response exactly. `api.ts` gained `getTrackRecord()`. `components/track-record/TrackRecordSummary` renders three sample-status states: `zero` (a plain honest "no graded recommendations yet" sentence, no numeric table at all), `low` (the real record plus a prominent, unmissable early-sample disclosure quoting the exact sample size), and `mature` (record plus, when the response has one, a recommendation-type breakdown). `byRecommendationType` entries are filtered to `sampleSize > 0` before rendering. Built `/track-record` (`EmptyState` for unauthenticated/not_found/error, `TrackRecordSummary` for `ok`, matching the established M3/M4 page pattern) using "The Playbook" product voice throughout -- "MANSA" (used informally in HQ's directive prose) does not appear anywhere in the blueprint or in any shipped UI copy and was deliberately not introduced here.
+
+**No win-rate, ever:** no percentage, ratio, or other derived performance number is computed or rendered anywhere in `TrackRecordSummary` -- `/v1/track-record` returns none, and HQ's M5 authorization explicitly required stopping rather than deriving one from ambiguous outcome classes (PUSH/VOID_NO_ACTION/MIXED_SETTLED/NOT_APPLICABLE) without an approved denominator definition. Raw counts only, for all five outcome buckets (`win`/`loss`/`push`/`voidNoAction`/`mixedSettled`), each shown as its own row, never folded together.
+
+**No Bet / Bankroll Preservation never styled as a wager outcome:** `track_record.py`'s handler creates a zero-sample `byRecommendationType` entry for `no_bet`/`bankroll_preservation` whenever either type appears in a graded row, even though `NOT_APPLICABLE` is never tallied into it (confirmed by direct inspection of the route before writing any frontend code). `TrackRecordSummary`'s `sampleSize > 0` filter excludes these phantom zero-sample entries generically -- no type-specific special-casing -- so neither type can ever render as a `{0-0-0-0-0}` row that reads as a losing streak.
+
+**Visual direction:** restrained "Quant Broadcast / Desk Open" treatment per HQ's explicit direction -- plain bordered count rows, no charts, no celebratory color, no synthetic score, no casino/sportsbook styling. Single-column by construction at every breakpoint (mobile-safe by default, matching M4's precedent, not a separate mobile layout).
+
+**Full test/regression evidence:** 58/58 frontend tests passing (49 pre-existing + 9 new `TrackRecordSummary` tests covering the zero/low/mature sample-status states, all five outcome buckets rendered distinctly, absence of any win-rate/percentage text, recommendation-type breakdown rendering, phantom zero-sample-entry filtering, an unknown-type label fallback, and single-column mobile-safe structure). `tsc --noEmit` clean. `npm run build` clean, `/track-record` correctly marked dynamically-rendered.
+
+**Alternatives considered:** none material beyond the one recorded in the Volume 5 entry above.
+
+**Expected impact:** No new betting intelligence, ranking, grading, or performance-calculation logic -- every number rendered is read verbatim from the existing `/v1/track-record` route. A real, working Track Record screen now exists; visual validation is bounded by the same DEV data absence already carried as debt from M3/M4.

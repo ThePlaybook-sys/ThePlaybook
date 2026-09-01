@@ -21,6 +21,7 @@ import type {
   RecommendationCardData,
   RecommendationDetailData,
   RecommendationReconstruction,
+  TrackRecordData,
 } from "./api-types";
 
 export const SESSION_COOKIE = "pb_session_token";
@@ -104,4 +105,12 @@ export function getRecommendationReconstruction(
   return fetchFromGateway<RecommendationReconstruction>(
     `/v1/recommendations/${encodeURIComponent(displayId)}/reconstruction`,
   );
+}
+
+/** Milestone 5 (Track Record) -- reuses the existing M2 `/v1/track-record`
+ * read model verbatim. No new grading algorithm, no derived win-rate:
+ * `/track-record` renders exactly the counts and sample status this
+ * route already returns. */
+export function getTrackRecord(): Promise<ApiResult<TrackRecordData>> {
+  return fetchFromGateway<TrackRecordData>("/v1/track-record");
 }

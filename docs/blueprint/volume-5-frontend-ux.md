@@ -1,9 +1,10 @@
 # The Playbook — Volume 5
 ## Frontend & UX Architecture: Dashboards, Navigation, Components, Notifications, Onboarding, Accessibility
 
-**Version:** v5.0.5
-**Last updated:** 2026-08-31
+**Version:** v5.0.6
+**Last updated:** 2026-09-01
 **Depends on:** Volume 1 (v3.1 — personas, tiers, journeys), Volume 3 (v4.24 — the real Phase 5 product/explanation/activation-snapshot/grading schema), Volume 4 (v5.10 — explainability mapping, consensus/agreement-variance semantics, 12-agent committee reality)
+**v5.0.6 note (PATCH):** Phase 6 Milestone 5 (Track Record) implemented `/track-record` against the existing M2 `GET /v1/track-record` route unchanged — no new backend route or grading algorithm. §5's Track Record Summary type sketch is corrected to match the route's real, already-shipped response shape: `record`/`byRecommendationType` entries carry `mixedSettled` (the sketch omitted it) and each `byRecommendationType` entry carries its own `sampleSize` (the sketch had none) — both real fields `apps/api-gateway/app/track_record.py` has returned since Milestone 2; this is a documentation correction, not a contract change. No win-rate or derived percentage is computed or rendered anywhere in the implementation, per HQ's explicit M5 STOP condition — raw counts only. `byRecommendationType` entries are filtered client-side to `sampleSize > 0` before rendering, which excludes the zero-sample `no_bet`/`bankroll_preservation` phantom entries the route's own `by_type.setdefault(...)` creates for every `NOT_APPLICABLE`-graded product (a real, disclosed quirk of the existing handler, not fixed here — HQ's M5 authorization scoped this milestone to the frontend only). See `CHANGELOG.md` v5.0.6 entry.
 **v5.0.5 note (PATCH):** Phase 6 Milestone 4 (History / Time Machine) implemented `/history` and `/history/[displayId]` against the existing M2 reconstruction proxy and M2/M3 detail route — no new backend route. §5's Time Machine section gains an implementation note (below) on the two-read composition and the explicit temporal-integrity handling HQ's M4 authorization required. §11 gains the reconstruction route's real field shape (snake_case, `dataclasses.asdict()` verbatim — distinct from every other route's camelCase). See `CHANGELOG.md` v5.0.5 entry.
 **v5.0.4 note (PATCH):** Phase 6 Milestone 3 (Core Recommendation Experience) implemented `/today`, `/recommendations`, and `/recommendations/[displayId]` against M2.1's corrected contract. §2 gains the Server-Component-direct-fetch architecture actually built (`pb_session_token` cookie, `API_GATEWAY_URL`, the `ApiResult<T>` discriminated result type). No component contract or screen-state text in §5/§6 changed — the build matches what was already specified there. See `CHANGELOG.md` v5.0.4 entry.
 **v5.0.3 note (PATCH):** Milestone 2.1 (additive contract correction, discovered at the Milestone 3 boundary) adds a `grade` field to the three product read routes in §11, and corrects §5's `RecommendationCardProps` accordingly: `status` stays exactly `'active'|'withdrawn'` (lifecycle, never `'graded'`) and the card's grade state is carried in a separate `grade: {outcome, gradedAt, isCorrection, correctedAt} | null` object, not flat `status`/`outcome`/`isCorrection` fields as originally drafted in v5.0. See `CHANGELOG.md` v5.0.3 entry for full reasoning.
@@ -163,13 +164,17 @@ The original `evidence_strength`/`data_quality` dimensions (v2.0) are not carrie
 
 ### Track Record Summary
 ```typescript
+type TrackRecordCounts = { win: number; loss: number; push: number; voidNoAction: number; mixedSettled: number };
+
 type TrackRecordSummaryProps = {
-  sampleSize: number;                                  // count of graded recommendation_products — CATEGORY A
-  record?: { win: number; loss: number; push: number; voidNoAction: number };   // product-level outcome tally — CATEGORY B
-  byRecommendationType?: Record<string, { win: number; loss: number; push: number; voidNoAction: number }>;  // CATEGORY B
+  sampleSize: number;                                        // count of graded recommendation_products — CATEGORY A
+  record: TrackRecordCounts;                                 // product-level outcome tally — CATEGORY B
+  byRecommendationType: Record<string, TrackRecordCounts & { sampleSize: number }>;  // CATEGORY B
   sampleStatus: 'zero' | 'low' | 'mature';
 };
 ```
+**Implementation note (Milestone 5, v5.0.6):** the shape above is `GET /v1/track-record`'s real response (unchanged since Milestone 2) — this corrects the pre-M5 sketch, which omitted `mixedSettled` from both `record` and `byRecommendationType`, and omitted the per-type `sampleSize`. Both are real fields the route has always returned; only this document's sketch was out of date. `/track-record`'s `TrackRecordSummary` component filters `byRecommendationType` to entries with `sampleSize > 0` before rendering — the route's handler creates a zero-sample entry for every recommendation type that appears in a graded row, including `no_bet`/`bankroll_preservation` (which are graded `NOT_APPLICABLE` and never tallied), so an unfiltered render could show a `{win:0, loss:0, ...}` row for those two types that reads as a losing streak. This is a frontend-only filter, not a backend change — HQ's M5 authorization scoped this milestone to the presentation layer. No win-rate or other derived percentage is computed anywhere in this component; the API returns none, so none is shown (HQ's explicit M5 STOP condition) — raw counts only, with `sampleSize`/`sampleStatus` always visible ahead of the record itself so a low sample can never read as an established performance history.
+
 **Unit of observation is the recommendation PRODUCT, never the leg (HQ Final Decision 2).** "N graded recommendations" means N graded `recommendation_products`; a `multiple_singles` product's individual legs are never counted into this denominator. If leg-level performance is ever shown, it must use its own explicitly-labeled component ("Individual Picks"/"Legs") with its own separate denominator — never blended into this one. **Explicitly excluded from this component and from Phase 6 entirely:** units, ROI, EV realization, CLV, modeled-probability calibration, projected-user performance, verified-user performance — all Category C (no live writer/computation exists for any of them). No placeholder charts for these in the production UI.
 
 ### Charts
