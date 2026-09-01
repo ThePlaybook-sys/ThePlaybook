@@ -8,10 +8,14 @@ export interface IntelligencePulsePanelProps {
   freshness: ApiResult<SourceFreshness>;
 }
 
+/** M7.4: value tinted Intelligence Cyan, the same "analytical instrument
+ * reading" color role `BoardCard`'s CONFIDENCE/EV/PRICE metrics now use
+ * -- a restrained, consistent visual identity for every numeric reading
+ * across the Command Center, not a one-off treatment. */
 function CountReading({ label, value }: { label: string; value: number }) {
   return (
     <div className="flex flex-col gap-xs">
-      <Text variant="data" as="span">
+      <Text variant="data" as="span" className="text-intel-cyan">
         {value}
       </Text>
       <Text variant="label" as="span">

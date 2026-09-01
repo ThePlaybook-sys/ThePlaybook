@@ -32,6 +32,15 @@
   --plane-100: #0d1020; /* Level 1 Dashboard Plane -- new body background */
   --surface-200: #1a2136; /* Level 3 Intelligence Object ("card") */
   --surface-300: #212a42; /* Level 4 Focus/Active ("elevated") */
+  /* M7.4 -- a small, deliberately distinct raised inset panel used only
+     for a BoardCard's "MANSA Decision" zone (§7/§8's depth-without-
+     clutter requirement). Named and valued separately from --surface-300
+     on purpose: --surface-300/"elevated" stays reserved for genuine
+     Focus/Active states (never a static resting-content background, per
+     M7.2's own restriction) -- reusing it here would blur that meaning.
+     A flat hex value, not RGB-triplet, since nothing needs an opacity
+     modifier on it. */
+  --surface-inset: #1e263d;
   --border-default: #232b47;
 
   /* Text roles */
