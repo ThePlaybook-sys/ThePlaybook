@@ -4,7 +4,7 @@ import { CoreConcepts } from "@/components/education/CoreConcepts";
 import { AppNav } from "@/components/nav/AppNav";
 import { requireUser } from "@/app/lib/auth";
 
-export const metadata = { title: "How The Playbook Works — The Playbook" };
+export const metadata = { title: "How MANSA Works — MANSA" };
 
 /** Reopenable from Account at any time (HQ's explicit M6 requirement),
  * not a one-time onboarding-only screen. No performance claims are made
@@ -16,10 +16,10 @@ export default async function HowItWorksPage() {
   return (
     <>
       <AppNav />
-      <Container className="flex flex-col gap-xl py-xl">
+      <Container as="main" className="flex flex-col gap-xl py-xl">
         <div className="flex flex-col gap-sm">
           <Text variant="display" as="h1">
-            How The Playbook Works
+            How MANSA Works
           </Text>
           <Text variant="body">
             A plain-language look at how a recommendation gets made, and how you can check our

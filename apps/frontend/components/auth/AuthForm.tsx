@@ -138,7 +138,7 @@ export function AuthForm() {
             autoComplete="email"
             value={email}
             onChange={(event) => setEmail(event.target.value)}
-            className="min-h-[44px] rounded-sm border border-border-default bg-surface-page px-md py-sm text-base text-text-primary"
+            className="min-h-[44px] rounded-sm border border-border bg-surface-page px-md py-sm text-base text-text-primary"
           />
         </div>
 
@@ -154,7 +154,7 @@ export function AuthForm() {
             autoComplete={mode === "sign-in" ? "current-password" : "new-password"}
             value={password}
             onChange={(event) => setPassword(event.target.value)}
-            className="min-h-[44px] rounded-sm border border-border-default bg-surface-page px-md py-sm text-base text-text-primary"
+            className="min-h-[44px] rounded-sm border border-border bg-surface-page px-md py-sm text-base text-text-primary"
           />
         </div>
 

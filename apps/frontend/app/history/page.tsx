@@ -3,7 +3,7 @@ import { RecommendationCard, EmptyState } from "@/components/recommendations";
 import { AppNav } from "@/components/nav/AppNav";
 import { getRecommendations } from "@/app/lib/api";
 
-export const metadata = { title: "History — The Playbook" };
+export const metadata = { title: "History — MANSA" };
 
 /**
  * History index (Milestone 4, Volume 5 v5.0 §3). Reuses M2/M2.1's
@@ -20,7 +20,7 @@ export default async function HistoryPage() {
   return (
     <>
       <AppNav />
-      <Container className="flex flex-col gap-lg py-xl">
+      <Container as="main" className="flex flex-col gap-lg py-xl">
         <Text variant="display" as="h1">
           History
         </Text>

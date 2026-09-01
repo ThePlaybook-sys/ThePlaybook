@@ -32,10 +32,17 @@
 
   /* State triad — win/loss/push, confidence-floor pass/fail, freshness.
      Structurally separate from --team-identity below so a team's brand
-     color can never be mistaken for a state signal. */
-  --state-positive: #34c77b;
-  --state-negative: #f0554f;
-  --state-neutral: #8891a3;
+     color can never be mistaken for a state signal. Stored as
+     space-separated RGB channels (not a hex string) so Tailwind's
+     opacity-modifier syntax (bg-state-positive/15) can actually apply
+     an alpha channel via `rgb(var(--state-positive) / <alpha-value>)`
+     in tailwind.config.ts -- a bare `var(--x)` hex value silently drops
+     any `/NN` modifier instead of erroring, which is what left every
+     StateBadge (Win/Loss/Push/Void/Mixed Settled/Withdrawn) rendering
+     with no background tint or border color at all (M7 finding). */
+  --state-positive: 52 199 123; /* #34c77b */
+  --state-negative: 240 85 79; /* #f0554f */
+  --state-neutral: 136 145 163; /* #8891a3 */
 
   /* Narrow team/game-identity channel. This default is a neutral
      fallback; a real team color is applied per-instance (e.g. a
@@ -98,4 +105,18 @@ body {
 :focus-visible {
   outline: 2px solid var(--accent-primary);
   outline-offset: 2px;
+}
+
+/* M7 accessibility pass: a viewer who has asked their OS for reduced
+   motion gets it -- every transition/animation in this app collapses
+   to instant, without needing each component to opt in individually. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

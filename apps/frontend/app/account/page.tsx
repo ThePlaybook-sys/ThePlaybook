@@ -5,7 +5,7 @@ import { AppNav } from "@/components/nav/AppNav";
 import { requireUser } from "@/app/lib/auth";
 import { getSubscription, getUserProfile } from "@/app/lib/api";
 
-export const metadata = { title: "Account — The Playbook" };
+export const metadata = { title: "Account — MANSA" };
 
 export default async function AccountPage() {
   const user = await requireUser();
@@ -14,7 +14,7 @@ export default async function AccountPage() {
   return (
     <>
       <AppNav />
-      <Container className="flex flex-col gap-lg py-xl">
+      <Container as="main" className="flex flex-col gap-lg py-xl">
         <Text variant="display" as="h1">
           Account
         </Text>

@@ -51,7 +51,7 @@ describe("AccountSummary", () => {
     expect(screen.queryByText("No active subscription.")).not.toBeInTheDocument();
   });
 
-  it("links to How The Playbook Works", () => {
+  it("links to How MANSA Works", () => {
     render(
       <AccountSummary
         email="user@example.com"
@@ -59,7 +59,7 @@ describe("AccountSummary", () => {
         subscription={{ kind: "ok", data: { tier: null, status: null, billingPeriod: null, currentPeriodEnd: null } }}
       />,
     );
-    const link = screen.getByRole("link", { name: "How The Playbook Works" });
+    const link = screen.getByRole("link", { name: "How MANSA Works" });
     expect(link).toHaveAttribute("href", "/account/how-it-works");
   });
 

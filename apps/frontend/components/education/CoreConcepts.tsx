@@ -10,10 +10,10 @@ interface Concept {
  * explicitly NOT the probability of winning, a distinction this
  * codebase's own agent committee (Volume 4) depends on the user not
  * confusing. Reused verbatim by both onboarding's first-use education
- * and Account's "How The Playbook Works" (HQ used "MANSA" informally in
- * the M6 directive prose; the established, already-shipped product
- * voice is "The Playbook" -- see M5's identical decision -- so no
- * "MANSA" branding appears in rendered copy). */
+ * and Account's "How MANSA Works". Deliberately brand-name-agnostic --
+ * these four definitions never hardcode "MANSA" (or, before M7's brand
+ * alignment, "The Playbook") inline, since the product name is set by
+ * the surrounding page, not repeated inside every reused fragment. */
 const CONCEPTS: Concept[] = [
   {
     term: "Confidence",

@@ -3,7 +3,7 @@ import { RecommendationCard, EmptyState } from "@/components/recommendations";
 import { AppNav } from "@/components/nav/AppNav";
 import { getRecommendations } from "@/app/lib/api";
 
-export const metadata = { title: "Recommendations — The Playbook" };
+export const metadata = { title: "Recommendations — MANSA" };
 
 /** Broader recommendation feed (trailing 30 days by default, Volume 5
  * v5.0 §2). Same neutral ordering and honest-state handling as /today. */
@@ -13,7 +13,7 @@ export default async function RecommendationsPage() {
   return (
     <>
       <AppNav />
-      <Container className="flex flex-col gap-lg py-xl">
+      <Container as="main" className="flex flex-col gap-lg py-xl">
         <Text variant="display" as="h1">
           Recommendations
         </Text>

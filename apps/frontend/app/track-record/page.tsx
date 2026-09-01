@@ -4,7 +4,7 @@ import { TrackRecordSummary } from "@/components/track-record";
 import { AppNav } from "@/components/nav/AppNav";
 import { getTrackRecord } from "@/app/lib/api";
 
-export const metadata = { title: "Track Record — The Playbook" };
+export const metadata = { title: "Track Record — MANSA" };
 
 /** Phase 6 Milestone 5. Authoritative product-level graded record only --
  * no units, ROI, CLV, calibration, or hypothetical-bankroll framing (all
@@ -16,7 +16,7 @@ export default async function TrackRecordPage() {
   return (
     <>
       <AppNav />
-      <Container className="flex flex-col gap-lg py-xl">
+      <Container as="main" className="flex flex-col gap-lg py-xl">
         <Text variant="display" as="h1">
           Track Record
         </Text>

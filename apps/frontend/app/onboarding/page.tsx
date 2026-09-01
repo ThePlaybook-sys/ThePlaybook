@@ -5,7 +5,7 @@ import { OnboardingForm } from "@/components/onboarding/OnboardingForm";
 import { requireUser } from "@/app/lib/auth";
 import { getUserProfile } from "@/app/lib/api";
 
-export const metadata = { title: "Get Started — The Playbook" };
+export const metadata = { title: "Get Started — MANSA" };
 
 /** Phase 6 Milestone 6. Deliberately short (HQ's explicit instruction):
  * one required field (jurisdiction_state) plus first-use education, not
@@ -21,10 +21,10 @@ export default async function OnboardingPage() {
   }
 
   return (
-    <Container className="flex flex-col gap-xl py-xl">
+    <Container as="main" className="flex flex-col gap-xl py-xl">
       <div className="flex flex-col gap-sm">
         <Text variant="display" as="h1">
-          Welcome to The Playbook
+          Welcome to MANSA
         </Text>
         <Text variant="body">
           A quick look at how recommendations work, then one question and you're in.

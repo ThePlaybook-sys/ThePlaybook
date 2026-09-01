@@ -64,7 +64,7 @@ function StageWhatWeRecommended({ detail }: { detail: RecommendationDetailData }
         </Text>
         {detail.oneLineSummary && <Text variant="body">{detail.oneLineSummary}</Text>}
         {!passing && detail.legs.length > 0 && (
-          <div className="flex flex-col gap-xs border-t border-border-default pt-sm">
+          <div className="flex flex-col gap-xs border-t border-border pt-sm">
             {detail.legs.map((leg) => (
               <LegLine key={`${leg.legOrder}-${leg.marketType}-${leg.selection}`} leg={leg} />
             ))}
@@ -97,7 +97,7 @@ function StageWhatWeKnew({
           <Text variant="body">No additional evidence recorded.</Text>
         ) : (
           <details>
-            <summary className="cursor-pointer text-label text-text-secondary">
+            <summary className="inline-flex min-h-[44px] cursor-pointer items-center text-label text-text-secondary">
               Committee snapshot at decision time
             </summary>
             <div className="mt-sm flex flex-col gap-md">
@@ -255,7 +255,7 @@ function StageWhatHappened({ reconstruction }: { reconstruction: RecommendationR
       )}
       {hasMultipleLegs && (
         <details>
-          <summary className="cursor-pointer text-label text-text-secondary">Per-leg grading</summary>
+          <summary className="inline-flex min-h-[44px] cursor-pointer items-center text-label text-text-secondary">Per-leg grading</summary>
           <div className="mt-sm flex flex-col gap-md">
             {reconstruction.legs.map((leg) => (
               <div key={leg.leg.id} className="flex flex-col gap-xs">

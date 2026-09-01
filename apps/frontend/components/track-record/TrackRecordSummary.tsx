@@ -35,7 +35,7 @@ function typeLabel(rtype: string): string {
 
 function CountRow({ label, value }: { label: string; value: number }) {
   return (
-    <div className="flex items-baseline justify-between border-b border-border-default py-xs last:border-b-0">
+    <div className="flex items-baseline justify-between border-b border-border py-xs last:border-b-0">
       <Text variant="body" as="span">
         {label}
       </Text>
@@ -78,7 +78,7 @@ export function TrackRecordSummary({ data }: TrackRecordSummaryProps) {
           No graded recommendations yet
         </Text>
         <Text variant="body">
-          The Playbook hasn&apos;t graded any recommendation products yet. A track record will appear here
+          MANSA hasn&apos;t graded any recommendation products yet. A track record will appear here
           once results are in.
         </Text>
       </Surface>

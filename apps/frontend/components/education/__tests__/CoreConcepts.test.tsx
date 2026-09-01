@@ -21,9 +21,10 @@ describe("CoreConcepts", () => {
     expect(screen.getByText(/legitimate recommendation on its own, not a failure/)).toBeInTheDocument();
   });
 
-  it("never renders 'MANSA' anywhere -- the established product voice is The Playbook", () => {
+  it("never hardcodes a product/brand name inline -- content is reused across onboarding and How MANSA Works, so the brand name belongs to the surrounding page, not this fragment", () => {
     render(<CoreConcepts />);
     expect(screen.queryByText(/MANSA/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Playbook/)).not.toBeInTheDocument();
   });
 
   it("omits the section heading in compact mode (onboarding's first-use pass)", () => {
