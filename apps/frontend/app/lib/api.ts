@@ -22,6 +22,7 @@ import type {
   RecommendationCardData,
   RecommendationDetailData,
   RecommendationReconstruction,
+  SourceFreshness,
   SubscriptionData,
   TrackRecordData,
   UserProfile,
@@ -155,4 +156,11 @@ export function updateOnboarding(update: OnboardingUpdate): Promise<ApiResult<Us
  * status; no entitlement reinterpretation happens here. */
 export function getSubscription(): Promise<ApiResult<SubscriptionData>> {
   return callGateway<SubscriptionData>("/v1/user/subscription");
+}
+
+/** Milestone 7.1 -- reuses the new thin `GET /v1/system/freshness` route
+ * verbatim. SOURCE data freshness only -- structurally separate from
+ * any recommendation's own `decidedAt`, never merged into one concept. */
+export function getSourceFreshness(): Promise<ApiResult<SourceFreshness>> {
+  return callGateway<SourceFreshness>("/v1/system/freshness");
 }

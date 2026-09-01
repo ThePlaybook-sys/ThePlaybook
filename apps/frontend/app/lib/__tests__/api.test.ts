@@ -165,4 +165,22 @@ describe("api.ts fetch helpers", () => {
       data: { tier: "elite", status: "active", billingPeriod: "monthly", currentPeriodEnd: "2026-10-01T00:00:00Z" },
     });
   });
+
+  it("Milestone 7.1: getSourceFreshness returns ok with the raw freshness shape on 200", async () => {
+    getSession.mockResolvedValue({ data: { session: { access_token: "real-jwt" } } });
+    global.fetch = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({ status: "success", startedAt: "2026-09-02T06:00:00Z", completedAt: "2026-09-02T06:04:12Z", gamesInSlate: 14 }),
+        { status: 200 },
+      ),
+    ) as unknown as typeof fetch;
+    const { getSourceFreshness } = await import("../api");
+
+    const result = await getSourceFreshness();
+
+    expect(result).toEqual({
+      kind: "ok",
+      data: { status: "success", startedAt: "2026-09-02T06:00:00Z", completedAt: "2026-09-02T06:04:12Z", gamesInSlate: 14 },
+    });
+  });
 });

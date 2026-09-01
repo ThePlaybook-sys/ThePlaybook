@@ -377,6 +377,20 @@ export interface SubscriptionData {
   currentPeriodEnd: string | null;
 }
 
+/** Milestone 7.1 -- mirrors apps/api-gateway's `GET /v1/system/freshness`
+ * verbatim. `status: null` means no `master_refresh_runs` row exists at
+ * all (never a refresh in this environment) -- a real, honest state,
+ * distinct from a run that's in progress (`completedAt: null` with a
+ * non-null `status`). This is SOURCE data freshness only -- never the
+ * same concept as a recommendation's own `decidedAt`; the two are never
+ * collapsed into one "Updated" label anywhere in this codebase. */
+export interface SourceFreshness {
+  status: "running" | "success" | "partial" | "failed" | null;
+  startedAt: string | null;
+  completedAt: string | null;
+  gamesInSlate: number | null;
+}
+
 /** Discriminated result type every server-side fetch helper returns --
  * callers render a distinct honest state per outcome, never treating
  * "empty" and "error"/"unauthenticated" as the same thing (HQ's
