@@ -77,6 +77,27 @@ describe("AuthForm", () => {
     await waitFor(() => expect(push).toHaveBeenCalledWith("/"));
   });
 
+  it("real M6 defect #2 regression: emailRedirectTo is always derived from the page's own origin at request time, never a hardcoded value -- ruling out the frontend as the cause of a confirmation link pointing somewhere other than the deployed site", async () => {
+    signUp.mockResolvedValue({ data: { session: null }, error: null });
+    const originalLocation = window.location;
+    // @ts-expect-error -- jsdom's window.location is configurable for this test only
+    delete window.location;
+    window.location = { ...originalLocation, origin: "https://frontend-dev-ab32.up.railway.app" } as Location;
+
+    render(<AuthForm />);
+    fireEvent.click(screen.getByRole("tab", { name: "Create Account" }));
+    await fillAndSubmit("new@example.com", "password123");
+
+    await waitFor(() => expect(signUp).toHaveBeenCalled());
+    expect(signUp).toHaveBeenCalledWith(
+      expect.objectContaining({
+        options: { emailRedirectTo: "https://frontend-dev-ab32.up.railway.app/auth/callback" },
+      }),
+    );
+
+    window.location = originalLocation;
+  });
+
   it("shows 'Please wait...' and disables the button while the request is pending", async () => {
     let resolveSignIn: (value: unknown) => void = () => {};
     signInWithPassword.mockReturnValue(
