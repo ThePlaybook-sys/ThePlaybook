@@ -38,4 +38,11 @@ describe("AppNav", () => {
     expect(screen.getByRole("link", { name: "Recommendations" })).toHaveAttribute("aria-current", "page");
     expect(screen.getByRole("link", { name: "Today" })).not.toHaveAttribute("aria-current");
   });
+
+  it("M7.3: never links to the dev-only MANSA UI Preview -- it is not a real product destination", () => {
+    usePathnameMock.mockReturnValue("/today");
+    const { container } = render(<AppNav />);
+    expect(container.innerHTML).not.toMatch(/\/dev\/command-center-preview/);
+    expect(screen.queryByRole("link", { name: /preview/i })).not.toBeInTheDocument();
+  });
 });
