@@ -50,6 +50,12 @@ app.include_router(recommendations_router)
 app.include_router(track_record_router)
 app.include_router(subscription_router)
 
+# Phase 6 Milestone 7.1 -- source-data-freshness thin read (see
+# app.freshness docstring).
+from app.freshness import router as freshness_router  # noqa: E402
+
+app.include_router(freshness_router)
+
 
 if os.environ.get("RAILWAY_ENVIRONMENT_NAME", "dev") == "dev":
 

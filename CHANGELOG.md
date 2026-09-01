@@ -1841,3 +1841,75 @@ All five are fixed at the root: `tailwind.config.ts`'s `state.positive/negative/
 **Alternatives considered:** none material beyond the ones recorded in the Volume 5 entry above.
 
 **Expected impact:** No new betting intelligence, ranking, grading, or recommendation logic. `StateBadge` visually changes (tinted background/border now actually render) — every other change is either a dead-class correction, a structural accessibility addition, or a copy-only rename. M3/M4/M5 populated-state debt, Pre-Phase-6 operational debt, the default-branch/staging-deployment-coupling risk, M1's `npm audit`/ESLint debt, and the dormant `'syndicate'` RLS gap all remain unchanged.
+
+---
+
+## v5.3 (Volume 5) — 2026-09-02 — MINOR
+
+**Volumes affected:** Volume 5 (Frontend & UX Architecture)
+
+**Reason:** HQ's first human visual review of M7 found the engineering/accessibility/responsive work genuinely useful but judged Phase 6 visually unclosed -- the deployed product still read as "a functional dark web application," not "MANSA Sports Intelligence Command Center." HQ authorized a scoped product-composition pass (M7.1) after first requiring a full design proposal (data-contract-audited, no code) and then approving it with several mandatory corrections.
+
+**Decision:** `/today` is recomposed from a plain title-plus-list into a real dashboard, built entirely from already-authoritative reads plus one new thin backend route:
+
+- **Command Header** -- MANSA / "Sports Intelligence" + a source-freshness line, sourced from the one new backend surface this milestone required: `GET /v1/system/freshness`, a pure read of the latest `master_refresh_runs` row (no new business logic, same service-role client pattern every Milestone 2+ route already uses). Three real states rendered honestly -- no refresh has ever run (`status: null`), one is currently running (`completedAt` still null), or the latest one completed -- never a fabricated timestamp, never implied to be live/ticking (no polling/push infrastructure exists or was added). Kept structurally separate from every card's own `decidedAt` everywhere in the composition, per HQ's explicit "never collapse into 'Updated'" instruction.
+- **Today's Board** (the dominant zone) -- a new `BoardCard` presentation (matchup/game context first, then the MANSA decision, then supported metrics via the existing `LegLine`), genuinely distinct from `RecommendationCard`'s list-view layout rather than the same card dropped into a grid. **One card per recommendation PRODUCT** -- HQ's explicit mid-review correction: the persisted unit is the product, not the game, so two products sharing one matchup each render their own full card, at equal weight, never merged/ranked/hidden.
+- **MANSA Intelligence / Market Pulse** -- exactly the four items HQ's approval scoped: recommendation-product count, No Bet product count, unique games represented (all three pure client-side counts of data `/today` already returns, computed by a new pure, independently-tested `computeDashboardCounts` function -- zero new backend), and source freshness. Explicitly nothing else -- no "markets analyzed/rejected," no weather/injury/market-movement alerts, no live-AI-activity language, since no authoritative Phase 1-5 contract exposes any of them (confirmed via a full backend/schema research pass before the design proposal was even drafted).
+- **Recent Decisions** -- a compact preview of the existing M2/M3 `/v1/recommendations` feed (`limit=6`, already `created_at.desc` ordered). Each row's state (ACTIVE/NO BET/BANKROLL PRESERVATION/WIN/LOSS/PUSH/VOID/MIXED SETTLED/WITHDRAWN) is selected by a new pure `recentDecisionState` function that only ever picks between already-true API fields -- it never computes an outcome.
+- **Track Record Snapshot** -- a compact render of the existing M2/M5 `/v1/track-record` response, same fields, same zero-sample copy verbatim (no second, drifting message), linking to the full page.
+
+**Team abbreviation correction applied:** the design proposal's client-derived-initials idea (e.g. "Miami Dolphins" → invented "MD") was rejected by HQ during approval -- `BoardCard` renders full team names only, exactly as `/v1/recommendations/today` already returns them, until an authoritative abbreviation/logo/color contract exists (none does today, confirmed by schema audit -- no `color`/`logo` column exists anywhere in `teams`/`games`/`team_provider_ids`).
+
+**Modeled-probability gap recorded, not solved:** no `/v1/recommendations*` route exposes a probability field -- only `finalAggregateConfidence` (confidence) and `evPerDollar` (EV) exist. Per HQ's explicit instruction, M7.1 does not display, derive, or infer a modeled-probability number from confidence/EV/odds/consensus anywhere. A structural regression test (`components/dashboard/__tests__/no-modeled-probability.test.ts`) scans every Command Center source file for the word "probability" so this gap can never be silently closed by a future change without the test failing first.
+
+**Desktop/mobile:** desktop uses a real two-zone grid (Today's Board ~2/3 width, the rail ~1/3); mobile stacks the exact same five modules in the exact same order -- never a reduced or reordered "mobile mode." `Container`'s M7 `as` prop and `AppNav`'s M7 accessibility fixes are reused unchanged.
+
+**Navigation:** unchanged, per HQ's explicit instruction to defer any IA/label discussion until after seeing the redesigned dashboard in context -- Today/Recommendations/History/Track Record/Account, same five destinations, same order.
+
+**Alternatives considered:** Extending `RecommendationCard` itself with a "board" variant prop instead of a new sibling `BoardCard`. Rejected -- HQ explicitly required a genuinely different presentation, not the same card in a grid, and a shared component risks prop-explosion and destabilizing `RecommendationCard`'s already-tested list-view usage on `/recommendations`/`/history`. Grouping multiple same-game products under one shared visual header. Rejected after HQ's explicit correction -- any grouping UI risks visually subordinating one product to another, exactly what "no merging, no ranking" rules out -- each product simply renders its own full, equal-weight card instead.
+
+**Testing:** Backend -- `apps/api-gateway/tests/test_freshness.py` (6 new tests: auth required, no-refresh-ever state, running state, completed state, most-recent-row-only, partial/failed pass-through). Frontend -- 49 new tests across 10 files in `components/dashboard/__tests__/` (module presence, zero-data states, exact count semantics including the multiple-products-per-game case, No Bet/Bankroll Preservation equal-weight rendering, source-freshness/decision-timestamp separation, missing/running freshness states, Track Record snapshot, Recent Decisions, mobile-safe grid structure, no-modeled-probability regression guard) plus `app/lib/__tests__/format.test.ts` (7 new tests for `formatRelativeTime`) and one new `api.ts`/`api-types.ts` case. Backend: 85/85 passing (79 pre-existing + 6 new). Frontend: 171/171 passing (114 pre-existing + 57 new). `tsc --noEmit` clean. `npm run build` clean, unchanged route set (21 routes). A design-token class audit (the same static-analysis method M7 introduced) re-confirmed zero dead Tailwind classes across the new components.
+
+**Expected impact:** No new betting intelligence, ranking, or recommendation logic -- every new element is either already-authoritative API data, a pure client-side count/label derived from it, or the one new thin freshness read. `/recommendations`, `/history`, and `RecommendationCard` are unchanged; the new dashboard components are a sibling composition, not a replacement. Phase 6's visual product gate remains open pending HQ's own real-device review of the redesigned `/today` -- this session does not declare it closed.
+
+---
+
+## v4.4 (apps/api-gateway) — 2026-09-02 — Phase 6 Milestone 7.1: source-data-freshness thin read
+
+**Volumes affected:** Volume 5 (v5.3 entry above) — implementation entry, not itself a Blueprint decision.
+
+**Reason:** HQ's approved MANSA Command Center design required a Command Header freshness line ("Data refreshed 4 min ago") -- the underlying `master_refresh_runs.completed_at`/`status` data already existed but no route exposed it.
+
+**Decision:** New `app/freshness.py`, `GET /v1/system/freshness` -- a pure read of the latest `master_refresh_runs` row (`select=status,started_at,completed_at,games_in_slate&order=started_at.desc&limit=1`), same service-role `new_client()`/`postgrest_headers()` pattern every Milestone 2+ route (`recommendations.py`, `track_record.py`, `subscription.py`) already uses. No new business logic, no polling, no new refresh trigger. Registered in `main.py` alongside the existing three routers.
+
+**Three real states, distinguished honestly:** an empty result set (`status: null`, `startedAt: null`, `completedAt: null`, `gamesInSlate: null`) means no refresh has ever run in this environment -- never a fabricated timestamp. A row with `completed_at: null` means a refresh is currently running. A row with `completed_at` set is the one to show, verbatim, camelCased -- `status`/`startedAt`/`completedAt`/`gamesInSlate` pass through unchanged, no reinterpretation.
+
+**Not user- or tier-scoped:** unlike every other route in this gateway, freshness is a single global environment-wide state, not per-user data -- `current_user` is still required (this gateway has no route reachable without authentication) but is never used to filter the query.
+
+**Tests:** `tests/test_freshness.py` (6 new tests): requires authentication; no-refresh-ever state; running-refresh state (no `completedAt` yet); completed-refresh state (returns its own timestamp, distinct from any recommendation's decision time); confirms only the most recent run is requested (`order=started_at.desc&limit=1`, trusting Supabase's own ordering rather than re-sorting client-side); partial/failed statuses pass through honestly.
+
+**Full test/regression evidence:** 85/85 api-gateway tests passing (79 pre-existing + 6 new).
+
+**Alternatives considered:** none material -- this is the smallest possible thin-read addition matching the exact pattern already established by every sibling Milestone 2+ route.
+
+**Expected impact:** No new business logic, no change to any existing route, no recommendation/grading/ranking logic touched. A dashboard-only informational read.
+
+---
+
+## v4.12 (apps/frontend) — 2026-09-02 — Phase 6 Milestone 7.1: MANSA Command Center
+
+**Volumes affected:** Volume 5 (v5.3 entry above) — implementation entry, not itself a Blueprint decision.
+
+**Reason:** HQ's first human visual review of M7 judged Phase 6 visually unclosed and authorized a scoped product-composition redesign of `/today` into a real command-center dashboard, following a design-proposal-first process (data-contract-audited, no code) HQ then approved with explicit corrections.
+
+**Code:** `app/lib/api-types.ts`/`api.ts` -- new `SourceFreshness` type and `getSourceFreshness()` fetch helper (mirrors every existing helper's `ApiResult<T>` pattern exactly). `app/lib/format.ts` -- new `formatRelativeTime()` (injectable `now` for deterministic tests), distinct from the existing decision-timestamp `formatDateTime()`. New `components/dashboard/` module: `CommandHeader`, `SourceFreshnessLabel`, `BoardCard` (a new sibling presentation, not a `RecommendationCard` modification), `TodaysBoard`, `IntelligencePulsePanel`, `RecentDecisionsList`, `TrackRecordSnapshot`, plus two pure/independently-tested logic modules `dashboardCounts.ts` (`computeDashboardCounts`) and `recentDecisionState.ts`. `app/today/page.tsx` rewritten to fetch four reads in parallel (`getToday`, `getRecommendations({limit:6})`, `getTrackRecord`, `getSourceFreshness`) and compose them into the two-zone desktop / stacked-mobile dashboard; each module receives its own `ApiResult` and renders its own honest state independently (the established M6 `AccountSummary` pattern), so one failed read never blanks the rest of the page.
+
+**HQ's mandatory corrections, applied exactly:** (1) recommendation PRODUCT is the unit, never the game -- `TodaysBoard` renders one `BoardCard` per product returned, multiple products sharing a game both render in full, never merged/ranked/hidden. (2) Count terminology is exact -- `computeDashboardCounts` documents and enforces precisely what "recommendations" (products), "No Bet decisions" (only `recommendationType==="no_bet"`, distinct from bankroll_preservation), and "games represented" (distinct games, dedup by `homeTeam|awayTeam|scheduledStart`, slate-scoped products contribute none) each count. (3) No client-derived team abbreviations -- `BoardCard` renders `game.homeTeam`/`game.awayTeam` verbatim, full names only. (4) No modeled-probability number anywhere -- recorded as an explicit product/data-contract gap (no such field exists on any route), guarded by a new structural regression test rather than solved silently.
+
+**Tests:** 57 new tests -- `components/dashboard/__tests__/` (10 files: `dashboardCounts`, `recentDecisionState`, `BoardCard`, `TodaysBoard` including the multiple-products-per-game case, `SourceFreshnessLabel`, `CommandHeader`, `IntelligencePulsePanel`, `RecentDecisionsList`, `TrackRecordSnapshot`, `no-modeled-probability` structural guard) plus `app/lib/__tests__/format.test.ts` (7 cases for `formatRelativeTime`) and one new `api.ts` case for `getSourceFreshness`.
+
+**Full test/regression evidence:** 171/171 frontend tests passing (114 pre-existing + 57 new). `tsc --noEmit` clean. `npm run build` clean, unchanged route set (21 routes). The M7 design-token class audit script was re-run against every new file -- zero dead Tailwind classes.
+
+**Alternatives considered:** none material beyond the ones recorded in the Volume 5 entry above.
+
+**Expected impact:** `RecommendationCard`, `/recommendations`, `/history`, and every other Phase 6 route are unchanged -- this is a new sibling composition on `/today` only. No new recommendation, ranking, grading, or business logic anywhere. Phase 6's visual product gate remains open; this session does not declare it closed, per HQ's explicit instruction that only HQ's own real-device review can do that.
