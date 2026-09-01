@@ -46,14 +46,32 @@ describe("BoardCard", () => {
     expect(container.querySelector("a")).toHaveAttribute("href", "/recommendations/2026-00100");
   });
 
-  it("renders confidence and EV via the existing LegLine primitive, never a fabricated modeled-probability number", () => {
+  it("renders confidence, EV, and price as instrument metrics, never a fabricated modeled-probability number", () => {
     render(<BoardCard recommendation={makeCard()} />);
     expect(screen.getByText("89%")).toBeInTheDocument();
+    expect(screen.getByText("+6.3%")).toBeInTheDocument();
+    expect(screen.getByText("-135")).toBeInTheDocument();
     expect(screen.queryByText(/probability/i)).not.toBeInTheDocument();
   });
 
   it("shows a graded outcome badge when a grade is present", () => {
     render(<BoardCard recommendation={makeCard({ grade: makeGrade({ outcome: "WIN" }) })} />);
     expect(screen.getByText("Win")).toHaveAttribute("data-state-tone", "positive");
+  });
+
+  it("No Bet gets a restrained Attention Amber top edge instead of MANSA cobalt/violet Illumination -- a deliberate decline, never an error", () => {
+    const { container } = render(
+      <BoardCard recommendation={makeCard({ recommendationType: "no_bet", legs: [] })} />,
+    );
+    const surface = container.querySelector("[data-surface-level='card']");
+    expect(surface?.className).toContain("border-t-attention-amber");
+    expect(surface?.className).not.toContain("mansa-illuminated-edge-top");
+  });
+
+  it("an active recommendation gets the MANSA cobalt/violet Illumination top edge, not the amber decline treatment", () => {
+    const { container } = render(<BoardCard recommendation={makeCard()} />);
+    const surface = container.querySelector("[data-surface-level='card']");
+    expect(surface?.className).toContain("mansa-illuminated-edge-top");
+    expect(surface?.className).not.toContain("border-t-attention-amber");
   });
 });

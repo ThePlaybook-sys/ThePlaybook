@@ -1,11 +1,60 @@
 import Link from "next/link";
 import { Surface, Text, StateBadge } from "@/components/ds";
-import { headlineFor, LegLine, GradeBadge, FreshnessLabel } from "@/components/recommendations";
+import { headlineFor, formatOdds, formatPoint, GradeBadge, FreshnessLabel } from "@/components/recommendations";
 import { formatDateTime } from "@/app/lib/format";
-import type { RecommendationCardData } from "@/app/lib/api-types";
+import type { RecommendationCardData, RecommendationLeg } from "@/app/lib/api-types";
 
 export interface BoardCardProps {
   recommendation: RecommendationCardData;
+}
+
+/**
+ * EV as a signed percentage, e.g. `+6.3%` / `-2.0%`. Sign is purely
+ * numeric -- never colored positive/negative (HQ's explicit M7.2
+ * instruction: positive EV is not equivalent to a winning outcome, so
+ * this must never borrow the WIN/LOSS emerald/coral vocabulary).
+ */
+function formatEv(evPerDollar: number): string {
+  const pct = evPerDollar * 100;
+  const sign = pct > 0 ? "+" : "";
+  return `${sign}${pct.toFixed(1)}%`;
+}
+
+/** One instrument reading (§11): small uppercase label, large tabular
+ * data value. Never a gauge, meter, or decorative chart. */
+function InstrumentMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex flex-col gap-xs">
+      <Text variant="label" as="span">
+        {label}
+      </Text>
+      <Text variant="data" as="span">
+        {value}
+      </Text>
+    </div>
+  );
+}
+
+/** BoardCard-only leg row -- deliberately parallel to, not a reuse of,
+ * `LegLine` (which stays untouched for `RecommendationCard`,
+ * `RecommendationDetail`, and Time Machine so this restyle carries zero
+ * risk to those pages). Surfaces CONFIDENCE / EV / PRICE as three
+ * instrument readings per HQ's M7.2 Today's Board hierarchy -- EV was
+ * never displayed anywhere in the app before this milestone. */
+function BoardCardLeg({ leg }: { leg: RecommendationLeg }) {
+  return (
+    <div className="flex flex-col gap-sm">
+      <Text variant="body" as="span">
+        {leg.selection}
+        {formatPoint(leg.point)}
+      </Text>
+      <div className="flex flex-wrap gap-lg">
+        <InstrumentMetric label="Confidence" value={`${Math.round(leg.finalAggregateConfidence * 100)}%`} />
+        <InstrumentMetric label="EV" value={formatEv(leg.evPerDollar)} />
+        <InstrumentMetric label="Price" value={formatOdds(leg.americanOdds)} />
+      </div>
+    </div>
+  );
 }
 
 /**
@@ -16,8 +65,8 @@ export interface BoardCardProps {
  * scheduled time + live game status, when a game exists), then the
  * MANSA DECISION (the same headline/grade vocabulary
  * `RecommendationCard` already established, reused rather than
- * reinvented), then supported metrics (selection, line/price,
- * confidence, EV via the existing `LegLine`).
+ * reinvented), then CONFIDENCE/EV/PRICE instrument metrics (M7.2 --
+ * see `BoardCardLeg` below).
  *
  * `RecommendationCard` itself is intentionally untouched by this
  * component -- `/recommendations` and `/history` keep their own tested
@@ -30,9 +79,12 @@ export interface BoardCardProps {
  * hides one in favor of another.
  *
  * No_bet/bankroll_preservation render as a real, equal-weight MANSA
- * decision (§8 of the authorization) -- same Surface level and card
- * structure as an active recommendation, never smaller or "empty"
- * framed.
+ * decision -- same Surface level and card structure as an active
+ * recommendation, never smaller or "empty" framed. Per M7.2 §12, its
+ * top edge is a restrained solid Attention Amber instead of the
+ * cobalt-to-violet MANSA Illumination -- a deliberate, non-error visual
+ * signal ("MANSA evaluated the opportunity and deliberately declined
+ * it"), never a second color meaning layered onto the same edge.
  */
 export function BoardCard({ recommendation }: BoardCardProps) {
   const isPassing =
@@ -48,7 +100,9 @@ export function BoardCard({ recommendation }: BoardCardProps) {
     >
       <Surface
         level="card"
-        className="flex flex-col gap-sm p-lg transition-colors hover:border-accent"
+        className={`flex flex-col gap-sm border-t-2 p-lg transition-colors hover:border-accent ${
+          isPassing ? "border-t-attention-amber" : "mansa-illuminated-edge-top border-t-transparent"
+        }`}
         data-recommendation-type={recommendation.recommendationType}
         data-recommendation-status={recommendation.status}
       >
@@ -76,9 +130,9 @@ export function BoardCard({ recommendation }: BoardCardProps) {
         {recommendation.oneLineSummary && <Text variant="body">{recommendation.oneLineSummary}</Text>}
 
         {!isPassing && recommendation.legs.length > 0 && (
-          <div className="flex flex-col gap-xs border-t border-border pt-sm">
+          <div className="flex flex-col gap-md border-t border-border pt-sm">
             {recommendation.legs.map((leg) => (
-              <LegLine key={`${leg.legOrder}-${leg.marketType}-${leg.selection}`} leg={leg} />
+              <BoardCardLeg key={`${leg.legOrder}-${leg.marketType}-${leg.selection}`} leg={leg} />
             ))}
           </div>
         )}

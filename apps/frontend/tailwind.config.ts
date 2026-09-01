@@ -1,6 +1,6 @@
 import type { Config } from "tailwindcss";
 
-// Quant Broadcast / Desk Open design tokens (Volume 5 v5.0 §4).
+// MANSA Imperial Cobalt design tokens (Volume 5, Phase 6 Milestone 7.2).
 // Every value below resolves to a CSS custom property defined in
 // app/globals.css — Tailwind classes are never a second source of truth
 // for a raw color/spacing value.
@@ -11,19 +11,29 @@ const config: Config = {
     extend: {
       colors: {
         surface: {
-          page: "var(--surface-page)",
-          card: "var(--surface-card)",
-          elevated: "var(--surface-elevated)",
+          page: "rgb(var(--env-000) / <alpha-value>)",
+          card: "var(--surface-200)",
+          elevated: "var(--surface-300)",
         },
         text: {
           primary: "var(--text-primary)",
           secondary: "var(--text-secondary)",
           meta: "var(--text-meta)",
         },
-        accent: "var(--accent-primary)",
         // rgb()/<alpha-value> (not a bare var()) so opacity modifiers
-        // (bg-state-positive/15) actually work -- see globals.css's
-        // --state-* comment for why a plain var() silently drops them.
+        // (bg-accent/10) actually work -- see globals.css's --mansa-*
+        // comment for why a plain var() silently drops them.
+        accent: "rgb(var(--mansa-cobalt) / <alpha-value>)",
+        mansa: {
+          cobalt: "rgb(var(--mansa-cobalt) / <alpha-value>)",
+          violet: "rgb(var(--mansa-violet) / <alpha-value>)",
+        },
+        intel: {
+          cyan: "rgb(var(--intel-cyan) / <alpha-value>)",
+        },
+        attention: {
+          amber: "rgb(var(--attention-amber) / <alpha-value>)",
+        },
         state: {
           positive: "rgb(var(--state-positive) / <alpha-value>)",
           negative: "rgb(var(--state-negative) / <alpha-value>)",
@@ -63,6 +73,7 @@ const config: Config = {
         lg: "var(--space-lg)",
         xl: "var(--space-xl)",
         "2xl": "var(--space-2xl)",
+        "3xl": "var(--space-3xl)",
       },
       borderRadius: {
         sm: "var(--radius-sm)",

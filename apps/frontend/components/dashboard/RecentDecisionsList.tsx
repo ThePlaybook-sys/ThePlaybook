@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Surface, Text, StateBadge } from "@/components/ds";
+import { Text, StateBadge } from "@/components/ds";
 import { headlineFor } from "@/components/recommendations";
 import { formatDateTime } from "@/app/lib/format";
 import { recentDecisionState } from "./recentDecisionState";
@@ -12,15 +12,20 @@ export interface RecentDecisionsListProps {
 const MAX_ROWS = 6;
 
 /**
- * Recent Decisions (Milestone 7.1) -- a compact preview of the existing
- * M2/M3 `/v1/recommendations` feed, reused verbatim (no new backend
- * route, no new state computation beyond `recentDecisionState`'s pure
- * label selection). Links each row into the same detail route
+ * Recent Decisions -- a compact preview of the existing M2/M3
+ * `/v1/recommendations` feed, reused verbatim (no new backend route, no
+ * new state computation beyond `recentDecisionState`'s pure label
+ * selection). Links each row into the same detail route
  * `RecommendationCard` already uses, and links out to the full feed.
+ *
+ * M7.2 renders this as structured rows directly on the dashboard plane
+ * (HQ's "not everything is a card" rule) -- a section label, a hairline
+ * top divider for separation from the module above it, and subtle
+ * per-row separators, rather than a boxed list.
  */
 export function RecentDecisionsList({ recent }: RecentDecisionsListProps) {
   return (
-    <Surface level="card" className="flex flex-col gap-md p-lg" aria-labelledby="recent-decisions-heading">
+    <div className="flex flex-col gap-md border-t border-border pt-lg" aria-labelledby="recent-decisions-heading">
       <Text variant="heading" as="h2" id="recent-decisions-heading">
         Recent Decisions
       </Text>
@@ -58,6 +63,6 @@ export function RecentDecisionsList({ recent }: RecentDecisionsListProps) {
       <Link href="/recommendations" className="text-body text-accent underline">
         See all
       </Link>
-    </Surface>
+    </div>
   );
 }

@@ -39,7 +39,7 @@ export function TodaysBoard({ today }: TodaysBoardProps) {
         <EmptyState headline="Today's recommendations aren't available yet." />
       )}
       {today.kind === "ok" && today.data.length > 0 && (
-        <div className="grid grid-cols-1 gap-md lg:grid-cols-2">
+        <div className="grid grid-cols-1 gap-lg lg:grid-cols-2">
           {today.data.map((recommendation) => (
             <BoardCard key={recommendation.displayId} recommendation={recommendation} />
           ))}

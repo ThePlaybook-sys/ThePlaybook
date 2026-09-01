@@ -3,51 +3,70 @@
 @tailwind utilities;
 
 /*
- * Quant Broadcast / Desk Open design tokens (Volume 5 v5.0 §4, Phase 6
- * Milestone 1). Dark foundation only for V1 — Quant Broadcast is
- * specified as a "premium dark foundation"; no light-theme variant is
- * built this milestone. Every visual value in the product should trace
- * back to one of these custom properties, never a hardcoded literal in
- * component code.
+ * MANSA Imperial Cobalt design tokens (Volume 5, Phase 6 Milestone 7.2).
+ * Sports-intelligence command-center identity: a near-black environment,
+ * a small set of deliberately restrained elevation planes, and a strict
+ * color grammar (Volume 5 M7.2 spec §3-§4) where MANSA Cobalt/Violet mean
+ * "MANSA intelligence/identity," Intelligence Cyan means "data," Amber
+ * means "attention," and Emerald/Coral are reserved for settled outcome
+ * state -- never reused for anything else (e.g. positive EV is not a win
+ * and must never render in Emerald). Every visual value in the product
+ * should trace back to one of these custom properties, never a
+ * hardcoded literal in component code.
  */
 :root {
   color-scheme: dark;
 
-  /* Surface levels — gives the four-layer progressive disclosure model
-     (Volume 5 §5) and Time Machine's staged narrative a real spatial
-     hierarchy: page < card < elevated-detail. */
-  --surface-page: #0a0c10;
-  --surface-card: #12151b;
-  --surface-elevated: #1a1e26;
-  --border-default: #262b34;
+  /* Depth system (§5): five conceptual levels, four surface tokens.
+     Level 0 Environment is the outermost app background; Level 1
+     Dashboard Plane is the body/page background most content sits
+     directly on (no wrapping container needed -- §8's "not everything
+     is a card" rule); Level 3 "card" and one step further "elevated"
+     are reserved for genuinely elevated intelligence objects
+     (BoardCard-tier). --env-000 is stored as space-separated RGB
+     channels (not a hex string) because it is reused with an opacity
+     modifier for recessed form-input backgrounds via
+     `rgb(var(--env-000) / <alpha-value>)`; the plane/surface tokens
+     have no such need and stay plain hex. */
+  --env-000: 7 9 18; /* #070912 -- Level 0 Environment */
+  --plane-100: #0d1020; /* Level 1 Dashboard Plane -- new body background */
+  --surface-200: #1a2136; /* Level 3 Intelligence Object ("card") */
+  --surface-300: #212a42; /* Level 4 Focus/Active ("elevated") */
+  --border-default: #232b47;
 
   /* Text roles */
-  --text-primary: #f3f5f7;
-  --text-secondary: #9aa2ad;
-  --text-meta: #656d78;
+  --text-primary: #f5f7fc;
+  --text-secondary: #a3acbd;
+  --text-meta: #6b7590;
 
-  /* Primary accent — interactive/primary-action emphasis only, never
-     reused for state or team meaning. */
-  --accent-primary: #4c8bf5;
+  /* MANSA color grammar (§3-§4). Stored as RGB triplets so Tailwind's
+     opacity-modifier syntax (e.g. bg-accent/10) can apply an alpha
+     channel via `rgb(var(--x) / <alpha-value>)` in tailwind.config.ts --
+     a bare `var(--x)` hex value silently drops any `/NN` modifier
+     instead of erroring (the M7 StateBadge finding). --mansa-cobalt
+     replaces the old --accent-primary name: MANSA intelligence,
+     action, primary interactive emphasis. --mansa-violet is MANSA
+     identity/premium depth, used selectively (illumination, not base
+     fills). --intel-cyan is reserved for analytical/data emphasis.
+     --attention-amber is attention/caution/No-Bet emphasis -- never an
+     error color. */
+  --mansa-cobalt: 57 120 255; /* #3978FF */
+  --mansa-violet: 112 92 255; /* #705CFF */
+  --intel-cyan: 66 215 255; /* #42D7FF */
+  --attention-amber: 240 184 74; /* #F0B84A */
 
-  /* State triad — win/loss/push, confidence-floor pass/fail, freshness.
+  /* State triad -- settled-outcome meaning only (win/loss/push-void-
+     mixed), never repurposed for EV sign or any other judgment.
      Structurally separate from --team-identity below so a team's brand
-     color can never be mistaken for a state signal. Stored as
-     space-separated RGB channels (not a hex string) so Tailwind's
-     opacity-modifier syntax (bg-state-positive/15) can actually apply
-     an alpha channel via `rgb(var(--state-positive) / <alpha-value>)`
-     in tailwind.config.ts -- a bare `var(--x)` hex value silently drops
-     any `/NN` modifier instead of erroring, which is what left every
-     StateBadge (Win/Loss/Push/Void/Mixed Settled/Withdrawn) rendering
-     with no background tint or border color at all (M7 finding). */
-  --state-positive: 52 199 123; /* #34c77b */
-  --state-negative: 240 85 79; /* #f0554f */
-  --state-neutral: 136 145 163; /* #8891a3 */
+     color can never be mistaken for a state signal. */
+  --state-positive: 53 201 139; /* #35C98B -- Positive Emerald */
+  --state-negative: 240 95 107; /* #F05F6B -- Negative Coral */
+  --state-neutral: 139 150 179; /* #8B96B3 -- cool slate; derived, no HQ hex given -- see CHANGELOG */
 
-  /* Narrow team/game-identity channel. This default is a neutral
-     fallback; a real team color is applied per-instance (e.g. a
-     matchup header's accent edge) and must never expand beyond that
-     scoped context per Volume 5 §12's team-color usage rule. */
+  /* Narrow team/game-identity channel. Team identity is not authorized
+     this milestone (§14) -- this remains an unused neutral placeholder
+     so BoardCard stays structurally ready for a future TeamIdentity
+     contract without building it now. */
   --team-identity: #7c8591;
 
   /* Typography roles: display (verdict headlines) / heading / body /
@@ -72,38 +91,43 @@
   --text-data-leading: 1.2;
   --text-data-weight: 600;
 
-  /* Spacing — single base-4 grid, replacing the ad hoc per-file inline
-     rem values in the prior /demo code. */
+  /* Spacing — base-4 grid. --space-3xl is new in M7.2: the "generous"
+     major-section tier (§7C) that separates Today's Board, MANSA
+     Intelligence, Recent Decisions, and Track Record from one another,
+     distinct from the tighter related-object (§7B) and internal (§7A)
+     tiers already covered by the existing scale. */
   --space-xs: 0.25rem;
   --space-sm: 0.5rem;
   --space-md: 1rem;
   --space-lg: 1.5rem;
   --space-xl: 2rem;
   --space-2xl: 3rem;
+  --space-3xl: 4rem;
 
-  /* Radius — restrained, per Desk Open's non-rounded-consumer-app
-     identity. */
+  /* Radius — restrained, non-rounded-consumer-app identity. */
   --radius-sm: 0.25rem;
   --radius-md: 0.375rem;
   --radius-lg: 0.625rem;
 
-  /* Motion — communicates real state change only (§9's principle: no
-     continuous/ambient animation, since no server-push mechanism
-     exists to justify implying continuous "live" activity). */
+  /* Motion — communicates real state change only: focus transitions,
+     disclosure, genuine state transitions, refresh/grade settlement.
+     No ambient or continuous animation (§24). */
   --motion-micro: 120ms;
   --motion-state: 240ms;
 }
 
 body {
-  background-color: var(--surface-page);
+  background-color: var(--plane-100);
   color: var(--text-primary);
 }
 
-/* Accessibility foundation (Volume 5 v5.0 §8 baseline): every
-   interactive element gets a real, visible keyboard-focus indicator —
-   never suppressed, never left to the browser default alone. */
+/* Accessibility foundation: every interactive element gets a real,
+   visible keyboard-focus indicator — never suppressed, never left to
+   the browser default alone. A solid MANSA Cobalt ring is used
+   deliberately instead of a gradient here, for reliability across
+   every focusable element shape. */
 :focus-visible {
-  outline: 2px solid var(--accent-primary);
+  outline: 2px solid rgb(var(--mansa-cobalt));
   outline-offset: 2px;
 }
 
@@ -119,4 +143,26 @@ body {
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
   }
+}
+
+/* MANSA Illumination (§6): a restrained cobalt-to-violet signature
+   treatment for a single edge -- active nav, an elevated intelligence
+   object's top edge, key brand moments. Implemented as a background
+   image (not border-image, which 9-slices across all four sides and
+   can't cleanly coexist with a plain-colored border on the other
+   three) so it layers independently of border-color and paints only
+   the one edge it's asked for. Never animated; never applied to every
+   panel at once. */
+.mansa-illuminated-edge-top {
+  background-image: linear-gradient(90deg, rgb(var(--mansa-cobalt)), rgb(var(--mansa-violet)));
+  background-repeat: no-repeat;
+  background-position: top left;
+  background-size: 100% 2px;
+}
+
+.mansa-illuminated-edge-bottom {
+  background-image: linear-gradient(90deg, rgb(var(--mansa-cobalt)), rgb(var(--mansa-violet)));
+  background-repeat: no-repeat;
+  background-position: bottom left;
+  background-size: 100% 2px;
 }

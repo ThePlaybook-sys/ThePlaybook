@@ -45,15 +45,15 @@ export default async function TodayPage() {
   return (
     <>
       <AppNav />
-      <Container as="main" className="flex flex-col gap-xl py-xl">
+      <Container as="main" className="flex flex-col gap-3xl py-xl">
         <CommandHeader freshness={freshness} />
 
-        <div className="flex flex-col gap-xl lg:grid lg:grid-cols-3 lg:items-start lg:gap-xl">
+        <div className="flex flex-col gap-3xl lg:grid lg:grid-cols-3 lg:items-start lg:gap-3xl">
           <div className="lg:col-span-2">
             <TodaysBoard today={today} />
           </div>
 
-          <div className="flex flex-col gap-lg">
+          <div className="flex flex-col gap-3xl">
             <IntelligencePulsePanel today={today} freshness={freshness} />
             <RecentDecisionsList recent={recent} />
             <TrackRecordSnapshot trackRecord={trackRecord} />
