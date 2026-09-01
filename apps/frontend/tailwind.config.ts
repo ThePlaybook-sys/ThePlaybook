@@ -14,6 +14,7 @@ const config: Config = {
           page: "rgb(var(--env-000) / <alpha-value>)",
           card: "var(--surface-200)",
           elevated: "var(--surface-300)",
+          inset: "var(--surface-inset)",
         },
         text: {
           primary: "var(--text-primary)",

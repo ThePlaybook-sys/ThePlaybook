@@ -92,14 +92,16 @@ describe("CommandCenterPreviewPage -- required fixture states (M7.3 §6)", () =>
     expect(screen.getAllByText("Buffalo Bills @ Kansas City Chiefs").length).toBeGreaterThan(0);
   });
 
-  it("renders No Bet's deliberate-decline treatment", () => {
+  it("renders No Bet's deliberate-decline treatment, with the real matchup still visible", () => {
     render(<CommandCenterPreviewPage />);
-    expect(screen.getAllByText("MANSA Is Passing On This Game").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("No Bet").length).toBeGreaterThan(0);
+    expect(screen.getByText("Philadelphia Eagles @ Dallas Cowboys")).toBeInTheDocument();
   });
 
-  it("renders Bankroll Preservation's distinct slate-scoped treatment", () => {
+  it("renders Bankroll Preservation's distinct slate-scoped treatment, with no fabricated matchup", () => {
     render(<CommandCenterPreviewPage />);
-    expect(screen.getAllByText("MANSA Is Passing Today").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Bankroll Preservation").length).toBeGreaterThan(0);
+    expect(screen.getByText("Today's Slate")).toBeInTheDocument();
   });
 
   it("renders a settled WIN, LOSS, PUSH, VOID/No Action, and Mixed Settled state each", () => {
