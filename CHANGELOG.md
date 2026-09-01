@@ -1749,3 +1749,45 @@ A one-line cross-reference was added to §7's `postgame_reviews` description (`o
 **Alternatives considered:** none material beyond the one recorded in the Volume 5 entry above.
 
 **Expected impact:** No code or infrastructure change ships from this entry beyond the regression test -- the actual fix is an external platform configuration action for HQ. M6 stays open until that's applied and HQ completes a real end-to-end retest (Create Account through Today).
+
+---
+
+## v5.1.3 (Volume 5) — 2026-09-01 — PATCH
+
+**Volumes affected:** Volume 5 (Frontend & UX Architecture)
+
+**Reason:** HQ completed the full authenticated mobile walkthrough (sign in through How The Playbook Works) successfully, then found a third real deployed defect at the final step: tapping Sign Out from `/account` redirected to `http://localhost:8080`, `ERR_CONNECTION_REFUSED`.
+
+**Decision:** Root cause confirmed, not guessed. `apps/frontend/app/auth/sign-out/route.ts` built its redirect via `NextResponse.redirect(new URL("/sign-in", request.url))`. This app's production start command is `next start` (self-hosted, not Vercel), running behind Railway's reverse proxy, and listening on Railway's injected `PORT` (8080 -- the same value `PROGRESS.md` already documented Railway injecting on every service, from the `cron-postgame-grading` finding). A Route Handler's `request.url` under this setup reflects the internal connection the Node process itself receives (`localhost:8080`), not the public-facing deployed origin -- a documented self-hosted-Next.js-behind-a-reverse-proxy pitfall, confirmed via Next.js's own "Proxy Relative URLs" guidance and community discussion (`vercel/next.js` #75250), not an assumption. `apps/frontend/app/auth/callback/route.ts` had the identical pattern (`new URL(request.url).origin`) and would have failed the same way, but had not yet been live-exercised by HQ's walkthrough (HQ's account was already confirmed from the prior defect investigation, so no new confirmation-link click occurred). Confirmed via Railway's own documentation that Railway's edge reliably sets `X-Forwarded-Proto` (always `https`) and `X-Forwarded-Host` (the real public host) on every request reaching the app.
+
+**Fix:** New `apps/frontend/app/lib/request-origin.ts` exports `resolveRequestOrigin(request)`, which builds the redirect origin from `X-Forwarded-Host`/`X-Forwarded-Proto` when present, falling back to `request.url`'s own origin only when they're absent (local `next dev`, no proxy in front). Both `/auth/sign-out` and `/auth/callback` now build their redirect targets through this helper instead of `request.url` directly.
+
+**Security verification performed, not assumed:** `supabase.auth.signOut()` is still called unconditionally before the redirect (verified by a new test asserting it's invoked exactly once) -- the session cookies are genuinely cleared server-side via the same `@supabase/ssr` mechanism already used throughout M6, independent of and unaffected by the redirect-target bug. Protected-route enforcement was not changed and did not need to be: `/onboarding`, `/account`, and `/account/how-it-works` already call `requireUser()`, which round-trips to Supabase Auth via `getUser()` on every request (already tested in `getCurrentUser.test.ts`); `/today`, `/recommendations`, `/history`, and `/track-record` already render an honest `unauthenticated` empty state rather than data when the API gateway call itself returns 401 with no valid session (the pre-existing `ApiResult` pattern from Milestones 3-5) -- neither path was touched by this fix. Browser-Back-after-sign-out was verified architecturally rather than via a fabricated jsdom test (jsdom cannot simulate a real browser's back/forward cache): every one of these pages calls `cookies()` through the Supabase SSR client, which forces Next.js App Router dynamic rendering and a `no-store` response -- so any real navigation back to a protected/session-dependent page, including via the Back button, triggers a fresh server render and a fresh `getUser()`/gateway call, immediately reflecting the now-signed-out state rather than serving cached authenticated HTML.
+
+**Alternatives considered:** Introducing a `NEXT_PUBLIC_SITE_URL`/`NEXT_PUBLIC_APP_URL` environment variable as the redirect base, mirroring one path suggested in Next.js community discussions of this issue. Rejected in favor of reading Railway's own forwarded headers directly: Railway already reliably provides the real public origin on every request (confirmed via Railway's own docs), so deriving it from the request itself is strictly more robust than a separately-maintained env var that could silently drift from the actual deployed domain (exactly the class of drift that caused M6 defect #2).
+
+**Testing:** New `app/lib/__tests__/request-origin.test.ts` (3 cases: forwarded headers present, forwarded host present without forwarded proto, both absent). New `app/auth/sign-out/__tests__/route.test.ts` (3 cases: real-defect regression using forwarded headers, no-proxy fallback, and that `auth.signOut()` is actually invoked). New `app/auth/callback/__tests__/route.test.ts` (3 cases: real-defect regression, no-proxy fallback, and that no code still redirects home without throwing). 105/105 frontend tests passing (96 pre-existing + 9 new). `tsc --noEmit` clean. `npm run build` clean, unchanged route set.
+
+**Expected impact:** Documentation only, matching the fix entry (below). M6 remains open pending HQ's successful human end-to-end validation, per HQ's explicit instruction, including a real Sign Out on the deployed DEV site.
+
+---
+
+## v4.10 (apps/frontend) — 2026-09-01 — M6 third defect fix: Sign Out redirects to localhost:8080
+
+**Volumes affected:** Volume 5 (v5.1.3 entry above) — implementation entry, not itself a Blueprint decision.
+
+**Reason:** Real human DEV validation (HQ, mobile device, deployed DEV site) completed the full authenticated walkthrough through How The Playbook Works, then found Sign Out redirecting to `http://localhost:8080` with `ERR_CONNECTION_REFUSED`. Investigated as an M6 blocker per HQ's explicit instruction, not classified as visual polish.
+
+**Decision:** `apps/frontend/app/auth/sign-out/route.ts` built its post-sign-out redirect from `new URL("/sign-in", request.url)`. `next start` (this app's production start command, self-hosted behind Railway's reverse proxy) binds to Railway's injected `PORT` (8080), and a Route Handler's `request.url` under this configuration reflects the internal loopback connection the Node process itself receives, not the public deployed origin -- a documented self-hosted-Next.js/reverse-proxy pitfall (confirmed via Next.js's own "Proxy Relative URLs" guidance and `vercel/next.js` discussion #75250, not guessed). `apps/frontend/app/auth/callback/route.ts` had the same `new URL(request.url).origin` pattern and would fail identically, though it had not yet been live-exercised (HQ's account was already confirmed from the M6 second-defect investigation, so no fresh confirmation-link click occurred during this walkthrough). Confirmed via Railway's own documentation that Railway's edge always sets `X-Forwarded-Proto` (always `https`) and `X-Forwarded-Host` (the real public host) on every request.
+
+**Fix:** New `apps/frontend/app/lib/request-origin.ts::resolveRequestOrigin(request)` builds the redirect origin from `X-Forwarded-Host`/`X-Forwarded-Proto` when present, falling back to `request.url`'s own origin only when absent (local `next dev`). Both `/auth/sign-out/route.ts` and `/auth/callback/route.ts` now build their redirect targets through this helper.
+
+**Security verification:** `supabase.auth.signOut()` is still called unconditionally before the redirect -- unaffected by, and independent of, the redirect-target bug (verified by a new test asserting it's invoked exactly once). Protected-route enforcement (`requireUser()` on `/onboarding`/`/account`/`/account/how-it-works`; honest `unauthenticated` empty states on `/today`/`/recommendations`/`/history`/`/track-record`) was not touched -- both mechanisms were already correct and already tested. No auth was weakened, no DEV-only bypass was added, no secret was exposed.
+
+**Tests added:** `app/lib/__tests__/request-origin.test.ts` (3 cases). `app/auth/sign-out/__tests__/route.test.ts` (3 cases, including that `signOut()` is actually invoked). `app/auth/callback/__tests__/route.test.ts` (3 cases). 9 new tests total.
+
+**Full test/regression evidence:** 105/105 frontend tests passing (96 pre-existing + 9 new). `tsc --noEmit` clean. `npm run build` clean, unchanged route set (21 routes).
+
+**Alternatives considered:** none material beyond the one recorded in the Volume 5 entry above.
+
+**Expected impact:** No new betting intelligence, ranking, grading, or business logic -- a pure infrastructure fix restoring the sign-out redirect M6 already specified, on a deployed target Railway's proxy actually serves from. M6 remains open pending HQ's successful human end-to-end validation, including a real Sign Out retest.
