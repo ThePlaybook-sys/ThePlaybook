@@ -1,8 +1,10 @@
 """Pre-Phase-6 Operational Readiness Gate, Decision 3 (2026-08-27; target
-table widened for Decision 6, same date).
+table widened for Decision 6, same date). Widened again for Phase 7
+Milestone 7.0B (2026-09-02, `odds-worker` target) -- same generic
+dispatcher, no new mechanism.
 
-The finite Railway Cron Job entry point for this project's four
-schedulable internal cycles. Deliberately NOT a FastAPI route --
+The finite Railway Cron Job entry point for this project's schedulable
+internal cycles. Deliberately NOT a FastAPI route --
 `worker-scheduled` itself stays exactly as it was (Decision 2: always-on,
 unchanged), because Railway Cron Jobs run a service's *start command* on
 a schedule and require the process to exit when done -- they cannot
@@ -16,28 +18,31 @@ reusing this exact codebase/image -- not a second copy of it.
 does exactly four things: start, POST to one already-existing internal
 endpoint over Railway's private network, log the result, exit 0/1. It
 duplicates nothing -- no eligibility rule, no guardrail, no grading/
-weighting/refresh logic. Every real decision still lives exactly where
-it already did: inside `app.recommendation_worker`/
+weighting/refresh/fetch logic. Every real decision still lives exactly
+where it already did: inside `app.recommendation_worker`/
 `app.postgame_grading_worker`/`app.adaptive_weighting_worker` (all three
-called via `worker-scheduled`'s own HTTP endpoints, unchanged) or inside
+called via `worker-scheduled`'s own HTTP endpoints, unchanged), inside
 `sports-intel-layer`'s `app.master_refresh.run.run_master_refresh`
-(called via its own new internal endpoint, Decision 6) -- unchanged by
+(called via its own internal endpoint, Decision 6), or inside
+`sports-intel-layer`'s `app.workers.odds_worker.run_odds_worker` (called
+via its own internal endpoint, Phase 7 Milestone 7.0B) -- unchanged by
 this module either way.
 
 Target selected via `CRON_DISPATCH_TARGET` (one of `recommendation-
-worker`, `postgame-grading`, `adaptive-weighting`, `master-refresh`) --
-one script, one image, multiple Railway Cron Job services differing only
-in this env var, their own `CRON_DISPATCH_BASE_URL`, and their own
-`cronSchedule`, per Decision 4's "smallest number of cron services that
-preserves correct cadence" instruction.
+worker`, `postgame-grading`, `adaptive-weighting`, `master-refresh`,
+`odds-worker`) -- one script, one image, multiple Railway Cron Job
+services differing only in this env var, their own
+`CRON_DISPATCH_BASE_URL`, and their own `cronSchedule`, per Decision 4's
+"smallest number of cron services that preserves correct cadence"
+instruction.
 
 `CRON_DISPATCH_BASE_URL` (not a target-specific constant) is deliberately
-generic rather than hardcoded to `worker-scheduled`: three of the four
-targets live on `worker-scheduled`, but `master-refresh` lives on
-`sports-intel-layer` -- a different service entirely. Each deployed cron
-service's own env vars name which internal service it talks to; this
-module has no opinion about which service that is, only which path to
-POST to for a given target name."""
+generic rather than hardcoded to `worker-scheduled`: three of the five
+targets live on `worker-scheduled`, but `master-refresh` and
+`odds-worker` both live on `sports-intel-layer` -- a different service
+entirely. Each deployed cron service's own env vars name which internal
+service it talks to; this module has no opinion about which service that
+is, only which path to POST to for a given target name."""
 from __future__ import annotations
 
 import asyncio
@@ -55,6 +60,14 @@ _TARGET_PATHS = {
     "postgame-grading": "/v1/internal/postgame-grading/run",
     "adaptive-weighting": "/v1/internal/adaptive-weighting/run",
     "master-refresh": "/v1/internal/master-refresh/run",
+    #: Phase 7 Milestone 7.0B (2026-09-02): the first Phase 3E specialized
+    #: worker to gain a real invocation path -- lives on `sports-intel-layer`,
+    #: same as `master-refresh`, not `worker-scheduled`. Only Odds Worker is
+    #: activated this milestone (HQ's explicit scope); the other six
+    #: specialized workers (Player Props/Injury/Weather/News/Pregame/
+    #: Postgame Ingestion) remain unwired -- see the Phase 3E specialized
+    #: worker runtime invocation debt item recorded in PROGRESS.md.
+    "odds-worker": "/v1/internal/odds-worker/run",
 }
 
 
@@ -68,7 +81,8 @@ class CronDispatchError(Exception):
 async def dispatch(*, target: str, base_url: str, internal_token: str, client: httpx.AsyncClient) -> dict:
     """POSTs to the one internal endpoint `target` names, on whichever
     service `base_url` points at (`worker-scheduled` for three of the
-    four targets, `sports-intel-layer` for `master-refresh`). Returns the
+    five targets, `sports-intel-layer` for `master-refresh` and
+    `odds-worker`). Returns the
     parsed JSON response on any 2xx. Raises `CronDispatchError` on a
     non-2xx response or transport failure -- this function makes no
     judgment about WHETHER the underlying cycle found anything to do,

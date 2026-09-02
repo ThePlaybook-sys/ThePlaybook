@@ -21,6 +21,7 @@ file is the odds/props persistence path, not a generic one.
 from __future__ import annotations
 
 import os
+from datetime import datetime
 
 import httpx
 
@@ -153,6 +154,75 @@ async def persist_player_props(response: AdapterResponse[list[PlayerProp]]) -> i
                 f"failed to insert player-prop odds_snapshots: {insert_response.status_code} {insert_response.text}"
             )
         return len(rows)
+
+
+async def read_last_polled_at() -> dict[str, datetime]:
+    """Derives `run_odds_worker`'s `last_polled_at` argument from
+    already-persisted `odds_snapshots` history, keyed by internal
+    `game_id` (not the provider's external id -- this reads the same
+    space `run_odds_worker`'s own `due_games` loop indexes into).
+
+    **Phase 7 Milestone 7.0B (2026-09-02):** `run_odds_worker` has no
+    built-in run-history storage of its own -- its own docstring says
+    passing `None` (the default) means "treat every due game as
+    never-polled," which is always SAFE for a single invocation but
+    would make `app.workers.windows`'s adaptive cadence meaningless for a
+    stateless HTTP-triggered caller: every invocation would see every
+    non-kicked-off candidate game as due, unconditionally, regardless of
+    how recently it was actually last fetched. Rather than adding new
+    state storage (out of this milestone's "minimum operational change"
+    scope, and duplicating what `odds_snapshots.captured_at` already
+    records), this derives the same information from the real append-only
+    history already being written: the most recent `captured_at` across
+    ANY sportsbook/market row for a game is exactly the "when was this
+    game last actually polled" fact `should_poll` needs. A game with zero
+    prior rows is simply absent from the returned dict -- `last_polled_at.
+    get(game_id)` then returns `None`, which `should_poll` already
+    correctly treats as "never polled, always due" -- the same safe
+    default `run_odds_worker` already documents, just realized instead of
+    replaced.
+
+    Deliberately takes no `game_ids` argument and doesn't pre-filter by
+    candidate window -- that would require duplicating `run_odds_worker`'s
+    own `_CANDIDATE_WINDOW_DAYS` query. Reading the most recent rows
+    overall and reducing to one entry per game_id is simpler and gives an
+    identical result: a game outside any real candidate window either has
+    no rows (absent from the dict, same as today) or old rows that get
+    naturally superseded once real polling resumes for it.
+    """
+    supabase_url = os.environ["SUPABASE_URL"]
+    headers = _auth_headers()
+
+    async with httpx.AsyncClient(base_url=supabase_url, timeout=10.0) as client:
+        response = await client.get(
+            "/rest/v1/odds_snapshots",
+            params={
+                "select": "game_id,captured_at",
+                # Newest-first: the first row seen per game_id, below, is
+                # therefore its max(captured_at) -- no server-side GROUP
+                # BY needed for this single-column aggregate.
+                "order": "captured_at.desc",
+                # Generous bound, not a correctness-critical one: real
+                # NFL-scale volume (a handful of games x sportsbooks x
+                # markets, even at the tightest 2-minute pregame cadence)
+                # stays far under this. Ordered newest-first, so even if
+                # ever hit, the rows that matter (the most recent per
+                # game) are the ones guaranteed present.
+                "limit": "5000",
+            },
+            headers=headers,
+        )
+        if response.status_code != 200:
+            raise PersistenceError(
+                f"failed to read odds_snapshots for last_polled_at: {response.status_code} {response.text}"
+            )
+
+        result: dict[str, datetime] = {}
+        for row in response.json():
+            game_id = row["game_id"]
+            if game_id not in result:
+                result[game_id] = datetime.fromisoformat(row["captured_at"].replace("Z", "+00:00"))
+        return result
 
 
 async def read_latest_odds_snapshots(game_external_id: str, *, limit: int = 10) -> list[dict]:

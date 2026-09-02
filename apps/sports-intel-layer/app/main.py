@@ -6,8 +6,14 @@ from pydantic import BaseModel
 
 from app.environment_safety import assert_demo_isolation
 from app.internal_auth import require_internal_token
-from app.master_refresh.production_clients import build_real_master_refresh_clients
+from app.master_refresh.production_clients import (
+    MissingCredentialError,
+    build_real_master_refresh_clients,
+    build_real_odds_worker_clients,
+)
 from app.master_refresh.run import run_master_refresh
+from app.persistence.odds_snapshots import read_last_polled_at
+from app.workers.odds_worker import run_odds_worker
 
 # DEMO-1 (2026-08-19): hard-fail startup before anything else runs if a demo deployment's
 # environment tag and database target disagree. Deliberately checked before sentry_sdk.init
@@ -98,6 +104,113 @@ async def internal_run_master_refresh() -> RunMasterRefreshResponse:
         player_id_resolution_failed=result.player_id_resolution_failed,
         daily_game_intelligence_written=result.daily_game_intelligence_written,
         daily_game_intelligence_failures=result.daily_game_intelligence_failures,
+        error=result.error,
+    )
+
+
+class RunOddsWorkerResponse(BaseModel):
+    status: str
+    games_considered: int
+    games_due: int
+    games_skipped_not_due: int
+    lines_persisted: int
+    newly_linked: int
+    unresolved_events: list[str]
+    failures: list[str]
+    error: str | None
+
+
+@app.post(
+    "/v1/internal/odds-worker/run",
+    dependencies=[Depends(require_internal_token)],
+    response_model=RunOddsWorkerResponse,
+)
+async def internal_run_odds_worker() -> RunOddsWorkerResponse:
+    """Phase 7 Milestone 7.0B, Gate A: the Odds Worker runtime invocation
+    path this project never had before this endpoint (Milestone 7.0A's
+    STOP report -- `run_odds_worker`'s only two callers were Demo Mode's
+    isolated scenario rig and the equally-unreachable Pregame Worker; no
+    HTTP route, no cron-dispatch target, existed anywhere). Reuses the
+    EXISTING `run_odds_worker` (`app.workers.odds_worker`) unchanged --
+    this is a thin HTTP-to-function adapter only, same shape as
+    `internal_run_master_refresh` above, never a second implementation.
+
+    **Safe missing-credential failure (HQ's explicit requirement):**
+    `build_real_odds_worker_clients()` raises `MissingCredentialError`
+    -- not a raw `KeyError` -- before any Supabase or provider network
+    call is attempted if the odds-provider credential isn't configured.
+    Caught here and returned as a clean, structured `status="failed"`
+    result with an operational error message; the credential's own name
+    and value are never referenced anywhere in this module (DEMO-1's
+    isolation guard, `tests/test_environment_safety.py`, forbids it by
+    name here exactly as it already does for every other provider
+    credential above), matching the identical pattern already
+    established for Master Refresh's own credential above.
+
+    **Cadence realism (Milestone 7.0B, §1/§5 construction-contract audit):**
+    `run_odds_worker`'s own `last_polled_at` parameter defaults to `None`
+    per game, which its own docstring documents as "treat every due game
+    as never-polled" -- always safe for a single call, but it would make
+    `app.workers.windows`'s adaptive cadence meaningless for a stateless
+    HTTP-triggered caller like this one, since every invocation would see
+    every non-kicked-off candidate game as due regardless of how recently
+    it was actually fetched. `read_last_polled_at()` derives real
+    per-game state from already-persisted `odds_snapshots.captured_at`
+    history instead of adding new state storage -- so the existing,
+    already-correct adaptive cadence in `app.workers.windows` actually
+    governs real fetch frequency, and repeated invocation (e.g. from a
+    5-minute cron) makes at most one real provider request when at least
+    one game is genuinely due, zero otherwise (`run_odds_worker`'s own
+    `if not due_games: return` check, confirmed unchanged by direct
+    reading -- this endpoint never bypasses it).
+
+    **Concurrency:** Railway's own cron platform guarantees a running
+    cron job's next tick is skipped, never stacked, if the previous run
+    is still active (confirmed via Railway's own documentation) -- the
+    primary protection for the one real caller this milestone wires
+    (`cron-odds-worker`). No additional application-level lock is added
+    here: `odds_snapshots`' append-only INSERT semantics make a rare
+    genuine overlap (e.g. a manual out-of-schedule call racing a
+    scheduled one) produce a harmless duplicate observation, not a data
+    integrity issue, and this project's other cron-dispatched workers
+    rely on the identical no-extra-lock convention.
+
+    Reachable only via `INTERNAL_SERVICE_TOKEN`, identical to every other
+    internal endpoint in this project. No recommendation, ranking, or
+    anomaly-classification logic of any kind."""
+    try:
+        supabase_client, the_odds_api_client, the_odds_api_key = build_real_odds_worker_clients()
+    except MissingCredentialError as exc:
+        return RunOddsWorkerResponse(
+            status="failed",
+            games_considered=0,
+            games_due=0,
+            games_skipped_not_due=0,
+            lines_persisted=0,
+            newly_linked=0,
+            unresolved_events=[],
+            failures=[],
+            error=str(exc),
+        )
+
+    async with supabase_client, the_odds_api_client:
+        last_polled_at = await read_last_polled_at()
+        result = await run_odds_worker(
+            supabase_client=supabase_client,
+            the_odds_api_client=the_odds_api_client,
+            the_odds_api_key=the_odds_api_key,
+            last_polled_at=last_polled_at,
+        )
+
+    return RunOddsWorkerResponse(
+        status=result.status,
+        games_considered=result.games_considered,
+        games_due=result.games_due,
+        games_skipped_not_due=result.games_skipped_not_due,
+        lines_persisted=result.lines_persisted,
+        newly_linked=result.newly_linked,
+        unresolved_events=result.unresolved_events,
+        failures=result.failures,
         error=result.error,
     )
 

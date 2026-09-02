@@ -66,6 +66,35 @@ async def test_dispatch_master_refresh_posts_to_correct_path():
 
 
 @pytest.mark.asyncio
+@respx.mock
+async def test_dispatch_odds_worker_posts_to_correct_path():
+    """Phase 7 Milestone 7.0B (2026-09-02) -- like `master-refresh`,
+    `odds-worker` lives on `sports-intel-layer`, not `worker-scheduled`;
+    `dispatch` itself is agnostic to which service `base_url` points at,
+    same as the `master-refresh` case above."""
+    route = respx.post(f"{BASE_URL}/v1/internal/odds-worker/run").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "status": "success",
+                "games_considered": 0,
+                "games_due": 0,
+                "games_skipped_not_due": 0,
+                "lines_persisted": 0,
+                "newly_linked": 0,
+                "unresolved_events": [],
+                "failures": [],
+                "error": None,
+            },
+        )
+    )
+    async with httpx.AsyncClient() as client:
+        result = await dispatch(target="odds-worker", base_url=BASE_URL, internal_token="secret", client=client)
+    assert result["status"] == "success"
+    assert route.calls.last.request.headers["X-Internal-Token"] == "secret"
+
+
+@pytest.mark.asyncio
 async def test_dispatch_rejects_unknown_target():
     async with httpx.AsyncClient() as client:
         with pytest.raises(CronDispatchError):

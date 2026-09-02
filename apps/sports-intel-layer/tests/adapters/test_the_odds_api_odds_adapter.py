@@ -537,3 +537,47 @@ async def test_cache_expiry_triggers_a_fresh_call():
 
     assert route.call_count == 2
     assert third.from_cache is False
+
+
+# ---------------------------------------------------------------------------
+# Quota-header visibility (Phase 7 Milestone 7.0B, 2026-09-02, §6)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_quota_headers_are_logged_when_present(caplog):
+    """ASSUMED header names (this provider's long-published convention,
+    not independently re-verified live -- see this module's own
+    provenance note). Logged only, never parsed into any typed field or
+    raised on -- a real key's first live response is what actually
+    confirms or corrects these names, not this fixture."""
+    respx.get(ODDS_URL).mock(
+        return_value=httpx.Response(
+            200,
+            json=load("bulk_odds_multi_game.json"),
+            headers={"x-requests-remaining": "487", "x-requests-used": "13"},
+        )
+    )
+    adapter = _odds_adapter()
+
+    with caplog.at_level("INFO"):
+        await adapter.fetch_odds([GAME_CHIEFS_RAVENS])
+
+    assert any("requests_remaining=487" in record.message and "requests_used=13" in record.message
+               for record in caplog.records)
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_missing_quota_headers_logs_nothing_and_does_not_fail():
+    """No `x-requests-remaining`/`x-requests-used` on this response --
+    degrades to logging nothing, never an error, matching the same
+    honest-absence discipline this adapter already uses for `Retry-After`
+    on 429."""
+    respx.get(ODDS_URL).mock(return_value=httpx.Response(200, json=load("bulk_odds_multi_game.json")))
+    adapter = _odds_adapter()
+
+    response = await adapter.fetch_odds([GAME_CHIEFS_RAVENS])
+
+    assert isinstance(response, AdapterResponse)

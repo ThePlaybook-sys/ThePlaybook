@@ -33,6 +33,8 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 
+_logger = logging.getLogger(__name__)
+
 import httpx
 
 from app.adapters.base import OddsAdapter, PlayerPropsAdapter
@@ -119,6 +121,24 @@ async def _get(
     if response.status_code != 200:
         raise ProviderDataError(
             f"unexpected status {response.status_code}: {response.text}", provider=provider_name
+        )
+    # Phase 7 Milestone 7.0B (2026-09-02), §6 quota-economics finding: this
+    # adapter previously captured no rate-limit/quota signal on a
+    # successful response at all. ASSUMED header names (long-published,
+    # stable convention for this provider; not independently re-verified
+    # live -- same ASSUMED tier as the rest of this module's header
+    # handling, per this file's own provenance note above) -- logged only,
+    # never raised on or parsed into any typed field, so an absent/renamed
+    # header degrades to silently logging nothing rather than breaking the
+    # call this milestone cares most about keeping safe.
+    remaining = response.headers.get("x-requests-remaining")
+    used = response.headers.get("x-requests-used")
+    if remaining is not None or used is not None:
+        _logger.info(
+            "the_odds_api quota: requests_remaining=%s requests_used=%s (provider=%s)",
+            remaining,
+            used,
+            provider_name,
         )
     return response
 
