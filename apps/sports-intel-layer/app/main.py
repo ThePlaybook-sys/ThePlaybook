@@ -1,3 +1,4 @@
+import logging
 import os
 
 import sentry_sdk
@@ -14,6 +15,8 @@ from app.master_refresh.production_clients import (
 from app.master_refresh.run import run_master_refresh
 from app.persistence.odds_snapshots import read_last_polled_at
 from app.workers.odds_worker import run_odds_worker
+
+_logger = logging.getLogger("sports-intel-layer.main")
 
 # DEMO-1 (2026-08-19): hard-fail startup before anything else runs if a demo deployment's
 # environment tag and database target disagree. Deliberately checked before sentry_sdk.init
@@ -35,6 +38,66 @@ sentry_sdk.init(
 )
 
 app = FastAPI(title="The Playbook — Sports Intelligence Layer")
+
+
+# TEMPORARY — Phase 7 Milestone 7.0B Gate B, HQ-authorized real-event discovery
+# probe (2026-09-02). Same shape/intent as the 2026-08-11 SportsDataIO
+# connectivity probe (PR #36, reverted same session in PR #37): a dev-only,
+# environment-gated startup check that makes exactly one real call using the
+# EXISTING, unmodified TheOddsApiOddsAdapter/build_real_odds_worker_clients
+# (never duplicates or bypasses either), logs only non-secret event metadata
+# (provider event id/home/away/kickoff/bookmaker+market names) to this
+# service's own deploy logs, and never raises -- a failure here must never
+# block the real server from starting. To be reverted in this same session
+# once the discovery result has been read from Railway's deploy logs; this
+# must never remain in the codebase past Gate B's real-event discovery step.
+if os.environ.get("RAILWAY_ENVIRONMENT_NAME", "dev") == "dev":
+
+    @app.on_event("startup")
+    async def _gate_b_real_event_discovery_probe() -> None:
+        from app.adapters.providers.the_odds_api import TheOddsApiOddsAdapter
+
+        try:
+            _, the_odds_api_client, the_odds_api_key = build_real_odds_worker_clients()
+        except MissingCredentialError as exc:
+            _logger.info("GATE_B_DISCOVERY_PROBE: skipped, credential not configured (%s)", exc)
+            return
+
+        try:
+            async with the_odds_api_client:
+                adapter = TheOddsApiOddsAdapter(client=the_odds_api_client, api_key=the_odds_api_key)
+                response = await adapter.fetch_odds([])
+        except Exception as exc:  # never block real startup on a diagnostic failure
+            _logger.warning("GATE_B_DISCOVERY_PROBE: failed: %s", exc)
+            return
+
+        events: dict[str, dict] = {}
+        for line in response.value:
+            entry = events.setdefault(
+                line.game_external_id,
+                {
+                    "home_team": line.home_team,
+                    "away_team": line.away_team,
+                    "commence_time": line.commence_time.isoformat() if line.commence_time else None,
+                    "sportsbooks": set(),
+                    "market_types": set(),
+                },
+            )
+            entry["sportsbooks"].add(line.sportsbook)
+            entry["market_types"].add(line.market_type)
+
+        for event_id, entry in events.items():
+            _logger.info(
+                "GATE_B_DISCOVERY_PROBE: event_id=%s home=%r away=%r commence_time=%s "
+                "sportsbooks=%s market_types=%s",
+                event_id,
+                entry["home_team"],
+                entry["away_team"],
+                entry["commence_time"],
+                sorted(entry["sportsbooks"]),
+                sorted(entry["market_types"]),
+            )
+        _logger.info("GATE_B_DISCOVERY_PROBE: total_events=%d", len(events))
 
 
 @app.get("/health")
