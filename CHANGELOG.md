@@ -2075,3 +2075,17 @@ All five are fixed at the root: `tailwind.config.ts`'s `state.positive/negative/
 **Alternatives considered:** none material beyond the ones recorded in the Volume 5 entry above.
 
 **Expected impact:** No backend service touched — DEV-only frontend deployment expected. No new recommendation, ranking, or business logic. `RecentDecisionsList`'s structure and `TrackRecordSnapshot` are otherwise unchanged. Phase 6's visual product gate remains open pending HQ's own final review of the populated preview across desktop, tablet, and mobile.
+
+---
+
+## Phase 6 gate closure — 2026-09-02 — PROCESS (no code change)
+
+**Volumes affected:** none (governance/roadmap decision, not a Blueprint or code change).
+
+**Reason:** HQ completed human visual review of the final M7.5 populated DEV preview (`/dev/command-center-preview`) and the real empty-state experience (`/today`) and issued a formal gate verdict.
+
+**Decision:** "PHASE 6 — PRODUCT / UI / UX APPROVED AND COMPLETE. The Phase 6 visual product gate is CLOSED," per HQ's exact wording, covering every area enumerated in HQ's authorization (Command Center composition, mobile/desktop/tablet responsive architecture, MANSA brand hierarchy and Imperial Cobalt identity, Today's Board and MANSA Decision hierarchy, matchup/decision separation, market-type labeling, Confidence/EV/Price hierarchy, No Bet and Bankroll Preservation presentation, settled-state presentation, Recent Decisions, MANSA Intelligence and Track Record summaries, recommendation-detail progressive disclosure, Time Machine, auth/onboarding/account, How MANSA Works education, accessibility/responsive foundation, honest empty/loading/unavailable states, DEV-only preview architecture). HQ's explicit instruction: do not reopen Phase 6 for subjective visual tweaking unless a concrete defect is discovered later. Phase 6 closure does not erase previously recorded technical/product debt — see PROGRESS.md's 2026-09-02 debt-reconciliation Notes entry for the full register (each item classified OPEN/RESOLVED/SUPERSEDED/NEEDS DECISION against current repository evidence, not silently marked resolved).
+
+**Alternatives considered:** none — this entry records HQ's own gate decision, not an engineering choice.
+
+**Expected impact:** No code, schema, or deployment change. Unblocks Phase 7 planning (repository archaeology, debt reconciliation, milestone-sequence proposal) — explicitly NOT authorization to implement Phase 7; implementation remains gated on a separate, later HQ authorization of a specific first milestone.
