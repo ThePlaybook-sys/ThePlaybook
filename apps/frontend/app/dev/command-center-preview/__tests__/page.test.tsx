@@ -119,10 +119,8 @@ describe("CommandCenterPreviewPage -- required fixture states (M7.3 §6)", () =>
     expect(screen.getAllByText("San Francisco 49ers @ Jacksonville Jaguars")).toHaveLength(2);
   });
 
-  it("a long team-name/long-selection-text product renders without being truncated away from the DOM", () => {
+  it("a long real team name renders in full, without being truncated away from the DOM (M7.5 realistic stress case)", () => {
     render(<CommandCenterPreviewPage />);
-    expect(
-      screen.getByText("Jacksonville Jaguars Alternate Spread (Reduced Juice Promo Line) +3.5"),
-    ).toBeInTheDocument();
+    expect(screen.getByText("Jacksonville Jaguars +3.5")).toBeInTheDocument();
   });
 });

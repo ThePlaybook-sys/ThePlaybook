@@ -140,11 +140,16 @@ export const BOARD_FIXTURES: RecommendationCardData[] = [
     decidedAt: "2026-09-02T11:10:00Z",
     grade: null,
     game: NINERS_JAGUARS,
-    oneLineSummary: "Long team names and market text -- wrapping stress case.",
+    oneLineSummary: "Long team names -- wrapping stress case.",
     legs: [
       {
+        // M7.5 contract audit: `selection` is always the raw provider
+        // outcome name -- a clean team name, never a compound string
+        // with market-qualifier text baked in (no such field exists in
+        // the schema). The realistic stress case is a genuinely long
+        // real full team name, not a fabricated promo-line suffix.
         marketType: "spread",
-        selection: "Jacksonville Jaguars Alternate Spread (Reduced Juice Promo Line)",
+        selection: "Jacksonville Jaguars",
         sportsbook: "FanDuel",
         americanOdds: -110,
         point: 3.5,
