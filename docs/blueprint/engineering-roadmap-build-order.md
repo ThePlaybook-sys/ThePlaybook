@@ -1,8 +1,9 @@
 # The Playbook — Engineering Roadmap & Build Order
 
-**Version:** v4.5
-**Last updated:** 2026-08-28
+**Version:** v4.6
+**Last updated:** 2026-09-02
 **Type:** Companion document — not a Volume. Volumes 1–5 describe *what* the system is. This document describes *the order in which to build it* and *how to know each piece is actually done* before moving to the next.
+**v4.6 note (HQ decision, 2026-09-02):** Phase 6 formally closed (HQ's final visual-gate approval). HQ authorized Phase 7 planning and, on reviewing the resulting archaeology, made an explicit renumbering decision: **Market Integrity & Anomaly Intelligence (Volume 4 §8.5) is now the official Phase 7** — promoted out of the "Future Phase 5 capabilities" note (v4.1) and the Technical Debt & Feature Backlog's "Future" category, where it had been tentatively parked as an unscheduled Phase 5 milestone before Phase 5 closed. The previously-numbered Phase 7 (Twilio), Phase 8 (OCR), Phase 9 (Analytics), Phase 10 (Beta), and Phase 11 (Production Launch) are **renumbered to Phase 8/9/10/11/12 respectively — none of their scope is removed or reduced**, only their position in the sequence shifts. Bet Timing & Execution Intelligence (Volume 4 §9.5) remains an unscheduled future capability, not promoted to a numbered phase — HQ's explicit instruction preserves only the historical ordering constraint that it must follow Market Integrity & Anomaly Intelligence whenever it is eventually scheduled. Phase 7 itself is authorized only through Milestone 7.0 (Contract Audit & Mechanism Decision) as of this version — Milestones 7.1+ (the actual anomaly-detection engine) remain proposed, not authorized. See `CHANGELOG.md` v4.6 entry for full reasoning.
 **v4.5 note:** Phase 6's section fully rewritten — written before Phase 4/5 existed, it cited the original Volume 5 v4.0 component/route spec, assumed `/chat` as the default landing route, and (as of a 2026-08-27 addition) assigned the `user_recommendation_selections` production writer to this phase. A three-pass Phase 6 Product/UX planning review (HQ-approved) replaced the IA/component/onboarding architecture (now matching Volume 5 v5.0) and explicitly removed the stake writer from this phase's scope as new business logic. See `CHANGELOG.md` v4.5 entry for full reasoning.
 **v2.0 note:** Amended per external architecture review, which arrived before any phase began building — no phase needed to be reopened, but Phases 1, 4, 5, and 6 gained new scope. See `v2.0-amendments-architecture-review.md` §7 for the full impact summary.
 **v3.0 note:** Amended per conversational-first UX and intelligence pipeline additions — Phases 1, 3, 4, 5, and 6 gained new scope (`daily_game_intelligence`, Redis, named vendors, worker cadences, Kelly Criterion, session memory, chat-first landing route). See `v3.0-amendments-conversational-intelligence.md` §12 for the full impact summary.
@@ -40,16 +41,17 @@ Phase 5 (Recommendation Pipeline) ◄────┘
    │
 Phase 6 (Dashboard / Core Frontend)
    │
-   ├── Phase 7 (Twilio) ──────┐
-   ├── Phase 8 (OCR) ─────────┤  (7, 8, 9 can run in parallel once Phase 6 is stable)
-   └── Phase 9 (Analytics) ───┘
+   ├── Phase 7 (Market Integrity & Anomaly Intelligence) ─┐
+   ├── Phase 8 (Twilio) ────────────────────────────────────┤
+   ├── Phase 9 (OCR) ───────────────────────────────────────┤  (7, 8, 9, 10 can run in parallel once Phase 6 is stable — none of the four depends on any other)
+   └── Phase 10 (Analytics) ────────────────────────────────┘
    │
-Phase 10 (Beta)
+Phase 11 (Beta)
    │
-Phase 11 (Production Launch)
+Phase 12 (Production Launch)
 ```
 
-Phases 7, 8, and 9 are the first genuine parallelization point — everything before Phase 6 is strictly sequential because each layer is load-bearing for the next.
+Phases 7, 8, 9, and 10 are the first genuine parallelization point — everything before Phase 6 is strictly sequential because each layer is load-bearing for the next. Phase 7's own dependencies (Phase 3's `odds_snapshots`, Phase 4 Milestone 4.4's Closing Line Movement Agent, Phase 5 Milestone 5.1's Strategy Engine) are all already satisfied independent of Phase 6 — it is numbered first among the four not because it architecturally blocks the others, but because it is the capability HQ has actively authorized planning for (2026-09-02, v4.6). Bet Timing & Execution Intelligence (Volume 4 §9.5) is not a numbered phase — it remains an unscheduled future capability whose one preserved ordering constraint is that it must follow Phase 7 whenever it is eventually scheduled (see the Technical Debt & Feature Backlog entry below).
 
 ---
 
@@ -276,6 +278,8 @@ Phases 7, 8, and 9 are the first genuine parallelization point — everything be
 - **Bet Timing & Execution Intelligence** depends on everything above, PLUS Market Integrity & Anomaly Intelligence itself (per Volume 4 §9.5's explicit integration requirement — anomaly signals feed execution state), PLUS the automatic re-evaluation loop, which depends on event infrastructure Volume 2 §4.5 already named and explicitly deferred post-MLP (`InjuryUpdated`, `WeatherChanged`, and similar consumers). **Earliest technically defensible placement: a new Phase 5 milestone (tentatively Milestone 7), strictly after the Market Integrity milestone above** — and its full realization (a user actually seeing "WAIT, check back later") likely also touches Phase 7's Twilio/notification work, even though its core decision logic belongs in Phase 5.
 - **Neither is scheduled into a specific sprint by this entry** — both remain future capabilities pending a dedicated future architecture inspection (explicitly not performed here, per Mac's instruction) that would determine the exact mechanism (deterministic engine vs. specialist agent(s) vs. hybrid) before implementation begins. This entry exists so neither is forgotten or designed out, not so either is scheduled.
 
+**Superseded in part (v4.6, 2026-09-02, HQ decision).** Phase 5 closed 2026-08-27 before either capability above was scheduled into it, so "a new Phase 5 milestone" is no longer a live placement option. Following Phase 6's close (2026-09-02) and a dedicated Phase 7 planning/archaeology pass, HQ formally promoted **Market Integrity & Anomaly Intelligence to Phase 7** — see the new Phase 7 section immediately after Phase 6 below for its current milestone structure (Milestone 7.0 authorized, 7.1+ proposed). The dependency analysis above remains accurate and is not repeated verbatim in the new section. **Bet Timing & Execution Intelligence remains unscheduled** (not promoted to a numbered phase) — its one preserved constraint, per HQ's explicit instruction, is that it must follow Phase 7 whenever it is eventually scheduled; see its Technical Debt & Feature Backlog entry below for the current cross-reference.
+
 ---
 
 ## Phase 6 — Product / UI / UX Frontend (v4.5 — fully rewritten)
@@ -318,7 +322,49 @@ Phases 7, 8, and 9 are the first genuine parallelization point — everything be
 
 ---
 
-## Phase 7 — Twilio Integration
+## Phase 7 — Market Integrity & Anomaly Intelligence
+
+**New phase (v4.6, 2026-09-02, HQ decision)** — promoted from the "Future Phase 5 capabilities" note (v4.1) after Phase 5 closed before either capability there was scheduled. Fully specified in Volume 4 §8.5; Bet Timing & Execution Intelligence (§9.5) must follow this phase whenever it is eventually scheduled but is not itself a numbered phase.
+
+**Implements:** Volume 4 §8.5.
+
+**Status as of v4.6:** Milestone 7.0 (Contract Audit & Mechanism Decision) **AUTHORIZED AND COMPLETE, 2026-09-02.** Milestones 7.1+ (the anomaly-detection engine itself) are **proposed below, NOT authorized** — no product code, migration, or worker exists yet for this phase.
+
+**Milestone 7.0 findings (audit only, no code written):**
+- **Odds history in DEV is not usable for empirical calibration.** Live inspection (not schema-only): `odds_snapshots` has 4 total rows, spanning 1 game, with only one (game, sportsbook, market_type) group ever reaching 2 samples — exactly one computable price delta exists in the entire dataset, and the row/timestamp pattern (3 of 4 rows sharing one identical microsecond timestamp) indicates seed/fixture data, not organically captured history. `market_monitoring_events` has 1 row (also seed-pattern), not the 0 prior static code inspection expected — confirmed live, flagged as a discrepancy from the earlier static claim, consistent with seed data rather than any application code writing to it (still zero Python code references the table).
+- **Closing Line Movement Agent** (`apps/ai-orchestrator/app/agents/closing_line_movement.py`) is real and built — an LLM-backed committee agent that *interprets* an already-deterministic `LineMovementFeatures` computation (`apps/ai-orchestrator/app/features/market.py`: opening/latest price & point, movement deltas, direction, sample count, `insufficient_history` flag, computed per `(sportsbook, market_type, side)` from real `odds_snapshots` rows, ≥2 snapshots required or an honest null). It answers "how has the line moved," never "is this movement explained" — that second question remains unbuilt, exactly as Volume 4 §8.5 describes. The deterministic feature computation itself is directly reusable, not to be duplicated.
+- **Explanatory data comparability** (injury/weather/lineup/news, all four checked directly against real schema and ingestion code): Injuries (`injury_reports`), Weather (`weather_snapshots`), and Lineup/Roster (`roster_memberships`, `depth_chart_snapshots`) all carry real, timestamped, append-only history directly comparable to `odds_snapshots.captured_at` (same `timestamptz`, same our-own-ingestion-clock semantics). **News is the one exception** — persisted only as a single overwritten `jsonb` column on `daily_game_intelligence` (Mac's approved Option A, 2026-08-18), with no history table; once overwritten, a prior news state cannot be reconstructed. `daily_game_intelligence` itself is current-state-only for every field. A deterministic "was this movement explained" check can therefore use Injuries/Weather/Lineup as real evidence, but can never cite News as a reason a line moved or didn't.
+- **`market_monitoring_events`** schema (`event_type`: line_movement/injury_update/weather_change/lineup_change/breaking_news; `action_taken`: none/updated/withdrawn) is already exactly the right shape for this capability's output — no schema change needed for Milestone 7.1's classification writes.
+- **Time Machine** (`recommendation_activation_snapshots` + its FK-linked companion tables, Milestone 5.3) is built as an additive manifest specifically designed to absorb new evidence categories without altering the core manifest row — already proven three times over (lifecycle events, grading/postgame review, adaptive weighting each added as their own later, purely additive migration). An anomaly-classification table follows the identical pattern.
+- **`worker-market-monitor`** remains a provisioned, empty Railway service — zero application code, confirmed by direct search.
+
+**Threshold calibration (Decision, v4.6):** **NOT empirically derivable today** — DEV's real odds history is functionally nonexistent (one computable delta, total). Per HQ's own precedent for exactly this situation (`ADAPTIVE_WEIGHT_LEARNING_RATE = 0.25`, Milestone 5.5 — an approved initial product-policy default, explicitly not empirically derived, disclosed as such everywhere it surfaces), Milestone 7.1 must ship, if authorized, with a disclosed conservative policy threshold for NORMAL/WATCH/ELEVATED/SEVERE rather than any threshold presented as data-driven, revisited once real production-cadence odds history actually accumulates (realistically: multiple full weeks of a live NFL slate with the Odds Worker actually firing on schedule against real games — DEV's own `games` table has only 4 rows today, so this dependency is not yet met either).
+
+**Mechanism decision (Decision, v4.6): deterministic engine, not an LLM agent.** Matches Volume 4 §8.5's own explicit warning against "just another fan-out agent," and matches every comparable guardrail already built in this codebase (Grading, Adaptive Weighting's guardrails, the 0.55 confidence floor, the EV>0 gate — all pure functions over structured inputs). An LLM's only defensible future role is an optional narrative layer describing an already-computed deterministic classification (same pattern as Postgame Review's `FakeModelAdapter`-only narrative over a deterministic grade) — never the classification decision itself.
+
+**Service ownership (Decision, v4.6): no new worker.** The detection function belongs alongside `app/features/market.py` in `ai-orchestrator` (where `LineMovementFeatures` already lives) and runs synchronously inside the existing Recommendation Worker cycle — matching Volume 4 §8.5's own stated architectural position (`Market/Data Refresh → Committee → Market Integrity → Strategy Engine`, a pipeline stage, not a freestanding poller). `worker-market-monitor` stays a reserved, unused placeholder — its plausible future role is Bet Timing's continuous re-evaluation loop (§9.5), explicitly out of this phase's scope, not Milestone 7.1's synchronous per-cycle check.
+
+**Language lock (Decision, v4.6):** ALLOWED terminology — STATISTICAL ANOMALY, MARKET ANOMALY, UNEXPLAINED MARKET MOVEMENT (the core buildable signal), neutral magnitude/direction/timing description, explicit reliability/confidence disclosure. Actual "integrity" language (rigging, manipulation, insider activity, etc.) is PROHIBITED absent a confirmed authoritative source (regulator action, official investigation, credible reporting) with provenance preserved — per Volume 4 §8.5's own three-tier framework (statistical anomaly / market anomaly / confirmed integrity information, never conflated).
+
+**Milestones (7.1-7.3 proposed, not authorized):**
+1. **7.0 — Contract Audit & Mechanism Decision.** COMPLETE (this entry).
+2. **7.1 — Deterministic Unexplained-Movement Detection Engine (backend only, no consumers).** A new deterministic module computing NORMAL/WATCH/ELEVATED/SEVERE from `LineMovementFeatures` + an Injury/Weather/Lineup material-change check, writing real rows to `market_monitoring_events` for the first time (`action_taken` always `'none'` at this milestone). No Strategy Engine wiring, no withdrawal, no UI.
+3. **7.2 — Strategy Engine Integration & SEVERE Suppression (backend only).** Wires the validated signal into Strategy Engine, reusing the existing `recommendations.status = 'withdrawn'` mechanism for SEVERE — no new state machine.
+4. **7.3 — Explainability & Command Center Disclosure.** The first user-visible capability: extends the already-designed Layer 3/4 `dataLimitations`/evidence fields, plus a minimal, restrained Command Center indicator — never a gauge, meter, or permanent fixture, only rendered when a real classification exists.
+
+**Key Tasks (7.1+, once authorized):** Build the deterministic module fixture-first, same discipline as `app.features.grading`; give `market_monitoring_events` its first real writer; add one new FK-linked, append-only table to the Time Machine manifest per its established additive pattern; never fabricate a "sharp money" or "public betting" signal — that remains a separate, permanently-blocked vendor-data gap (Volume 2 §8), not to be conflated with market-movement anomaly detection (Volume 4 §4).
+
+**Dependencies:** Phase 3 (`odds_snapshots`, built), Phase 4 Milestone 4.4 (Closing Line Movement Agent, built), Phase 5 Milestone 5.1 (Strategy Engine, built). Not dependent on Phase 6, though Milestone 7.3 benefits from it being closed (it now is). Not dependent on Phase 8/9/10 (Twilio/OCR/Analytics).
+
+**Explicitly out of scope:** Bet Timing & Execution Intelligence (§9.5 — must follow this phase, not built here); Sharp Money/Public Betting data (permanently blocked, separate vendor gap); any numeric threshold presented as empirically derived without real accumulated data to support it; parlay/correlation intelligence; team logos/colors; new sports provider integrations; any change to recommendation ranking, grading semantics, or adaptive-weight promotion.
+
+**Acceptance Criteria / Testing Requirements:** To be defined per-milestone as each is authorized, following this project's established fixture-first + live rollback-wrapped SQL proof discipline (Grading, Explainability, Adaptive Weighting all set this precedent) — not written here in advance of authorization, per the same "don't force a milestone before its scope is real" principle this document applies throughout.
+
+---
+
+## Phase 8 — Twilio Integration
+
+**Renumbered from Phase 7 to Phase 8 (v4.6, 2026-09-02, HQ decision)** — Market Integrity & Anomaly Intelligence was promoted to Phase 7; this phase's scope is unchanged, only its position shifted.
 
 **Implements:** Volume 5 §7
 
@@ -332,7 +378,7 @@ Phases 7, 8, and 9 are the first genuine parallelization point — everything be
 - Build the inbound Twilio webhook (`/v1/webhooks/twilio`, Volume 2 §6) and route it through the Volume 4 §7 NL Engine, not a separate SMS-specific parser
 - Confirm a user can reply to an SMS alert conversationally and get a response that reflects the same intent classification as the `/chat` web interface
 
-**Dependencies:** Phase 6 complete (needs the NL Engine's web-chat integration proven first, since SMS reuses it) and Phase 5 (needs real recommendations to notify about).
+**Dependencies:** Phase 6 complete (needs the NL Engine's web-chat integration proven first, since SMS reuses it) and Phase 5 (needs real recommendations to notify about). Not dependent on Phase 7.
 
 **Acceptance Criteria:**
 - A test recommendation triggers an outbound SMS within the expected latency
@@ -345,7 +391,9 @@ Phases 7, 8, and 9 are the first genuine parallelization point — everything be
 
 ---
 
-## Phase 8 — OCR / Bet Slip Verification
+## Phase 9 — OCR / Bet Slip Verification
+
+**Renumbered from Phase 8 to Phase 9 (v4.6, 2026-09-02, HQ decision)** — scope unchanged, only position shifted.
 
 **Implements:** Volume 3 §6 (`bet_slips`, `verified_bets`), master spec OCR requirement
 
@@ -372,7 +420,9 @@ Phases 7, 8, and 9 are the first genuine parallelization point — everything be
 
 ---
 
-## Phase 9 — Analytics
+## Phase 10 — Analytics
+
+**Renumbered from Phase 9 to Phase 10 (v4.6, 2026-09-02, HQ decision)** — scope unchanged, only position shifted.
 
 **Implements:** Volume 5 §5 (Charts), Volume 1 §8 (Success Metrics)
 
@@ -399,7 +449,9 @@ Phases 7, 8, and 9 are the first genuine parallelization point — everything be
 
 ---
 
-## Phase 10 — Beta
+## Phase 11 — Beta
+
+**Renumbered from Phase 10 to Phase 11 (v4.6, 2026-09-02, HQ decision)** — scope unchanged, only position shifted; its dependency list below now includes Phase 7.
 
 **Implements:** Volume 1 personas (real-user validation), Volume 4 §11 (live calibration check)
 
@@ -415,7 +467,7 @@ Phases 7, 8, and 9 are the first genuine parallelization point — everything be
 - Compare live confidence calibration against the backtested numbers from Volume 4 §11; this is the first real-world check on the 0.55 threshold and weighting defaults flagged as launch assumptions
 - Complete the legal/compliance review flagged as open since Volume 1 §10 — jurisdiction gating enforcement (already built in Phase 2) should be exercised for real here, limited to cleared states only
 
-**Dependencies:** Phases 6–9 complete — beta needs the full product surface, not a partial build, to generate meaningful signal. Also: the beta access model reviewed 2026-08-07 (dedicated `beta_testers` table — not additional `user_profiles` columns — integrated with the existing `feature_flags` entitlement system per that review's six-point assessment) must be implemented before this phase starts, ahead of cohort recruitment (Milestone 1). Placeholder only as of this note — no schema changes made yet; see Technical Debt & Feature Backlog below.
+**Dependencies:** Phases 6–10 complete — beta needs the full product surface, not a partial build, to generate meaningful signal. (Renumbered from "Phases 6–9" — the range now includes Phase 7, Market Integrity & Anomaly Intelligence.) Also: the beta access model reviewed 2026-08-07 (dedicated `beta_testers` table — not additional `user_profiles` columns — integrated with the existing `feature_flags` entitlement system per that review's six-point assessment) must be implemented before this phase starts, ahead of cohort recruitment (Milestone 1). Placeholder only as of this note — no schema changes made yet; see Technical Debt & Feature Backlog below.
 
 **Acceptance Criteria:**
 - Beta cohort actively using the product for a defined minimum window (recommend at least one full sport week cycle, ideally several, before drawing conclusions)
@@ -424,12 +476,14 @@ Phases 7, 8, and 9 are the first genuine parallelization point — everything be
 - Legal sign-off obtained for the specific jurisdiction set beta (and initial production launch) will operate in
 
 **Testing Requirements:**
-- Full regression pass across all phases before beta opens — this is the point where a bug anywhere in Phases 0–9 becomes visible to real users for the first time
+- Full regression pass across all phases before beta opens — this is the point where a bug anywhere in Phases 0–10 becomes visible to real users for the first time
 - Load testing against realistic beta-scale concurrent traffic during a live game window specifically, not just synthetic off-peak load
 
 ---
 
-## Phase 11 — Production Launch
+## Phase 12 — Production Launch
+
+**Renumbered from Phase 11 to Phase 12 (v4.6, 2026-09-02, HQ decision)** — scope unchanged, only position shifted; its dependency below now reads "Phase 11" (Beta).
 
 **Implements:** Volume 1 §9 (Go-to-Market), Volume 2 §5/§9 (production environment, rollback discipline)
 
@@ -445,7 +499,7 @@ Phases 7, 8, and 9 are the first genuine parallelization point — everything be
 - Execute the narrow NFL-only launch, resisting any pressure to multi-sport launch, per Volume 1 §9's explicit reasoning about data depth per sport
 - Begin the public postgame review content cadence from Volume 1 §9 as an ongoing operational commitment, not a one-time launch asset
 
-**Dependencies:** Phase 10 complete, with legal sign-off and calibration review both closed out.
+**Dependencies:** Phase 11 complete, with legal sign-off and calibration review both closed out.
 
 **Acceptance Criteria:**
 - Production environment serving real users with all monitoring green
@@ -482,8 +536,8 @@ Organized by priority category rather than one flat list, specifically to keep t
 - Live betting
 - Advanced explainability beyond the current nine-question spec
 - Deeper personalized betting profiles beyond current Betting DNA
-- **Market Integrity & Anomaly Intelligence (added 2026-08-25) — fully specified in Volume 4 §8.5, tentatively Phase 5 Milestone 6.** Not yet implemented; see Phase 5's own "Future Phase 5 capabilities" note above for the dependency analysis.
-- **Bet Timing & Execution Intelligence (added 2026-08-25) — fully specified in Volume 4 §9.5, tentatively Phase 5 Milestone 7, strictly after Market Integrity & Anomaly Intelligence.** Not yet implemented; see Phase 5's own "Future Phase 5 capabilities" note above for the dependency analysis.
+- **Market Integrity & Anomaly Intelligence — PROMOTED to Phase 7 (v4.6, 2026-09-02, HQ decision).** No longer a backlog item; fully specified in Volume 4 §8.5, see the Phase 7 section between Phase 6 and Phase 8 above. Milestone 7.0 (Contract Audit & Mechanism Decision) authorized and complete; Milestones 7.1+ (the anomaly-detection engine itself) proposed, not yet authorized.
+- **Bet Timing & Execution Intelligence (added 2026-08-25) — fully specified in Volume 4 §9.5. Remains unscheduled, not promoted to a numbered phase (v4.6, 2026-09-02).** Its one preserved ordering constraint, per HQ's explicit instruction, is that it must follow Phase 7 (Market Integrity & Anomaly Intelligence) whenever it is eventually scheduled. Not yet implemented; see Phase 5's original "Future Phase 5 capabilities" note (superseded in part, still present above) for the underlying dependency analysis, which remains accurate.
 
 **Research** (exploratory, no committed timeline):
 - Personalized AI beyond the current persona-classification model
@@ -503,4 +557,4 @@ This document should be revisited whenever a volume gets a version bump. A MAJOR
 
 ## Changelog Entry for This Version
 
-See `CHANGELOG.md` — v1.0, 2026-08-05, Engineering Roadmap & Build Order added as a companion document. Updated to v2.0, 2026-08-05, per external architecture review — Phases 1, 4, 5, and 6 amended directly above, not just noted in the header. Updated to v3.0, 2026-08-05 — Phases 1, 3, 4, 5, and 6 amended directly above with the conversational-first and intelligence pipeline additions. Updated to v4.0, 2026-08-06 — Phases 1, 3, and 4 amended with multi-sport core and Recommendation Worker scope, plus the new Technical Debt & Feature Backlog section. Updated to v4.1, 2026-08-25 — Phase 5 gained a "Future Phase 5 capabilities" note documenting Market Integrity & Anomaly Intelligence and Bet Timing & Execution Intelligence (fully specified in Volume 4 §8.5/§9.5) with a dependency analysis and tentative future-milestone placement (6/7) — neither implemented, neither scheduled, Milestones 1-5 unchanged. Updated to v4.2, 2026-08-25 — Phase 5's Milestone 3 text and acceptance criterion corrected to reflect that `recommendation_snapshots`/`/v1/recommendations/{id}/snapshot` (named in the original spec) are superseded by Milestone 5.3's actual additive activation-snapshot manifest (Volume 3 §5C) and internal-only reconstruction function, per direct live-schema inspection confirming the originally-named table unfit for the Phase 5 product layer.
+See `CHANGELOG.md` — v1.0, 2026-08-05, Engineering Roadmap & Build Order added as a companion document. Updated to v2.0, 2026-08-05, per external architecture review — Phases 1, 4, 5, and 6 amended directly above, not just noted in the header. Updated to v3.0, 2026-08-05 — Phases 1, 3, 4, 5, and 6 amended directly above with the conversational-first and intelligence pipeline additions. Updated to v4.0, 2026-08-06 — Phases 1, 3, and 4 amended with multi-sport core and Recommendation Worker scope, plus the new Technical Debt & Feature Backlog section. Updated to v4.1, 2026-08-25 — Phase 5 gained a "Future Phase 5 capabilities" note documenting Market Integrity & Anomaly Intelligence and Bet Timing & Execution Intelligence (fully specified in Volume 4 §8.5/§9.5) with a dependency analysis and tentative future-milestone placement (6/7) — neither implemented, neither scheduled, Milestones 1-5 unchanged. Updated to v4.2, 2026-08-25 — Phase 5's Milestone 3 text and acceptance criterion corrected to reflect that `recommendation_snapshots`/`/v1/recommendations/{id}/snapshot` (named in the original spec) are superseded by Milestone 5.3's actual additive activation-snapshot manifest (Volume 3 §5C) and internal-only reconstruction function, per direct live-schema inspection confirming the originally-named table unfit for the Phase 5 product layer. Updated to v4.6, 2026-09-02 (HQ decision) — Phase 6 formally closed; **Market Integrity & Anomaly Intelligence promoted from an unscheduled "Future Phase 5 capability" to the new Phase 7**, with the previously-numbered Phase 7 (Twilio) through Phase 11 (Production Launch) renumbered to Phase 8 through Phase 12 — no scope removed, only positions shifted. Phase 7's Milestone 7.0 (Contract Audit & Mechanism Decision) authorized and completed the same day: live DEV data confirmed odds history is not yet usable for empirical threshold calibration, explanatory-data timestamp comparability confirmed for injuries/weather/lineup but not news, Time Machine's schema confirmed able to absorb the new evidence category additively, and deterministic-engine/no-new-worker/language-lock decisions recorded. Milestones 7.1+ remain proposed, not authorized.

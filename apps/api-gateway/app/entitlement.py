@@ -29,20 +29,22 @@ def tier_permits(min_required_tier: str, user_tier: str | None) -> bool:
     """True iff `user_tier` (the caller's own active subscription tier,
     or None if they have none) satisfies `min_required_tier`.
 
-    Mirrors `recommendation_products_tier_gated_select` LITERALLY,
-    including a real gap discovered in that policy during Milestone 2's
-    pre-implementation inspection: the policy only special-cases
-    `min_required_tier in ('free', 'pro', 'elite')` -- a hypothetical
-    `min_required_tier = 'syndicate'` row (schema-permitted, since this
-    column has no CHECK constraint, but never actually set by any
-    current code) would be denied to EVERY caller, including a
-    syndicate-tier subscriber, because neither the `= 'free'` branch nor
-    either `exists` sub-clause matches it. This function reproduces that
-    exact behavior rather than "fixing" it, since fixing it here would
-    make the API more permissive than the database's own real policy --
-    the opposite of what mirroring is for. Flagged, not resolved, in the
-    Milestone 2 close-out report; dormant today since no row uses that
-    value.
+    Mirrors `recommendation_products_tier_gated_select` LITERALLY.
+
+    **Hotfix (HQ-authorized, 2026-09-02, DEV only):** a real gap existed
+    here and in the database policy through Milestone 2 -- neither
+    special-cased `min_required_tier = 'syndicate'` (schema-permitted,
+    since `recommendation_products.min_required_tier` has no CHECK
+    constraint), so a syndicate-gated row was denied to EVERY caller,
+    including a syndicate-tier subscriber -- MANSA's own top paid tier.
+    Both this function and the SQL policy (`supabase/migrations/
+    20260902020000_fix_recommendation_products_syndicate_entitlement.sql`)
+    are corrected together, extending the exact nested-membership
+    pattern already used for `'pro'`/`'elite'` one rung further for
+    `'syndicate'` -- same ordering semantics (free < pro < elite <
+    syndicate), no new architecture. Any tier string outside the known
+    four (`free`/`pro`/`elite`/`syndicate`) still safely falls through
+    to `False` here, same as before.
     """
     if min_required_tier == "free":
         return True
@@ -52,6 +54,8 @@ def tier_permits(min_required_tier: str, user_tier: str | None) -> bool:
         return user_tier in ("pro", "elite", "syndicate")
     if min_required_tier == "elite":
         return user_tier in ("elite", "syndicate")
+    if min_required_tier == "syndicate":
+        return user_tier in ("syndicate",)
     return False
 
 
