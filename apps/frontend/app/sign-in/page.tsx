@@ -9,12 +9,27 @@ export const metadata = { title: "Sign In — MANSA" };
  * root-routing decision `/` uses, rather than being shown a redundant
  * sign-in form. The one deliberate brand moment in the app (M7 MANSA
  * alignment): name, one-line category, and the mantra appear together
- * here and nowhere else, per HQ's "do not plaster it" instruction. */
-export default async function SignInPage() {
+ * here and nowhere else, per HQ's "do not plaster it" instruction (now
+ * joined by the public landing page's hero, per Public Web M1 -- see
+ * `app/page.tsx`'s own note on this).
+ *
+ * `?mode=sign-up` (from the landing page's "Create Account" CTAs)
+ * preselects `AuthForm`'s Create Account tab -- read here, server-side,
+ * rather than by `AuthForm` itself reading the URL, so that component's
+ * existing `next/navigation` test mocks stay untouched. Any value other
+ * than exactly "sign-up" is treated as sign-in, matching this form's own
+ * default. */
+export default async function SignInPage({
+  searchParams,
+}: {
+  searchParams: { mode?: string };
+}) {
   const user = await getCurrentUser();
   if (user) {
     await redirectToRootDestination();
   }
+
+  const initialMode = searchParams.mode === "sign-up" ? "sign-up" : "sign-in";
 
   return (
     <Container as="main" className="flex min-h-screen flex-col items-center justify-center gap-lg py-xl">
@@ -30,7 +45,7 @@ export default async function SignInPage() {
             See the game. Know the market. Own the decision.
           </Text>
         </div>
-        <AuthForm />
+        <AuthForm initialMode={initialMode} />
       </div>
     </Container>
   );

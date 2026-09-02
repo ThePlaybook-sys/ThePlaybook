@@ -7,6 +7,16 @@ import { createClient } from "@/app/lib/supabase/client";
 
 type Mode = "sign-in" | "sign-up";
 
+export interface AuthFormProps {
+  /** Public Web M1 -- lets a caller (`/sign-in?mode=sign-up`, driven by
+   * the landing page's "Create Account" CTAs) preselect the Create
+   * Account tab. Purely an initial-state seed for this component's own
+   * `useState` below; the tab remains fully switchable either way, and
+   * no other behavior of this form changes. Defaults to "sign-in",
+   * matching every existing caller unchanged. */
+  initialMode?: Mode;
+}
+
 /**
  * The one real sign-in/create-account form (Phase 6 Milestone 6),
  * replacing the manual `pb_session_token` workaround entirely. Calls
@@ -23,9 +33,9 @@ type Mode = "sign-in" | "sign-up";
  * erroring. Correct under either configuration, without guessing which
  * one DEV actually has.
  */
-export function AuthForm() {
+export function AuthForm({ initialMode = "sign-in" }: AuthFormProps = {}) {
   const router = useRouter();
-  const [mode, setMode] = useState<Mode>("sign-in");
+  const [mode, setMode] = useState<Mode>(initialMode);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);

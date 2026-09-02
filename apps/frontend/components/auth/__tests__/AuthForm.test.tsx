@@ -143,6 +143,17 @@ describe("AuthForm", () => {
     expect(button).not.toBeDisabled();
   });
 
+  it("Public Web M1: defaults to the Sign In tab when no initialMode is given, unchanged for every existing caller", () => {
+    render(<AuthForm />);
+    expect(screen.getByRole("tab", { name: "Sign In" })).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("Public Web M1: preselects the Create Account tab when initialMode='sign-up' is passed", () => {
+    render(<AuthForm initialMode="sign-up" />);
+    expect(screen.getByRole("tab", { name: "Create Account" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: "Sign In" })).toHaveAttribute("aria-selected", "false");
+  });
+
   it("mobile-safe structure: form inputs use 16px+ text and 44px+ tap targets", () => {
     render(<AuthForm />);
 
