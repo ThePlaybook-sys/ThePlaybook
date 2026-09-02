@@ -56,4 +56,34 @@ describe("PublicNav", () => {
     render(<PublicNav />);
     expect(screen.getByRole("link", { name: "MANSA Sports Intelligence" })).toHaveAttribute("href", "/");
   });
+
+  it("Web M1 routing correction: defaults to signed-out actions when signedIn is omitted", () => {
+    usePathnameMock.mockReturnValue("/");
+    render(<PublicNav />);
+    expect(screen.getAllByRole("link", { name: "Sign In" }).length).toBeGreaterThan(0);
+    expect(screen.queryByRole("link", { name: "Open MANSA" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Account" })).not.toBeInTheDocument();
+  });
+
+  it("Web M1 routing correction: a signed-in visitor sees Account and Open MANSA instead of Sign In / Create Account", () => {
+    usePathnameMock.mockReturnValue("/");
+    render(<PublicNav signedIn />);
+
+    expect(screen.queryByRole("link", { name: "Sign In" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Create Account" })).not.toBeInTheDocument();
+
+    const accountLinks = screen.getAllByRole("link", { name: "Account" });
+    const openMansaLinks = screen.getAllByRole("link", { name: "Open MANSA" });
+    expect(accountLinks[0]).toHaveAttribute("href", "/account");
+    expect(openMansaLinks[0]).toHaveAttribute("href", "/today");
+  });
+
+  it("Web M1 routing correction: the mobile menu is also auth-aware", () => {
+    usePathnameMock.mockReturnValue("/");
+    render(<PublicNav signedIn />);
+    fireEvent.click(screen.getByRole("button", { name: "Open menu" }));
+
+    expect(screen.getAllByRole("link", { name: "Open MANSA" }).length).toBeGreaterThan(0);
+    expect(screen.queryByRole("link", { name: "Create Account" })).not.toBeInTheDocument();
+  });
 });

@@ -1,29 +1,35 @@
 import Link from "next/link";
-import { redirect } from "next/navigation";
 import { Container, Text } from "@/components/ds";
 import { PublicNav } from "@/components/marketing/PublicNav";
 import { PublicFooter } from "@/components/marketing/PublicFooter";
 import { ScrollReveal } from "@/components/marketing/ScrollReveal";
 import { IllustrativeDecisionCard } from "@/components/marketing/IllustrativeDecisionCard";
-import { getCurrentUser, resolveRootDestination } from "@/app/lib/auth";
-import { getUserProfile } from "@/app/lib/api";
+import { getCurrentUser } from "@/app/lib/auth";
 
 export const metadata = { title: "MANSA — Sports Intelligence" };
 
 /**
- * Public Web M1 -- `/` is now the public MANSA landing page (previously
- * pure product-entry routing, per the M6-era comment this replaces).
+ * Public Web M1 -- `/` is the public MANSA landing page.
  *
- * Preserves every existing authenticated behavior exactly: a signed-in
- * user still lands on `/onboarding` or `/today` via the same
- * `resolveRootDestination` decision `/sign-in` and `/onboarding`
- * themselves already use (`app/lib/auth.ts`, untouched) -- they never
- * see this marketing page. Only the signed-out branch changes: instead
- * of a forced `/sign-in` redirect, a signed-out visitor now sees this
- * page. `resolveRootDestination` itself is not modified (its own unit
- * tests in `app/lib/__tests__/auth.test.ts` stay authoritative), so this
- * is a new caller of an existing, tested decision, not a second auth
- * implementation.
+ * Web M1 routing correction (Mac's live mobile validation, 2026-09-02):
+ * `/` previously redirected a signed-in visitor straight to
+ * `/onboarding`/`/today`, so an authenticated visitor manually revisiting
+ * `/` never saw the marketing page at all -- confirmed as the root cause
+ * of that report (this file's own earlier `if (user) { ... redirect(...) }`
+ * branch). `/` now ALWAYS renders this page for every visitor, signed in
+ * or not; the authenticated product's real entry point is `/today`, not
+ * `/`. This does not weaken any route guard -- `/onboarding`, `/account`,
+ * and every other authenticated route still call `requireUser()`/their
+ * own `resolveRootDestination`-based check exactly as before (both
+ * untouched, still covered by their own existing tests); only `/`
+ * itself no longer redirects.
+ *
+ * `getCurrentUser()` is still called here -- not to gate rendering, but
+ * to drive the one thing that legitimately differs for a signed-in
+ * visitor: the nav's actions ("Account"/"Open MANSA" instead of "Sign
+ * In"/"Create Account", per HQ's explicit auth-aware-nav requirement)
+ * and this page's own CTAs, which would otherwise nonsensically invite
+ * an already-registered visitor to create a second account.
  *
  * Note on the mantra: `app/sign-in/page.tsx`'s own comment describes
  * "MANSA / Sports Intelligence / mantra" as a brand moment appearing
@@ -35,20 +41,14 @@ export const metadata = { title: "MANSA — Sports Intelligence" };
  */
 export default async function RootPage() {
   const user = await getCurrentUser();
-
-  if (user) {
-    const profile = await getUserProfile();
-    const destination = resolveRootDestination({
-      signedIn: true,
-      hasProfile: profile.kind === "ok",
-      onboardingCompletedAt: profile.kind === "ok" ? profile.data.onboarding_completed_at : null,
-    });
-    redirect(destination);
-  }
+  const signedIn = user !== null;
+  const primaryCta = signedIn
+    ? { href: "/today", label: "Open MANSA" }
+    : { href: "/sign-in?mode=sign-up", label: "Create Account" };
 
   return (
     <>
-      <PublicNav />
+      <PublicNav signedIn={signedIn} />
 
       <main>
         {/* Hero -- kept especially clean per HQ's "first viewport" instruction:
@@ -78,10 +78,10 @@ export default async function RootPage() {
               </Text>
               <div className="flex flex-col gap-sm sm:flex-row">
                 <Link
-                  href="/sign-in?mode=sign-up"
+                  href={primaryCta.href}
                   className="flex min-h-[44px] items-center justify-center rounded-sm bg-accent px-xl text-label font-semibold text-surface-page transition-opacity duration-micro hover:opacity-90"
                 >
-                  Create Account
+                  {primaryCta.label}
                 </Link>
                 <Link
                   href="/how-it-works"
@@ -188,10 +188,10 @@ export default async function RootPage() {
                 Own the decision.
               </Text>
               <Link
-                href="/sign-in?mode=sign-up"
+                href={primaryCta.href}
                 className="flex min-h-[44px] items-center justify-center rounded-sm bg-accent px-xl text-label font-semibold text-surface-page transition-opacity duration-micro hover:opacity-90"
               >
-                Create Account
+                {primaryCta.label}
               </Link>
             </ScrollReveal>
           </Container>

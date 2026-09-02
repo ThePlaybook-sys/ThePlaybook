@@ -3,81 +3,71 @@ import { render, screen } from "@testing-library/react";
 import RootPage from "../page";
 
 const getCurrentUserMock = vi.fn();
-const getUserProfileMock = vi.fn();
-const redirectMock = vi.fn((destination: string) => {
-  throw new Error(`REDIRECT:${destination}`);
-});
 
-vi.mock("@/app/lib/auth", async () => {
-  const actual = await vi.importActual<typeof import("@/app/lib/auth")>("@/app/lib/auth");
-  return {
-    ...actual,
-    getCurrentUser: () => getCurrentUserMock(),
-  };
-});
-
-vi.mock("@/app/lib/api", () => ({
-  getUserProfile: () => getUserProfileMock(),
+vi.mock("@/app/lib/auth", () => ({
+  getCurrentUser: () => getCurrentUserMock(),
 }));
 
 vi.mock("next/navigation", () => ({
-  redirect: (destination: string) => redirectMock(destination),
   usePathname: () => "/",
 }));
 
 /**
- * Public Web M1 -- `/` is now a real branching point (marketing page vs.
- * product-entry redirect), not pure routing. `resolveRootDestination`
- * itself stays covered by its own existing unit tests
- * (`app/lib/__tests__/auth.test.ts`, untouched); these tests cover the
- * one thing that actually changed: which branch renders content versus
- * redirects.
+ * Public Web M1 routing correction (Mac's live mobile validation,
+ * 2026-09-02): `/` previously redirected a signed-in visitor to
+ * `/onboarding`/`/today` before ever rendering this page -- the
+ * confirmed root cause of "authenticated `/` shows Today instead of the
+ * landing page." `/` must now render for every visitor, full stop; the
+ * only thing that legitimately varies is the nav/CTA wording. These
+ * tests cover scenarios 1-3 of HQ's requested regression matrix.
+ * Scenarios 4-6 (signed-out protected route -> /sign-in, a fully
+ * onboarded user reaching protected routes normally, an
+ * onboarding-required user's existing onboarding redirect) are
+ * unchanged by this fix and stay covered by their own existing,
+ * untouched tests: `app/lib/__tests__/getCurrentUser.test.ts`
+ * (`requireUser` -> `/sign-in`) and `app/lib/__tests__/auth.test.ts`
+ * (`resolveRootDestination`, still used by `/sign-in` and `/onboarding`
+ * themselves to bounce a user who's already past that step).
  */
 describe("RootPage (/)", () => {
   beforeEach(() => {
     getCurrentUserMock.mockReset();
-    getUserProfileMock.mockReset();
-    redirectMock.mockClear();
   });
 
-  it("renders the public landing page for a signed-out visitor, never redirecting to /sign-in", async () => {
+  it("scenario 1: signed-out GET / renders the public landing page", async () => {
     getCurrentUserMock.mockResolvedValue(null);
 
     render(await RootPage());
 
-    expect(getUserProfileMock).not.toHaveBeenCalled();
-    expect(redirectMock).not.toHaveBeenCalled();
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(
       "See the game.Know the market.Own the decision.",
     );
     const createAccountLinks = screen.getAllByRole("link", { name: "Create Account" });
     expect(createAccountLinks.length).toBeGreaterThan(0);
     expect(createAccountLinks[0]).toHaveAttribute("href", "/sign-in?mode=sign-up");
+    expect(screen.queryByRole("link", { name: "Open MANSA" })).not.toBeInTheDocument();
   });
 
-  it("preserves existing behavior: a signed-in user with incomplete onboarding is redirected to /onboarding, never shown the landing page", async () => {
+  it("scenario 2: signed-in GET / ALSO renders the public landing page -- never redirected away, the real bug being fixed here", async () => {
     getCurrentUserMock.mockResolvedValue({ id: "u1", email: "user@example.com" });
-    getUserProfileMock.mockResolvedValue({ kind: "ok", data: { onboarding_completed_at: null } });
 
-    await expect(RootPage()).rejects.toThrow("REDIRECT:/onboarding");
-    expect(redirectMock).toHaveBeenCalledWith("/onboarding");
+    render(await RootPage());
+
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(
+      "See the game.Know the market.Own the decision.",
+    );
   });
 
-  it("preserves existing behavior: a fully onboarded signed-in user is redirected to /today, never shown the landing page", async () => {
+  it("scenario 3: a signed-in visitor's primary CTA is 'Open MANSA' linking to /today, not 'Create Account'", async () => {
     getCurrentUserMock.mockResolvedValue({ id: "u1", email: "user@example.com" });
-    getUserProfileMock.mockResolvedValue({
-      kind: "ok",
-      data: { onboarding_completed_at: "2026-08-01T00:00:00Z" },
-    });
 
-    await expect(RootPage()).rejects.toThrow("REDIRECT:/today");
-    expect(redirectMock).toHaveBeenCalledWith("/today");
-  });
+    render(await RootPage());
 
-  it("preserves existing behavior: a signed-in user with no readable profile row is redirected to /onboarding", async () => {
-    getCurrentUserMock.mockResolvedValue({ id: "u1", email: "user@example.com" });
-    getUserProfileMock.mockResolvedValue({ kind: "error", error: "not found" });
-
-    await expect(RootPage()).rejects.toThrow("REDIRECT:/onboarding");
+    expect(screen.queryByRole("link", { name: "Create Account" })).not.toBeInTheDocument();
+    const openMansaLinks = screen.getAllByRole("link", { name: "Open MANSA" });
+    expect(openMansaLinks.length).toBeGreaterThan(0);
+    for (const link of openMansaLinks) {
+      expect(link).toHaveAttribute("href", "/today");
+    }
   });
 });
