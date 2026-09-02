@@ -162,8 +162,11 @@ describe("BoardCard -- links, metrics, edge treatment (unchanged semantics)", ()
   });
 
   it("a very long selection wraps safely inside the decision zone without losing any text", () => {
-    const longSelection =
-      "Jacksonville Jaguars Alternate Spread (Reduced Juice Promo Line, Extended Market Description)";
+    // M7.5's contract audit confirmed `selection` is always a clean
+    // provider-reported name, never a compound string with fabricated
+    // market-qualifier text -- the realistic stress case is a genuinely
+    // long real full team name, not an invented promo-line suffix.
+    const longSelection = "Tampa Bay Buccaneers";
     render(
       <BoardCard
         recommendation={makeCard({
@@ -202,5 +205,97 @@ describe("BoardCard -- links, metrics, edge treatment (unchanged semantics)", ()
     expect(screen.getByText("Buffalo Bills @ Kansas City Chiefs")).toBeInTheDocument();
     expect(screen.queryByText("KC")).not.toBeInTheDocument();
     expect(screen.queryByText("BUF")).not.toBeInTheDocument();
+  });
+
+  it("never invents a shortened selection either -- the full leg.selection renders verbatim even when long", () => {
+    render(
+      <BoardCard
+        recommendation={makeCard({
+          legs: [
+            {
+              marketType: "spread",
+              selection: "Jacksonville Jaguars",
+              sportsbook: "FanDuel",
+              americanOdds: -110,
+              point: 3.5,
+              decimalOdds: 1.91,
+              evPerDollar: 0.031,
+              finalAggregateConfidence: 0.71,
+              legOrder: 1,
+            },
+          ],
+        })}
+      />,
+    );
+    expect(screen.getByText("Jacksonville Jaguars +3.5")).toBeInTheDocument();
+    expect(screen.queryByText("Jaguars +3.5")).not.toBeInTheDocument();
+  });
+});
+
+describe("BoardCard -- market-type qualifier (M7.5 §3)", () => {
+  it("shows a safely-derivable market label (from the market_type enum) beneath the decision value", () => {
+    render(
+      <BoardCard
+        recommendation={makeCard({
+          legs: [
+            {
+              marketType: "spread",
+              selection: "Chiefs",
+              sportsbook: "book",
+              americanOdds: -135,
+              point: -3.5,
+              decimalOdds: 1.74,
+              evPerDollar: 0.063,
+              finalAggregateConfidence: 0.89,
+              legOrder: 1,
+            },
+          ],
+        })}
+      />,
+    );
+    expect(screen.getByText("Spread")).toBeInTheDocument();
+  });
+
+  it("moneyline/total/prop each get their own real label, never a fabricated qualifier like 'Alternate Spread'", () => {
+    const legFor = (marketType: "moneyline" | "total" | "prop") => [
+      {
+        marketType,
+        selection: "Chiefs",
+        sportsbook: "book",
+        americanOdds: -135,
+        point: null,
+        decimalOdds: 1.74,
+        evPerDollar: 0.063,
+        finalAggregateConfidence: 0.89,
+        legOrder: 1,
+      },
+    ];
+    const { rerender } = render(<BoardCard recommendation={makeCard({ legs: legFor("moneyline") })} />);
+    expect(screen.getByText("Moneyline")).toBeInTheDocument();
+
+    rerender(<BoardCard recommendation={makeCard({ legs: legFor("total") })} />);
+    expect(screen.getByText("Total")).toBeInTheDocument();
+
+    rerender(<BoardCard recommendation={makeCard({ legs: legFor("prop") })} />);
+    expect(screen.getByText("Player Prop")).toBeInTheDocument();
+
+    expect(screen.queryByText(/alternate/i)).not.toBeInTheDocument();
+  });
+});
+
+describe("BoardCard -- mobile information density (M7.5 §6)", () => {
+  it("card padding and gaps are responsive -- tighter below the sm breakpoint, unchanged at sm and above", () => {
+    const { container } = render(<BoardCard recommendation={makeCard()} />);
+    const surface = container.querySelector("[data-surface-level='card']");
+    expect(surface?.className).toContain("p-md");
+    expect(surface?.className).toContain("sm:p-lg");
+    expect(surface?.className).toContain("gap-sm");
+    expect(surface?.className).toContain("sm:gap-md");
+  });
+
+  it("typography sizes are unchanged -- density comes from spacing, never from shrinking the decision value below display scale", () => {
+    render(<BoardCard recommendation={makeCard()} />);
+    const decisionValue = screen.getByText("Chiefs");
+    expect(decisionValue).toHaveClass("text-display");
   });
 });

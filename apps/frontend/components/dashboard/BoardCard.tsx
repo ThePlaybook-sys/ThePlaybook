@@ -18,6 +18,26 @@ function passingDecisionLabel(recommendationType: RecommendationCardData["recomm
   return recommendationType === "no_bet" ? "No Bet" : "Bankroll Preservation";
 }
 
+/** Human label for the market-type enum -- not a fabrication, the same
+ * enum-to-copy mapping `GRADE_LABEL` already uses for `GradeOutcome`.
+ * M7.5's contract audit confirmed the schema has no separate free-text
+ * "market qualifier"/promo-line field (`market_type` is a hard
+ * CHECK-constrained enum: moneyline/spread/total/prop) -- this label is
+ * the most specific market descriptor the real contract can safely
+ * produce without inventing betting semantics. */
+function marketTypeLabel(marketType: RecommendationLeg["marketType"]): string {
+  switch (marketType) {
+    case "moneyline":
+      return "Moneyline";
+    case "spread":
+      return "Spread";
+    case "total":
+      return "Total";
+    case "prop":
+      return "Player Prop";
+  }
+}
+
 /**
  * EV as a signed percentage, e.g. `+6.3%` / `-2.0%`. Sign is purely
  * numeric -- never colored positive/negative (HQ's explicit M7.2
@@ -39,7 +59,7 @@ function formatEv(evPerDollar: number): string {
  * HQ's "subtle separators" instruction. */
 function InstrumentMetric({ label, value, first = false }: { label: string; value: string; first?: boolean }) {
   return (
-    <div className={`flex flex-col gap-xs ${first ? "" : "border-l border-border pl-lg"}`}>
+    <div className={`flex flex-col gap-xs ${first ? "" : "border-l border-border pl-md sm:pl-lg"}`}>
       <Text variant="label" as="span">
         {label}
       </Text>
@@ -56,15 +76,24 @@ function InstrumentMetric({ label, value, first = false }: { label: string; valu
  * risk to those pages). The selection itself is the MANSA Decision value
  * (M7.4 §4) -- rendered at `display` scale, deliberately larger than the
  * `data`-scale instrument metrics beneath it, so the decision visually
- * dominates the analysis that supports it, never the reverse. */
+ * dominates the analysis that supports it, never the reverse. Always the
+ * full, authoritative `leg.selection` string verbatim -- M7.5's contract
+ * audit confirmed no shortened/abbreviated team-name field exists
+ * anywhere in the schema, so this never invents one (HQ's explicit "do
+ * not invent a shortened team name" rule); de-emphasis for a long
+ * selection comes from the subordinate market-type line beneath it, not
+ * from truncating or fabricating the selection itself. */
 function BoardCardDecisionLeg({ leg }: { leg: RecommendationLeg }) {
   return (
-    <div className="flex flex-col gap-sm">
+    <div className="flex flex-col gap-xs sm:gap-sm">
       <Text variant="display" as="p" className="text-text-primary">
         {leg.selection}
         {formatPoint(leg.point)}
       </Text>
-      <div className="flex flex-wrap gap-lg">
+      <Text variant="label" as="span">
+        {marketTypeLabel(leg.marketType)}
+      </Text>
+      <div className="flex flex-wrap gap-md sm:gap-lg">
         <InstrumentMetric
           first
           label="Confidence"
@@ -116,6 +145,21 @@ function BoardCardDecisionLeg({ leg }: { leg: RecommendationLeg }) {
  * edge. Bankroll Preservation (slate-scoped, no game) never gets a
  * fabricated matchup or kickoff time -- its game-context zone reads
  * "Today's Slate" exactly as it always has.
+ *
+ * M7.5 refinement: a contract audit (ai-orchestrator's candidate
+ * generation, the `recommendation_legs` migration, and this file's own
+ * consuming types) confirmed `leg.selection` is always the provider's
+ * raw outcome name -- a clean team/side/player string, never a compound
+ * string with market-qualifier text baked in, and the schema has no
+ * separate free-text qualifier field to split out. So the decision value
+ * always renders the full, authoritative selection verbatim (never
+ * shortened/abbreviated); the new market-type line beneath it (Moneyline/
+ * Spread/Total/Player Prop, the same enum-to-copy pattern `GRADE_LABEL`
+ * already uses) is the one additional, safely-derivable piece of context
+ * HQ's "PRIMARY SELECTION / MARKET / PRICE" separation asked for.
+ * Padding and gaps are now responsive (tighter below the `sm` breakpoint)
+ * for mobile information density -- typography sizes are unchanged, per
+ * HQ's explicit "do not solve density by shrinking fonts" instruction.
  */
 export function BoardCard({ recommendation }: BoardCardProps) {
   const isPassing =
@@ -133,7 +177,7 @@ export function BoardCard({ recommendation }: BoardCardProps) {
     >
       <Surface
         level="card"
-        className={`flex flex-col gap-md border-t-2 p-lg transition-colors hover:border-accent ${
+        className={`flex flex-col gap-sm border-t-2 p-md transition-colors hover:border-accent sm:gap-md sm:p-lg ${
           isPassing ? "border-t-attention-amber" : "mansa-illuminated-edge-top border-t-transparent"
         }`}
         data-recommendation-type={recommendation.recommendationType}
@@ -162,7 +206,7 @@ export function BoardCard({ recommendation }: BoardCardProps) {
         {/* MANSA Decision -- a distinct raised plane, never blended into
             the game context above it. */}
         <div
-          className={`flex flex-col gap-sm rounded-sm border-l-2 bg-surface-inset p-md ${
+          className={`flex flex-col gap-xs rounded-sm border-l-2 bg-surface-inset p-sm sm:gap-sm sm:p-md ${
             isPassing ? "border-l-attention-amber" : "border-l-mansa-cobalt"
           }`}
         >

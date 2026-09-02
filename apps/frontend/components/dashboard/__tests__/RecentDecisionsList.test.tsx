@@ -50,4 +50,26 @@ describe("RecentDecisionsList", () => {
     render(<RecentDecisionsList recent={ok(many)} />);
     expect(screen.getAllByRole("link").length).toBe(6 + 1); // 6 rows + "See all"
   });
+
+  it("M7.5: a truncated matchup title exposes the full text via a title attribute -- mobile truncation stays understandable", () => {
+    render(
+      <RecentDecisionsList
+        recent={ok([
+          makeCard({
+            displayId: "1",
+            game: {
+              homeTeam: "San Francisco 49ers",
+              awayTeam: "Jacksonville Jaguars",
+              scheduledStart: "2026-09-02T20:20:00Z",
+              status: "scheduled",
+            },
+          }),
+        ])}
+      />,
+    );
+    expect(screen.getByText("Jacksonville Jaguars @ San Francisco 49ers")).toHaveAttribute(
+      "title",
+      "Jacksonville Jaguars @ San Francisco 49ers",
+    );
+  });
 });

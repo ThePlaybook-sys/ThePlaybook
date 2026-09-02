@@ -45,7 +45,12 @@ export function RecentDecisionsList({ recent }: RecentDecisionsListProps) {
                   className="flex items-center justify-between gap-md rounded-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
                 >
                   <div className="flex min-w-0 flex-col gap-xs">
-                    <Text variant="body" as="span" className="truncate text-text-primary">
+                    <Text
+                      variant="body"
+                      as="span"
+                      className="truncate text-text-primary"
+                      title={headlineFor(recommendation)}
+                    >
                       {headlineFor(recommendation)}
                     </Text>
                     <Text variant="label" as="span">

@@ -2027,3 +2027,51 @@ All five are fixed at the root: `tailwind.config.ts`'s `state.positive/negative/
 **Alternatives considered:** none material beyond the ones recorded in the Volume 5 entry above.
 
 **Expected impact:** No backend service touched -- DEV-only frontend deployment expected. No new recommendation, ranking, or business logic. `RecentDecisionsList`/`TrackRecordSnapshot` unchanged. Phase 6's visual product gate remains open pending HQ's own real-device review of both `/today` and `/dev/command-center-preview`.
+
+---
+
+## v5.6 (Volume 5) — 2026-09-02 — MINOR
+
+**Volumes affected:** Volume 5 (Frontend & UX Architecture)
+
+**Reason:** HQ authorized one narrow refinement + validation milestone after M7.4: MANSA's decision needed to stay understandable when a real selection string gets long, mobile cards needed to become more information-efficient without cramping, and Phase 6's visual gate needed an explicit desktop/tablet/mobile validation pass before HQ's own final review. HQ required a contract audit before any code changed, with an explicit STOP condition if a clean display selection would require inventing betting semantics.
+
+**Decision — contract audit first (HQ's §2 requirement):** Traced `selection`'s full lifecycle — `apps/ai-orchestrator/app/features/candidate_generation.py` (`selection = outcome["name"]`, the odds provider's raw outcome name, no concatenation), through `MarketCandidate`/`EvaluatedCandidate`, to persistence (`recommendation_products.py`) and the `recommendation_legs` migration schema. Findings: `selection` is always a clean team/side/player string, never a compound string with market-qualifier text; the schema has no separate free-text "qualifier"/promo-line field — `market_type` is a hard `CHECK`-constrained enum (`moneyline`/`spread`/`total`/`prop`) with no "alternate line" concept. `/v1/recommendations/today` (`apps/api-gateway/app/recommendations.py`) applies no status/grade filter at all — only `deleted_at is null` plus a today's-game-or-today's-run-started window — so a settled (WIN/LOSS/etc.) product legitimately appearing in Today's Board is real API behavior, not a preview-fixture artifact.
+
+**Consequence 1 — no shortened team names, ever:** HQ's own illustrative mockup ("Jaguars +3.5") shows a shortened team name, but the audit found no authoritative short form exists anywhere in the contract. Per HQ's own explicit "do not invent a shortened team name" rule — which overrides the illustrative example — `BoardCard`'s decision value continues to render the full, authoritative `leg.selection` verbatim, exactly as M7.4 already did. No truncation, no fabricated abbreviation.
+
+**Consequence 2 — a market-type line, the one safe addition:** A new subordinate line beneath the decision value renders `market_type` as human copy (Moneyline/Spread/Total/Player Prop) via a new `marketTypeLabel()` helper — the identical enum-to-copy pattern `GRADE_LABEL` already uses for `GradeOutcome`, not a fabrication. This is the full extent of the "PRIMARY SELECTION / MARKET / PRICE" separation the real contract can safely support; "Alternate Spread"-style promo qualifiers from HQ's illustrative mockup are not derivable and were not implemented.
+
+**A real, pre-existing fixture defect corrected:** the M7.3 preview's stress-test fixture (`fixtures.ts`) had invented a compound selection string ("...Jaguars Alternate Spread (Reduced Juice Promo Line)") that the audit confirms can never occur in real data — that fixture had been misrepresenting the contract since M7.3. Corrected to a realistic long-real-team-name stress case ("Jacksonville Jaguars"), which still exercises genuine wrapping behavior without fabricating betting semantics.
+
+**Mobile information density — spacing, not typography:** `BoardCard`'s outer card padding/gaps, the MANSA Decision inset panel's padding/gaps, and the instrument-metric divider padding are now responsive (`p-md`/`gap-sm`/`p-sm` below the `sm` breakpoint, identical to M7.4's `p-lg`/`gap-md`/`p-md` at `sm` and above) — per HQ's explicit "do not solve density by shrinking fonts" instruction, no typography size changed. Desktop rendering is byte-for-byte the same as M7.4's shipped values.
+
+**Recent Decisions — one small, targeted accessibility addition:** the truncated matchup `<span>` gained a `title` attribute exposing the full text on hover for sighted users (screen readers already receive the untruncated DOM text regardless of CSS `text-overflow: ellipsis`). No structural or semantic change — still containerless rows, still `recentDecisionState`'s existing badge vocabulary, per HQ's explicit "do not redesign this section" instruction.
+
+**Track Record, Today's-Board inclusion semantics, team identity, modeled probability:** all explicitly unchanged, per HQ's non-goals list (§13).
+
+**Testing:** `BoardCard.test.tsx` expanded 20 → 26 cases net (market-type label per enum value, no-fabricated-qualifier assertion, full-selection-never-shortened assertion, responsive padding/gap class assertions, typography-unchanged assertion). `RecentDecisionsList.test.tsx` gained one case for the new `title` attribute. The M7.3 preview's `page.test.tsx` and the corrected fixture's own long-selection assertion updated for the realistic stress value.
+
+**Full test/regression evidence:** 206/206 frontend tests passing (200 pre-existing + 6 net new). `tsc --noEmit` clean. `npm run build` clean, `/dev/command-center-preview` reconfirmed dynamic. Static audit of the compiled production CSS confirmed every newly used responsive class literal (`p-md`/`sm:p-lg`, `p-sm`/`sm:p-md`, `gap-sm`/`sm:gap-md`, `pl-md`/`sm:pl-lg`) actually generated a rule.
+
+**Alternatives considered:** Implementing HQ's illustrative shortened-team-name mockup literally — rejected once the contract audit confirmed no authoritative short form exists; HQ's own "do not invent" rule takes precedence over an illustrative example. Splitting `point` out as a fourth standalone display element separate from the selection string — rejected as unnecessary; `formatPoint()` already renders it inline with the selection, and HQ's own preserved hierarchy diagram (§1) keeps price inside the CONFIDENCE/EV/PRICE instrument row, not a separate line. Filtering settled products out of Today's Board client-side to shorten the board — explicitly rejected per HQ's own instruction; this is a product-semantics decision for HQ, not addressed in this milestone.
+
+**Expected impact:** No new betting intelligence, ranking, recommendation, or grading logic. `RecommendationCard`, `RecommendationDetail`, Time Machine, and every non-`BoardCard` consumer of the shared formatting helpers are unaffected. `TrackRecordSnapshot` is byte-for-byte unchanged. The modeled-probability gap remains unresolved and untouched. Phase 6's visual product gate remains open — this session does not declare it closed or complete; HQ's own final review of the populated preview (desktop, tablet, mobile) still governs that decision. Phase 7 remains unauthorized and not begun.
+
+---
+
+## v4.16 (apps/frontend) — 2026-09-02 — Phase 6 Milestone 7.5: decision readability + mobile density
+
+**Volumes affected:** Volume 5 (v5.6 entry above) — implementation entry, not itself a Blueprint decision.
+
+**Reason:** Implements the M7.5 BoardCard refinement HQ authorized after a required contract audit, correcting a mobile-density gap and one real pre-existing fixture defect from M7.3.
+
+**Code:** `components/dashboard/BoardCard.tsx` — new `marketTypeLabel()` helper; `BoardCardDecisionLeg` gained a market-type line; outer card, decision-panel, and instrument-metric-divider padding/gaps made responsive (tighter below `sm`, unchanged at `sm`+). `components/dashboard/RecentDecisionsList.tsx` — truncated headline span gained a `title` attribute. `app/dev/command-center-preview/fixtures.ts` — corrected the M7.3 stress fixture's fabricated compound selection string to a realistic long-real-team-name value.
+
+**Tests:** `BoardCard.test.tsx` expanded 20 → 26 cases (6 net new). `RecentDecisionsList.test.tsx` +1 case. Two existing assertions (`page.test.tsx`, `BoardCard.test.tsx`'s own long-selection case) updated for the corrected fixture value.
+
+**Full test/regression evidence:** 206/206 frontend tests passing (200 pre-existing + 6 net new). `tsc --noEmit` clean. `npm run build` clean, unchanged route set (20 routes), `/dev/command-center-preview` confirmed dynamic. Static CSS audit confirmed zero dead classes among every newly used literal.
+
+**Alternatives considered:** none material beyond the ones recorded in the Volume 5 entry above.
+
+**Expected impact:** No backend service touched — DEV-only frontend deployment expected. No new recommendation, ranking, or business logic. `RecentDecisionsList`'s structure and `TrackRecordSnapshot` are otherwise unchanged. Phase 6's visual product gate remains open pending HQ's own final review of the populated preview across desktop, tablet, and mobile.
