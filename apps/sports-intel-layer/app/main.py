@@ -1,8 +1,7 @@
-import hmac
 import os
 
 import sentry_sdk
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI
 from pydantic import BaseModel
 
 from app.environment_safety import assert_demo_isolation
@@ -234,37 +233,57 @@ if os.environ.get("RAILWAY_ENVIRONMENT_NAME", "dev") == "dev":
     async def trigger_error():
         division_by_zero = 1 / 0
 
-    @app.post("/v1/internal/nfl-bakeoff/run")
-    async def internal_run_nfl_bakeoff(
-        x_bakeoff_token: str | None = Header(default=None),
-    ) -> dict:
-        """TEMPORARY diagnostic-only endpoint for the 2026-09-03 MANSA NFL
-        Provider Bake-Off (BALLDONTLIE vs API-SPORTS, see
-        `app.diagnostics.nfl_bakeoff`'s own module docstring for the full
-        call plan). Dev-only mount, same convention as `/sentry-debug`
-        immediately above. Deliberately guarded by its own single-purpose
-        `NFL_BAKEOFF_TOKEN` -- generated fresh for this diagnostic pass,
-        never `INTERNAL_SERVICE_TOKEN` -- so this throwaway probe never
-        needs the shared internal-mesh secret every other internal
-        endpoint in this project uses. Meant to be reverted, along with
-        the `NFL_BAKEOFF_TOKEN` variable itself, once the bake-off report
-        is delivered -- not a permanent capability of this service.
-        Neither BALLDONTLIE_API_KEY nor API_SPORTS_NFL_KEY is referenced
-        by name anywhere in this module; both are read exactly once, by
-        `build_bakeoff_clients()` in `app.master_refresh.production_clients`,
-        matching the existing credential-isolation convention."""
-        expected = os.environ.get("NFL_BAKEOFF_TOKEN")
-        if not expected or not x_bakeoff_token or not hmac.compare_digest(
-            x_bakeoff_token, expected
-        ):
-            raise HTTPException(status_code=401, detail="invalid bakeoff token")
+    if os.environ.get("RUN_NFL_BAKEOFF") == "1":
+        import json
+        import logging
 
-        from app.diagnostics.nfl_bakeoff import run_nfl_bakeoff
+        _bakeoff_logger = logging.getLogger("sports-intel-layer.diagnostics.nfl_bakeoff")
 
-        clients = build_bakeoff_clients()
-        try:
-            return await run_nfl_bakeoff(clients["balldontlie"], clients["api_sports"])
-        finally:
-            for entry in clients.values():
-                if entry is not None:
-                    await entry[0].aclose()
+        @app.on_event("startup")
+        async def _run_nfl_bakeoff_once() -> None:
+            """TEMPORARY, one-shot diagnostic hook for the 2026-09-03 MANSA
+            NFL Provider Bake-Off (BALLDONTLIE vs API-SPORTS, see
+            `app.diagnostics.nfl_bakeoff`'s own module docstring for the
+            full call plan). Dev-only mount, gated behind `RUN_NFL_BAKEOFF
+            == "1"` so it never fires on an ordinary dev deploy -- only
+            when that flag is deliberately set for this one diagnostic
+            pass, then unset again. Runs once at startup rather than via
+            an inbound HTTP endpoint because this workspace's own egress
+            policy cannot reach either vendor domain OR this service's own
+            public Railway domain -- so results are retrieved from
+            Railway's own deploy logs (`logger.warning`, never `.info`;
+            this service's root logger defaults to WARNING, the same fix
+            Phase 7.0B Gate B's own discovery probe needed) instead of an
+            HTTP response body. Neither BALLDONTLIE_API_KEY nor
+            API_SPORTS_NFL_KEY is referenced by name anywhere in this
+            module; both are read exactly once, by `build_bakeoff_clients()`
+            in `app.master_refresh.production_clients`, matching the
+            existing credential-isolation convention."""
+            from app.diagnostics.nfl_bakeoff import run_nfl_bakeoff
+
+            clients = build_bakeoff_clients()
+            try:
+                result = await run_nfl_bakeoff(clients["balldontlie"], clients["api_sports"])
+            finally:
+                for entry in clients.values():
+                    if entry is not None:
+                        await entry[0].aclose()
+
+            _bakeoff_logger.warning("NFL_BAKEOFF_START")
+            for provider_name, provider_result in result.items():
+                for call in provider_result.get("calls", []):
+                    _bakeoff_logger.warning(
+                        "NFL_BAKEOFF_CALL %s",
+                        json.dumps({"provider": provider_name, **call}, default=str),
+                    )
+                for extra_key in ("error", "resolved_ids", "not_attempted"):
+                    if extra_key in provider_result:
+                        _bakeoff_logger.warning(
+                            "NFL_BAKEOFF_%s %s",
+                            extra_key.upper(),
+                            json.dumps(
+                                {"provider": provider_name, extra_key: provider_result[extra_key]},
+                                default=str,
+                            ),
+                        )
+            _bakeoff_logger.warning("NFL_BAKEOFF_DONE")

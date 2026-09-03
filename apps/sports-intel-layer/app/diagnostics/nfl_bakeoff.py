@@ -4,11 +4,19 @@ TEMPORARY, DIAGNOSTIC-ONLY module. This is not a provider adapter and does
 not implement `app.adapters.base`'s `ProviderAdapter` contract -- it exists
 solely to make a small, curated, budget-bounded set of live calls against
 both candidate NFL providers so a real data-quality comparison against the
-existing SportsDataIO benchmark can be written up. It is invoked from a
-dev-only internal endpoint (see `app/main.py`) and is expected to be
-reverted once the bake-off report is delivered, the same "temporary
-probe, then revert" discipline this project already used for the Phase
-7.0B Gate B discovery probes (see PROGRESS.md, 2026-09-02 entries).
+existing SportsDataIO benchmark can be written up. It is invoked once, at
+process startup, from a dev-only, flag-gated hook (see `app/main.py`) --
+this workspace's own egress policy blocks direct HTTPS to both vendor
+domains (and, it turns out, to this service's own public Railway domain),
+so results are retrieved via `logger.warning` lines in Railway's deploy
+logs rather than an HTTP response body, the same "log it, since nothing
+can call back in" lesson this project already learned during the Phase
+7.0B Gate B discovery probes (see PROGRESS.md, 2026-09-02 entries -- that
+probe also had to switch from `logger.info` to `logger.warning` because
+this service's root logger defaults to WARNING). This module is expected
+to be reverted, and `RUN_NFL_BAKEOFF`/`BALLDONTLIE_API_KEY`/
+`API_SPORTS_NFL_KEY` left exactly as Mac set them, once the bake-off
+report is delivered.
 
 Neither `BALLDONTLIE_API_KEY` nor `API_SPORTS_NFL_KEY` is ever logged or
 included in any returned payload -- both are used exactly once each, as an
@@ -92,8 +100,26 @@ async def _call(
         "latency_ms": latency_ms,
         "error": None,
         "rate_limit_headers": rate_limit_headers,
-        "raw_body": body,
+        "raw_body": _cap_list_fields(body),
     }
+
+
+def _cap_list_fields(body: Any, *, max_items: int = 6) -> Any:
+    """Safety net, not a substitute for the per-call `per_page`/pagination
+    params already used above -- caps any top-level list (BALLDONTLIE's
+    `data`, API-SPORTS's `response`) to a small sample so one
+    unexpectedly-large response can't blow past a single Railway log
+    line's practical size limit. The original count is preserved
+    alongside the sample, never silently dropped."""
+    if not isinstance(body, dict):
+        return body
+    capped = dict(body)
+    for key, value in body.items():
+        if isinstance(value, list) and len(value) > max_items:
+            capped[key] = value[:max_items]
+            capped[f"_{key}_total_count"] = len(value)
+            capped[f"_{key}_truncated_for_log"] = True
+    return capped
 
 
 def _bdl_find_team_id(body: dict | None, *, abbreviation: str) -> int | None:
@@ -132,35 +158,35 @@ async def run_balldontlie_bakeoff(client: httpx.AsyncClient, api_key: str) -> di
     await step(
         "rosters_active_players",
         "/nfl/v1/players/active",
-        {"team_ids[]": kc_id, "per_page": 15},
+        {"team_ids[]": kc_id, "per_page": 5},
     )
     await step(
         "schedules_current_season",
         "/nfl/v1/games",
-        {"seasons[]": _BDL_SEASON_CURRENT, "weeks[]": 1, "per_page": 10},
+        {"seasons[]": _BDL_SEASON_CURRENT, "weeks[]": 1, "per_page": 5},
     )
     historical_games = await step(
         "schedules_historical_final",
         "/nfl/v1/games",
-        {"seasons[]": _BDL_SEASON_HISTORICAL, "weeks[]": 1, "per_page": 10},
+        {"seasons[]": _BDL_SEASON_HISTORICAL, "weeks[]": 1, "per_page": 5},
     )
     game_id = _bdl_first_id(historical_games["raw_body"])
 
     await step(
         "injuries",
         "/nfl/v1/player_injuries",
-        {"team_ids[]": kc_id, "per_page": 15},
+        {"team_ids[]": kc_id, "per_page": 5},
     )
     await step("standings", "/nfl/v1/standings", {"season": _BDL_SEASON_HISTORICAL})
     await step(
         "player_stats",
         "/nfl/v1/stats",
-        {"game_ids[]": game_id, "per_page": 15},
+        {"game_ids[]": game_id, "per_page": 3},
     )
     await step(
         "season_stats",
         "/nfl/v1/season_stats",
-        {"season": _BDL_SEASON_HISTORICAL, "team_id": kc_id, "per_page": 15},
+        {"season": _BDL_SEASON_HISTORICAL, "team_id": kc_id, "per_page": 3},
     )
     await step(
         "advanced_stats_passing",
