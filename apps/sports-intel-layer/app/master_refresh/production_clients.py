@@ -77,3 +77,22 @@ def build_real_odds_worker_clients() -> tuple[httpx.AsyncClient, httpx.AsyncClie
     supabase_client = httpx.AsyncClient(base_url=os.environ["SUPABASE_URL"], timeout=60.0)
     the_odds_api_client = httpx.AsyncClient(base_url=_THE_ODDS_API_BASE_URL, timeout=60.0)
     return supabase_client, the_odds_api_client, api_key
+
+
+#: The real GNews API base URL -- confirmed from the official
+#: `gnews-io/gnews-io-js` client's own documented base, not a placeholder.
+_GNEWS_BASE_URL = "https://gnews.io"
+
+
+def build_gnews_validation_client() -> tuple[httpx.AsyncClient, str] | None:
+    """News Provider Validation -- GNews (2026-09-03, diagnostic only):
+    returns `(client, api_key)` bound to `GNEWS_API_KEY`, or `None` if
+    that credential isn't configured -- diagnostic-only, so a missing key
+    is reported rather than raised. `GNEWS_API_KEY` is never read
+    anywhere outside this function, matching the isolation convention
+    every other provider credential in this module already follows. The
+    caller owns closing the returned client."""
+    api_key = os.environ.get("GNEWS_API_KEY")
+    if not api_key:
+        return None
+    return httpx.AsyncClient(base_url=_GNEWS_BASE_URL, timeout=30.0), api_key
