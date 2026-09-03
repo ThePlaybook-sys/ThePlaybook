@@ -4,6 +4,7 @@ import { PublicNav } from "@/components/marketing/PublicNav";
 import { PublicFooter } from "@/components/marketing/PublicFooter";
 import { ScrollReveal } from "@/components/marketing/ScrollReveal";
 import { IllustrativeDecisionCard } from "@/components/marketing/IllustrativeDecisionCard";
+import { PricingTeaser } from "@/components/marketing/PricingTeaser";
 import { MARKETING_BODY_CLASS } from "@/components/marketing/typography";
 import { getCurrentUser } from "@/app/lib/auth";
 
@@ -39,6 +40,20 @@ export const metadata = { title: "MANSA — Sports Intelligence" };
  * that "nowhere else" scope now that a public landing page exists as a
  * second legitimate brand-moment context -- flagged here rather than
  * silently overridden.
+ *
+ * M3 density audit (HQ's explicit "if an existing section is duplicative
+ * ... simplify/remove rather than making the homepage longer"
+ * instruction): removed the old "MANSA Command Center" showcase section
+ * -- it rendered the exact same `IllustrativeDecisionCard` already shown
+ * in the hero above, with no new information, and had become fully
+ * redundant once `/features` grew its own richer product-visual section
+ * in M2.1. "What MANSA Does" and "Built to Be Checked" were kept: HQ's
+ * own "do not remove essential product positioning" guardrail applies to
+ * both (they're the homepage's only statement of committee analysis/
+ * discipline and of Time Machine reconstructability, not a duplicate of
+ * anything already shown elsewhere on this same page). The new pricing
+ * teaser below replaces the removed section in the page's vertical flow,
+ * so total homepage length is essentially unchanged, not grown.
  */
 export default async function RootPage() {
   const user = await getCurrentUser();
@@ -144,27 +159,6 @@ export default async function RootPage() {
           </Container>
         </section>
 
-        {/* Product / Command Center showcase -- the one deeper look at real
-            product UI, distinct from the hero's more compact glimpse. */}
-        <section className="border-t border-border py-3xl">
-          <Container className="grid gap-2xl lg:max-w-6xl lg:grid-cols-2 lg:items-center">
-            <ScrollReveal className="flex flex-col gap-md">
-              <Text variant="heading" as="h2">
-                The MANSA Command Center
-              </Text>
-              <Text variant="body" className={MARKETING_BODY_CLASS}>
-                Every recommendation ships with the full picture behind it — confidence, expected
-                value, and market price, presented together, never separately. Nothing is hidden
-                behind a summary score.
-              </Text>
-            </ScrollReveal>
-
-            <ScrollReveal delayMs={100} className="mx-auto w-full max-w-md">
-              <IllustrativeDecisionCard />
-            </ScrollReveal>
-          </Container>
-        </section>
-
         {/* Transparency / process teaser -- real, already-shipped capability
             (Time Machine reproducibility), described plainly. No Phase 7
             anomaly-detection claims. */}
@@ -179,6 +173,22 @@ export default async function RootPage() {
                 and market data behind it, preserved and available to review. Confidence describes
                 how strongly MANSA&apos;s committee agreed, not a promised outcome.
               </Text>
+            </ScrollReveal>
+          </Container>
+        </section>
+
+        {/* Pricing teaser (M3) -- three prices and a link to /pricing, no
+            entitlement detail. This replaced the old "MANSA Command Center"
+            showcase section (M3 density audit, see this file's own top
+            comment): that section showed the exact same IllustrativeDecisionCard
+            already in the hero above, with no new information -- genuinely
+            duplicative once /features grew its own, richer product-visual
+            section in M2.1. Removing it kept this page's total length from
+            growing when this section was added. */}
+        <section className="border-t border-border py-3xl">
+          <Container>
+            <ScrollReveal>
+              <PricingTeaser />
             </ScrollReveal>
           </Container>
         </section>

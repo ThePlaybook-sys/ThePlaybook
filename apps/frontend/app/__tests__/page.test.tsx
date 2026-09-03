@@ -85,4 +85,35 @@ describe("RootPage (/)", () => {
     expect(heroBody.className).toContain("!text-body-bright");
     expect(heroBody.className).toContain("font-medium");
   });
+
+  it("Public Web M3: shows the compact pricing teaser -- three prices and a Compare Plans link, no full matrix", async () => {
+    getCurrentUserMock.mockResolvedValue(null);
+
+    render(await RootPage());
+
+    expect(screen.getByText("Simple, Tiered Pricing")).toBeInTheDocument();
+    expect(screen.getByText("$19.99")).toBeInTheDocument();
+    expect(screen.getByText("$34.99")).toBeInTheDocument();
+    expect(screen.getByText("$69.99")).toBeInTheDocument();
+    const compareLink = screen.getByRole("link", { name: "Compare Plans" });
+    expect(compareLink).toHaveAttribute("href", "/pricing");
+    expect(screen.queryByRole("table")).not.toBeInTheDocument();
+  });
+
+  it("Public Web M3 density audit: the old duplicative 'MANSA Command Center' showcase section is gone", async () => {
+    getCurrentUserMock.mockResolvedValue(null);
+
+    render(await RootPage());
+
+    expect(screen.queryByText("The MANSA Command Center")).not.toBeInTheDocument();
+  });
+
+  it("Public Web M3 density audit: essential product positioning sections are still present", async () => {
+    getCurrentUserMock.mockResolvedValue(null);
+
+    render(await RootPage());
+
+    expect(screen.getByText("What MANSA Does")).toBeInTheDocument();
+    expect(screen.getByText("Built to Be Checked")).toBeInTheDocument();
+  });
 });
