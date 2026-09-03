@@ -8,7 +8,6 @@ from app.environment_safety import assert_demo_isolation
 from app.internal_auth import require_internal_token
 from app.master_refresh.production_clients import (
     MissingCredentialError,
-    build_msf_bakeoff_client,
     build_real_master_refresh_clients,
     build_real_odds_worker_clients,
 )
@@ -232,51 +231,3 @@ if os.environ.get("RAILWAY_ENVIRONMENT_NAME", "dev") == "dev":
     @app.get("/sentry-debug")
     async def trigger_error():
         division_by_zero = 1 / 0
-
-    if os.environ.get("RUN_MSF_BAKEOFF") == "1":
-        import json
-        import logging
-
-        _msf_bakeoff_logger = logging.getLogger("sports-intel-layer.diagnostics.msf_bakeoff")
-
-        @app.on_event("startup")
-        async def _run_msf_bakeoff_once() -> None:
-            """TEMPORARY, one-shot diagnostic hook for the 2026-09-03 MANSA
-            NFL Provider Gap Test (MySportsFeeds v2.1, see
-            `app.diagnostics.msf_bakeoff`'s own module docstring for the
-            full call plan). Dev-only mount, gated behind `RUN_MSF_BAKEOFF
-            == "1"` so it never fires on an ordinary dev deploy. Same
-            startup-hook + `logger.warning` retrieval pattern as the
-            earlier BALLDONTLIE/API-SPORTS bake-off
-            (`app.diagnostics.nfl_bakeoff`, since reverted) -- this
-            workspace's own egress policy cannot reach either the vendor
-            domain or this service's own public Railway domain, so
-            results go through Railway's own deploy logs instead of an
-            HTTP response. `MYSPORTSFEEDS_API_KEY` is never referenced by
-            name anywhere in this module; it is read exactly once, by
-            `build_msf_bakeoff_client()` in
-            `app.master_refresh.production_clients`."""
-            client_and_key = build_msf_bakeoff_client()
-            if client_and_key is None:
-                _msf_bakeoff_logger.warning("MSF_BAKEOFF_SKIPPED_NO_CREDENTIAL")
-                return
-
-            from app.diagnostics.msf_bakeoff import run_msf_bakeoff
-
-            client, api_key = client_and_key
-            try:
-                result = await run_msf_bakeoff(client, api_key)
-            finally:
-                await client.aclose()
-
-            _msf_bakeoff_logger.warning("MSF_BAKEOFF_START")
-            for call in result.get("calls", []):
-                _msf_bakeoff_logger.warning("MSF_BAKEOFF_CALL %s", json.dumps(call, default=str))
-            for extra_key in ("resolved_ids", "note"):
-                if extra_key in result:
-                    _msf_bakeoff_logger.warning(
-                        "MSF_BAKEOFF_%s %s",
-                        extra_key.upper(),
-                        json.dumps({extra_key: result[extra_key]}, default=str),
-                    )
-            _msf_bakeoff_logger.warning("MSF_BAKEOFF_DONE")
