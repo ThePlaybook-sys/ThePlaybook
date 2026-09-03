@@ -28,15 +28,6 @@ _SPORTSDATAIO_BASE_URL = "https://api.sportsdata.io"
 #: the_odds_api`'s own documented v4 REST contract.
 _THE_ODDS_API_BASE_URL = "https://api.the-odds-api.com"
 
-#: NFL Provider Bake-Off (2026-09-03, diagnostic only -- see
-#: `app.diagnostics.nfl_bakeoff`). Base URLs CONFIRMED from BALLDONTLIE's
-#: own official PyPI package source (`balldontlie.base.BalldontlieAPI`'s
-#: default `base_url`) and from public API-SPORTS documentation excerpts
-#: (direct docs access to both vendor domains is blocked by this
-#: workspace's own egress policy -- see that module's docstring).
-_BALLDONTLIE_BASE_URL = "https://api.balldontlie.io"
-_API_SPORTS_NFL_BASE_URL = "https://v1.american-football.api-sports.io"
-
 
 class MissingCredentialError(Exception):
     """Raised when a required provider credential is absent from this
@@ -86,30 +77,3 @@ def build_real_odds_worker_clients() -> tuple[httpx.AsyncClient, httpx.AsyncClie
     supabase_client = httpx.AsyncClient(base_url=os.environ["SUPABASE_URL"], timeout=60.0)
     the_odds_api_client = httpx.AsyncClient(base_url=_THE_ODDS_API_BASE_URL, timeout=60.0)
     return supabase_client, the_odds_api_client, api_key
-
-
-def build_bakeoff_clients() -> dict[str, tuple[httpx.AsyncClient, str] | None]:
-    """NFL Provider Bake-Off (2026-09-03, diagnostic only): returns
-    `{"balldontlie": (client, api_key) | None, "api_sports": (client, api_key) | None}`.
-    Each provider is independent -- one missing credential never prevents
-    testing the other. Neither `BALLDONTLIE_API_KEY` nor
-    `API_SPORTS_NFL_KEY` is read anywhere outside this function, matching
-    the isolation convention `SPORTSDATAIO_API_KEY`/`THE_ODDS_API_KEY`
-    already follow above. The caller owns closing any client this returns."""
-    result: dict[str, tuple[httpx.AsyncClient, str] | None] = {}
-
-    balldontlie_key = os.environ.get("BALLDONTLIE_API_KEY")
-    result["balldontlie"] = (
-        (httpx.AsyncClient(base_url=_BALLDONTLIE_BASE_URL, timeout=30.0), balldontlie_key)
-        if balldontlie_key
-        else None
-    )
-
-    api_sports_key = os.environ.get("API_SPORTS_NFL_KEY")
-    result["api_sports"] = (
-        (httpx.AsyncClient(base_url=_API_SPORTS_NFL_BASE_URL, timeout=30.0), api_sports_key)
-        if api_sports_key
-        else None
-    )
-
-    return result
