@@ -100,8 +100,26 @@ async def _call(
         "latency_ms": latency_ms,
         "error": None,
         "rate_limit_headers": rate_limit_headers,
-        "raw_body": _cap_list_fields(body),
+        # Full, UNCAPPED body -- callers extract IDs (team/game) from this.
+        # `_for_log()` below produces the capped copy actually logged;
+        # capping here would have silently broken ID resolution whenever
+        # the entity we need (e.g. one specific team) doesn't happen to
+        # fall in the first N items of a larger list (this bit Run 1 of
+        # this exact bake-off: the Chiefs weren't in the first 6 of 32
+        # BALLDONTLIE teams, so `kc_id` silently resolved to None and every
+        # supposedly team-scoped call after it ran unscoped instead).
+        "raw_body": body,
     }
+
+
+def _for_log(call: dict[str, Any]) -> dict[str, Any]:
+    """Returns a copy of a `_call()` result safe to JSON-log -- caps
+    `raw_body`'s top-level lists so one oversized response can't blow past
+    a single Railway log line's practical size limit. Never mutates the
+    original (which callers still use, uncapped, for ID extraction)."""
+    logged = dict(call)
+    logged["raw_body"] = _cap_list_fields(call.get("raw_body"))
+    return logged
 
 
 def _cap_list_fields(body: Any, *, max_items: int = 6) -> Any:
@@ -148,8 +166,11 @@ async def run_balldontlie_bakeoff(client: httpx.AsyncClient, api_key: str) -> di
         result = await _call(client, path, headers=headers, params=params)
         result["category"] = category
         result["provider"] = "balldontlie"
-        calls.append(result)
-        await asyncio.sleep(3.0)  # documented free-tier pace: 5 requests/minute
+        calls.append(_for_log(result))
+        # Documented free-tier pace is 5 requests/MINUTE, not /second -- 60/5=12s
+        # is the floor; 14s leaves margin (Run 1 of this exact bake-off used
+        # 3s and got 429'd on calls 6-9 as a direct result).
+        await asyncio.sleep(14.0)
         return result
 
     teams = await step("teams", "/nfl/v1/teams")
@@ -252,6 +273,19 @@ def _asp_first_game_id(body: dict | None) -> int | None:
     return None
 
 
+#: Run 1 of this exact bake-off (2026-09-03) confirmed live that this
+#: key's plan restricts every season-scoped NFL endpoint to 2022-2024
+#: (the current 2026 season and the just-completed 2025 season both
+#: returned `results: 0` with `"errors":{"plan":"Free plans do not have
+#: access to this season, try from 2022 to 2024."}`). Using the latest
+#: `/leagues`-reported "current" season would repeat that same failure on
+#: every subsequent call, so the functional pass below deliberately uses
+#: the newest ALLOWED season instead -- this is what actually exercises
+#: each endpoint's real behavior rather than re-confirming the same
+#: plan-gate finding nine more times.
+_ASP_ALLOWED_SEASON = 2024
+
+
 async def run_api_sports_bakeoff(client: httpx.AsyncClient, api_key: str) -> dict[str, Any]:
     headers = {"x-apisports-key": api_key, "Accept": "application/json"}
     calls: list[dict[str, Any]] = []
@@ -260,15 +294,16 @@ async def run_api_sports_bakeoff(client: httpx.AsyncClient, api_key: str) -> dic
         result = await _call(client, path, headers=headers, params=params)
         result["category"] = category
         result["provider"] = "api_sports"
-        calls.append(result)
+        calls.append(_for_log(result))
         await asyncio.sleep(0.5)
         return result
 
     leagues = await step("leagues_discovery", "/leagues")
-    league_id, season = _asp_find_nfl_league(leagues["raw_body"])
+    league_id, _current_season = _asp_find_nfl_league(leagues["raw_body"])
     used_fallback_league = league_id is None
     if league_id is None:
-        league_id, season = _ASP_DEFAULT_LEAGUE_ID, _ASP_DEFAULT_SEASON
+        league_id = _ASP_DEFAULT_LEAGUE_ID
+    season = _ASP_ALLOWED_SEASON
 
     teams = await step("teams", "/teams", {"league": league_id, "season": season})
     kc_id = _asp_find_team_id(teams["raw_body"], name_contains="Chiefs")
@@ -281,16 +316,18 @@ async def run_api_sports_bakeoff(client: httpx.AsyncClient, api_key: str) -> dic
     )
     game_id = _asp_first_game_id(games["raw_body"])
     await step("games_events_playbyplay", "/games/events", {"id": game_id})
-    await step(
-        "team_statistics",
-        "/teams/statistics",
-        {"league": league_id, "season": season, "team": kc_id},
-    )
+    # Run 1 confirmed "/teams/statistics" is not a real route for this
+    # vertical (its own response echoed back get:"teams" with
+    # errors.endpoint:"This endpoint do not exist."). Trying the
+    # alternate, game-scoped naming this vendor family uses elsewhere
+    # (soccer's own /fixtures/statistics is fixture-scoped, not
+    # team+season-scoped) instead of repeating the same wrong guess.
+    await step("team_statistics", "/games/statistics/teams", {"id": game_id})
     await step("players_statistics", "/players/statistics", {"season": season, "team": kc_id})
     await step(
-        "historical_games",
+        "historical_games_oldest_allowed",
         "/games",
-        {"league": league_id, "season": (season - 5) if season else None, "team": kc_id},
+        {"league": league_id, "season": 2022, "team": kc_id},
     )
 
     return {
@@ -298,6 +335,7 @@ async def run_api_sports_bakeoff(client: httpx.AsyncClient, api_key: str) -> dic
         "resolved_ids": {
             "league_id": league_id,
             "season": season,
+            "current_season_per_leagues_endpoint": _current_season,
             "used_fallback_league_guess": used_fallback_league,
             "kc_team_id": kc_id,
             "sample_game_id": game_id,
