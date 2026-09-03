@@ -1,4 +1,21 @@
-# MANSA Business + Entitlement Planning Package (2026-09-03)
+# MANSA Business + Entitlement Planning Package (2026-09-03, corrected)
+
+**CORRECTION PASS (2026-09-03, same day):** HQ's original checkout for
+MySportsFeeds ("NFL, Commercial, Live w/10-minute delay, CORE+STATS+
+DETAILS") actually completed at **$246 CAD/month after trial** — the
+first version of this document incorrectly treated that cost as
+unknown/unquoted. This revision replaces every MySportsFeeds cost line
+with the real figure, splits break-even into a CASH measure (excludes
+founder labor) and an ECONOMIC measure (includes it, never blended with
+cash), and adds an explicit News Provider Validation Gate rather than
+picking between NewsAPI and GNews unilaterally. **Knowing the price does
+NOT close the MySportsFeeds live-game data-quality gate** — play-by-play
+and box-score completeness are still unvalidated pending the first
+completed 2026 NFL regular-season game, per
+`docs/ops/nfl-provider-decision-record.md`, which this document does not
+alter. Step 3 (entitlements) and Step 4 (billing/metering architecture)
+are carried forward unchanged — the corrected economics did not surface
+a reason to revise either.
 
 **Status: PLANNING ONLY. Nothing in this document has been implemented.**
 No billing code, Stripe integration, entitlement enforcement, usage
@@ -13,14 +30,20 @@ build) a billing/metering architecture.
 `docs/ops/nfl-provider-gap-test-mysportsfeeds-2026-09-03.md`,
 `docs/ops/nfl-provider-decision-record.md`, `PROGRESS.md`'s 2026-08-10
 procurement-checkpoint entries (The Odds API, SportsDataIO, Weather,
-News), `docs/blueprint/volume-1` (business model, pricing copy),
-`volume-2` (Railway/Supabase/Redis/Twilio architecture, §8/§9),
-`volume-4` (agent committee — real implemented count and execution
-model), the `apps/frontend` pricing page (`Core $19.99` / `Pro $34.99` /
-`Elite $69.99`, from Public Web M3), and current published vendor
-pricing pages (WebSearch, since direct vendor-site fetches are blocked
-by this workspace's own egress policy — same constraint documented in
-both provider diagnostic reports).
+News), Mac's own authenticated MySportsFeeds checkout (real, confirmed
+$246 CAD/month figure — see the corrected Step 1 table below),
+`docs/blueprint/volume-1` (business model, pricing copy), `volume-2`
+(Railway/Supabase/Redis/Twilio architecture, §8/§9), `volume-4` (agent
+committee — real implemented count and execution model), the
+`apps/frontend` pricing page (`Core $19.99` / `Pro $34.99` / `Elite
+$69.99`, from Public Web M3), current published vendor pricing pages
+(WebSearch, since direct vendor-site fetches are blocked by this
+workspace's own egress policy — same constraint documented in both
+provider diagnostic reports), and a WebSearch-sourced USD/CAD spot rate
+(tradingeconomics.com, 2026-09-03: 1 USD ≈ 1.3831 CAD, i.e. 1 CAD ≈
+0.7230 USD) used only to fold the confirmed CAD figure into consolidated
+USD totals — the CAD figure itself is the real number, never the
+conversion.
 
 **No missing price was invented anywhere in this document.** Every
 dollar figure below is labeled CONFIRMED, ASSUMPTION, or UNKNOWN — see
@@ -37,10 +60,10 @@ over with a guess.
 | Provider | Role | Cost | Status |
 |---|---|---|---|
 | **BALLDONTLIE** | Primary NFL provider — current-season schedules, rosters, injuries, player/advanced stats | **$39.99/mo** (GOAT tier, 600 req/min, unlocks advanced stats/player props/rosters per the vendor's own published pricing page) | **ASSUMPTION.** The free tier (5 req/min, teams/players/games only) is confirmed to exist and was what the bake-off's own 429s characterized; the live bake-off calls to `player_stats`/`season_stats`/`advanced_stats/passing` never hit a paywall error on the key Mac configured, so it's unconfirmed whether that key is actually on GOAT or whether those specific endpoints are free-tier-inclusive after all. Budgeting the published GOAT price is the conservative planning assumption. |
-| **MySportsFeeds** | Team stats (current season) + lineups, per the 2026-09-03 gap test findings | **UNKNOWN — NEEDS A DIRECT QUOTE.** | MySportsFeeds' own pricing page confirms commercial/real-time tiers are **not publicly published** ("contact sales for exact commercial pricing" — confirmed via their own site, WebSearch 2026-09-03). The 14-day trial's real cost after conversion is unknown. **This is the single largest unresolved cost in this entire plan** — excluded from every "confirmed" total below, covered only by the general contingency reserve, which is not a substitute for a real quote. |
+| **MySportsFeeds** | Team stats (current season) + lineups, per the 2026-09-03 gap test findings | **$246 CAD/month** (NFL, Commercial, Live w/10-minute delay, CORE+STATS+DETAILS — the working cost-direction hypothesis from `nfl-provider-decision-record.md`) ≈ **$178 USD/month** at the labeled approximate FX rate above | **CONFIRMED — Mac's actual authenticated checkout**, no longer an unknown. For contrast (not modeled, not chosen): Near-Realtime CORE+STATS+DETAILS on the same checkout was **$674 CAD/month** (≈$487 USD) — **2.7x the 10-minute-delay tier**, which is exactly the freshness premium the still-open live-game validation gate exists to justify or reject. **Pricing being known does not validate data quality**: play-by-play and box-score completeness/granularity remain UNKNOWN pending the first completed 2026 NFL regular-season game (gate status unchanged by this document — see `docs/ops/nfl-provider-decision-record.md`). Included in every fixed-cost total below at the $246 CAD/≈$178 USD figure. |
 | **The Odds API** | Betting markets (moneyline/spread/totals) | **$59/mo** (100K-credit tier) production, **$30/mo** (20K-credit tier) staging | **CONFIRMED tier pricing** (published, current), against a **Mac-approved usage projection** (~40,944 credits/month production under the adaptive/game-aware cadence, PROGRESS.md 2026-08-10) — not a measured live bill, since Gate B (live odds capture) remains blocked on the missing credential per the Phase 7.0B decision record. Usage-variable in principle (credits scale with regions×markets×calls), but the approved cadence keeps it within one flat tier at current design. |
 | **Weather** (WeatherAPI + OpenWeatherMap) | Existing/planned weather provider | **$0/mo** | **CONFIRMED.** PROGRESS.md's 2026-08-10 procurement review found Weather Worker cost "not driven by cadence at current volume" — free-tier capacity (WeatherAPI: 1M calls/mo) is sufficient. Real finding, not an assumption: reducing polling frequency would not save money here. |
-| **News** (NewsAPI vs. GNews) | Existing/planned news provider | **UNRESOLVED — two confirmed published prices, no decision made.** NewsAPI Business: **$449/mo** (confirmed, required since NewsAPI's free tier is non-commercial by ToS). GNews Essential: **€49.99/mo** (≈$54 USD at a rough conversion — confirmed published price, FX approximate) for 1,000 req/day. | Mac explicitly held back the GNews swap pending a coverage/latency/reliability/licensing comparison (PROGRESS.md 2026-08-10) — **the currently-approved-if-launched-today default is NewsAPI Business ($449/mo)**, since no swap has been approved. This is modeled as the working default below; a GNews approval would cut this line by ~$395/mo. |
+| **News** (NewsAPI vs. GNews) | Existing/planned news provider | **UNRESOLVED — two confirmed published prices, no decision made, NOT auto-selected in this pass either.** NewsAPI Business: **$449/mo** (confirmed, required since NewsAPI's free tier is non-commercial by ToS). GNews Essential: **€49.99/mo** (≈$54 USD at a rough conversion — confirmed published price, FX approximate) for 1,000 req/day. | Mac explicitly held back the GNews swap pending a coverage/latency/reliability/licensing comparison (PROGRESS.md 2026-08-10). Per HQ's explicit instruction this pass, **neither provider is picked here** — both are modeled side-by-side in Step 2 as named scenarios, and a dedicated **News Provider Validation Gate** (new section below Step 2) proposes how to actually decide. NewsAPI remains the current-default assumption only because it's the one already live, not because it was chosen as better. |
 | **SportsDataIO** | Optional premium benchmark, **not a required launch dependency** (per this task's own framing and the provider bake-off/decision record) | **$10,000–$15,000/season** (≈$833–$1,250/month) | **CONFIRMED real quote** (Mac declined this purchase, Volume 4 §1.1's own documented trigger for the multi-source strategy). **Excluded from every base-scenario total below** — modeled only as an optional add-on scenario, since today's task explicitly frames it as optional. |
 
 ### Infrastructure
@@ -106,7 +129,7 @@ shared-execution design already does most of the cost control work.
 
 ---
 
-## STEP 2 — Economic Stress Test
+## STEP 2 — Economic Stress Test (rerun with MySportsFeeds included)
 
 **Prices (given):** Core $19.99, Pro $34.99, Elite $69.99.
 **Base tier mix (given):** 50% Core / 40% Pro / 10% Elite → blended
@@ -116,193 +139,317 @@ shared-execution design already does most of the cost control work.
 report — inputs are all labeled above; this is a spreadsheet-shaped
 estimate, not a measurement):
 
-- **Fixed costs** (confirmed + assumption lines from Step 1, excluding
-  SportsDataIO and the unknown MySportsFeeds line): The Odds API $59 +
-  Weather $0 + BALLDONTLIE $39.99 + NewsAPI $449 + Railway $150 +
-  Supabase $50 + Redis $15 + AI shared-committee $15 = **$778/month**.
-- **Variable costs** scale with subscriber count: AI personalization,
-  a small sports-data usage-variable buffer, Railway/Supabase
+- **Fixed costs** now include MySportsFeeds at $246 CAD/mo (≈$178 USD).
+  With **NewsAPI** ($449/mo): The Odds API $59 + Weather $0 +
+  MySportsFeeds ≈$178 + BALLDONTLIE $39.99 + Railway $150 + Supabase $50
+  + Redis $15 + AI shared-committee $15 + NewsAPI $449 = **≈$956/month**.
+  With **GNews** (≈$54/mo) instead: **≈$561/month** — a **$395/month
+  delta**, unchanged from the first pass, since only the News line
+  moves.
+- **Variable costs** scale with subscriber count: AI personalization, a
+  small sports-data usage-variable buffer, Railway/Supabase
   usage-variable growth, Stripe processing (2.9% + $0.30/user), and a
-  nominal transactional-email cost.
-- **Founder labor**: hours × $75/hr shadow rate.
+  nominal transactional-email cost. Unchanged from the first pass.
+- **Founder labor**: hours × $75/hr shadow rate — **now reported
+  separately as its own line, never folded into a single "OpEx"
+  number**, per HQ's explicit instruction not to mix cash and economic
+  concepts.
 - **Contingency**: 10% of (fixed + variable) in every scenario except
-  the combined worst case (15%, given more is going wrong at once).
+  the combined worst case (15%).
+- **Cash OpEx** = fixed + variable + contingency. **Economic OpEx** =
+  Cash OpEx + founder labor. Every table below reports **both margins
+  side by side** — they answer two different questions and are never
+  blended into one figure.
 
-### Base scenario
+### Base scenario — NewsAPI (current default)
 
-| Users | MRR | Fixed | Variable | Founder Labor | Contingency | **Total OpEx** | **Gross Profit** | **Gross Margin** |
-|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 100 | $3,099 | $778 | $177 | $5,250 | $95 | **$6,300** | **-$3,201** | **-103.3%** |
-| 250 | $7,748 | $778 | $442 | $5,250 | $122 | **$6,592** | **$1,155** | **14.9%** |
-| 500 | $15,495 | $778 | $884 | $5,250 | $166 | **$7,079** | **$8,416** | **54.3%** |
-| 1,000 | $30,990 | $778 | $1,769 | $5,250 | $255 | **$8,051** | **$22,939** | **74.0%** |
-| 5,000 | $154,950 | $778 | $8,844 | $5,250 | $962 | **$15,834** | **$139,116** | **89.8%** |
+| Users | MRR | Fixed | Variable | Conting. | **Cash OpEx** | **Cash Margin** | Founder Labor | **Economic OpEx** | **Economic Margin** |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 100 | $3,099 | $956 | $177 | $113 | **$1,246** | **59.8%** | $5,250 | **$6,496** | **-109.6%** |
+| 250 | $7,748 | $956 | $442 | $140 | **$1,538** | **80.2%** | $5,250 | **$6,788** | **12.4%** |
+| 500 | $15,495 | $956 | $884 | $184 | **$2,024** | **86.9%** | $5,250 | **$7,274** | **53.1%** |
+| 1,000 | $30,990 | $956 | $1,769 | $272 | **$2,997** | **90.3%** | $5,250 | **$8,247** | **73.4%** |
+| 5,000 | $154,950 | $956 | $8,844 | $980 | **$10,779** | **93.0%** | $5,250 | **$16,029** | **89.7%** |
 
-(70 hrs/month founder labor assumed for this row; see the two dedicated
-founder-labor rows below for the 60hr/80hr range.)
+### Base scenario — GNews (challenger, not selected)
 
-### Stress scenarios (each shown at all 5 user counts; founder labor
-held at 70 hrs/month except the two dedicated labor rows)
+| Users | MRR | Fixed | Variable | Conting. | **Cash OpEx** | **Cash Margin** | Founder Labor | **Economic OpEx** | **Economic Margin** |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 100 | $3,099 | $561 | $177 | $74 | **$812** | **73.8%** | $5,250 | **$6,062** | **-95.6%** |
+| 250 | $7,748 | $561 | $442 | $100 | **$1,104** | **85.8%** | $5,250 | **$6,354** | **18.0%** |
+| 500 | $15,495 | $561 | $884 | $145 | **$1,590** | **89.7%** | $5,250 | **$6,840** | **55.9%** |
+| 1,000 | $30,990 | $561 | $1,769 | $233 | **$2,563** | **91.7%** | $5,250 | **$7,813** | **74.8%** |
+| 5,000 | $154,950 | $561 | $8,844 | $940 | **$10,345** | **93.3%** | $5,250 | **$15,595** | **89.9%** |
 
-**AI cost 3x** (personalization unit costs tripled):
+(70 hrs/month founder labor for both tables above; see the two
+dedicated founder-labor rows below for the 60hr/80hr range. All
+remaining stress scenarios below use NewsAPI as the pessimistic/current
+default, except where a scenario is explicitly about the News choice
+itself.)
 
-| Users | MRR | Total OpEx | Gross Profit | Gross Margin |
-|---:|---:|---:|---:|---:|
-| 100 | $3,099 | $6,340 | -$3,241 | -104.6% |
-| 250 | $7,748 | $6,691 | $1,056 | 13.6% |
-| 500 | $15,495 | $7,277 | $8,218 | 53.0% |
-| 1,000 | $30,990 | $8,447 | $22,543 | 72.7% |
-| 5,000 | $154,950 | $17,814 | $137,136 | 88.5% |
+### Stress scenarios (all 5 user counts; NewsAPI, founder labor 70
+hrs/month except the two dedicated labor rows; MySportsFeeds included in
+every fixed-cost figure)
 
-**Sports-data cost 2x** (both the flat BALLDONTLIE/Odds-API tiers and
-the usage-variable buffer doubled):
+**AI cost 3x:**
 
-| Users | MRR | Total OpEx | Gross Profit | Gross Margin |
-|---:|---:|---:|---:|---:|
-| 100 | $3,099 | $6,403 | -$3,304 | -106.6% |
-| 250 | $7,748 | $6,699 | $1,048 | 13.5% |
-| 500 | $15,495 | $7,194 | $8,301 | 53.6% |
-| 1,000 | $30,990 | $8,183 | $22,807 | 73.6% |
-| 5,000 | $154,950 | $16,098 | $138,852 | 89.6% |
+| Users | MRR | Cash OpEx | Cash Margin | Economic OpEx | Economic Margin |
+|---:|---:|---:|---:|---:|---:|
+| 100 | $3,099 | $1,286 | 58.5% | $6,536 | -110.9% |
+| 250 | $7,748 | $1,637 | 78.9% | $6,887 | 11.1% |
+| 500 | $15,495 | $2,222 | 85.7% | $7,472 | 51.8% |
+| 1,000 | $30,990 | $3,393 | 89.1% | $8,643 | 72.1% |
+| 5,000 | $154,950 | $12,759 | 91.8% | $18,009 | 88.4% |
+
+**Sports-data cost 2x** (Odds API + BALLDONTLIE + MySportsFeeds flat
+tiers all doubled, plus the usage-variable buffer):
+
+| Users | MRR | Cash OpEx | Cash Margin | Economic OpEx | Economic Margin |
+|---:|---:|---:|---:|---:|---:|
+| 100 | $3,099 | $1,526 | 50.8% | $6,776 | -118.7% |
+| 250 | $7,748 | $1,823 | 76.5% | $7,073 | 8.7% |
+| 500 | $15,495 | $2,318 | 85.0% | $7,568 | 51.2% |
+| 1,000 | $30,990 | $3,307 | 89.3% | $8,557 | 72.4% |
+| 5,000 | $154,950 | $11,221 | 92.8% | $16,471 | 89.4% |
 
 **Infrastructure 2x** (Railway/Supabase/Redis flat tiers and
 usage-variable rate both doubled):
 
-| Users | MRR | Total OpEx | Gross Profit | Gross Margin |
-|---:|---:|---:|---:|---:|
-| 100 | $3,099 | $6,554 | -$3,455 | -111.5% |
-| 250 | $7,748 | $6,903 | $844 | 10.9% |
-| 500 | $15,495 | $7,486 | $8,009 | 51.7% |
-| 1,000 | $30,990 | $8,651 | $22,339 | 72.1% |
-| 5,000 | $154,950 | $17,974 | $136,976 | 88.4% |
+| Users | MRR | Cash OpEx | Cash Margin | Economic OpEx | Economic Margin |
+|---:|---:|---:|---:|---:|---:|
+| 100 | $3,099 | $1,499 | 51.6% | $6,749 | -117.8% |
+| 250 | $7,748 | $1,849 | 76.1% | $7,099 | 8.4% |
+| 500 | $15,495 | $2,432 | 84.3% | $7,682 | 50.4% |
+| 1,000 | $30,990 | $3,597 | 88.4% | $8,847 | 71.5% |
+| 5,000 | $154,950 | $12,919 | 91.7% | $18,169 | 88.3% |
 
 **10% power users at 10x personalized compute:**
 
-| Users | MRR | Total OpEx | Gross Profit | Gross Margin |
-|---:|---:|---:|---:|---:|
-| 100 | $3,099 | $6,329 | -$3,230 | -104.2% |
-| 250 | $7,748 | $6,664 | $1,084 | 14.0% |
-| 500 | $15,495 | $7,222 | $8,273 | 53.4% |
-| 1,000 | $30,990 | $8,337 | $22,653 | 73.1% |
-| 5,000 | $154,950 | $17,264 | $137,686 | 88.9% |
+| Users | MRR | Cash OpEx | Cash Margin | Economic OpEx | Economic Margin |
+|---:|---:|---:|---:|---:|---:|
+| 100 | $3,099 | $1,275 | 58.9% | $6,525 | -110.5% |
+| 250 | $7,748 | $1,609 | 79.2% | $6,859 | 11.5% |
+| 500 | $15,495 | $2,167 | 86.0% | $7,417 | 52.1% |
+| 1,000 | $30,990 | $3,283 | 89.4% | $8,533 | 72.5% |
+| 5,000 | $154,950 | $12,209 | 92.1% | $17,459 | 88.7% |
 
 **Bad tier mix (70% Core / 25% Pro / 5% Elite — ARPU drops to $26.24):**
 
-| Users | MRR | Total OpEx | Gross Profit | Gross Margin |
-|---:|---:|---:|---:|---:|
-| 100 | $2,624 | $6,277 | -$3,653 | -139.2% |
-| 250 | $6,560 | $6,533 | $27 | 0.4% |
-| 500 | $13,120 | $6,960 | $6,160 | 46.9% |
-| 1,000 | $26,240 | $7,815 | $18,425 | 70.2% |
-| 5,000 | $131,200 | $14,653 | $116,547 | 88.8% |
+| Users | MRR | Cash OpEx | Cash Margin | Economic OpEx | Economic Margin |
+|---:|---:|---:|---:|---:|---:|
+| 100 | $2,624 | $1,222 | 53.4% | $6,472 | -146.7% |
+| 250 | $6,560 | $1,479 | 77.5% | $6,729 | -2.6% |
+| 500 | $13,120 | $1,906 | 85.5% | $7,156 | 45.5% |
+| 1,000 | $26,240 | $2,761 | 89.5% | $8,011 | 69.5% |
+| 5,000 | $131,200 | $9,598 | 92.7% | $14,848 | 88.7% |
 
 **Founder labor 60 hrs/month:**
 
-| Users | MRR | Total OpEx | Gross Profit | Gross Margin |
-|---:|---:|---:|---:|---:|
-| 100 | $3,099 | $5,550 | -$2,451 | -79.1% |
-| 250 | $7,748 | $5,842 | $1,905 | 24.6% |
-| 500 | $15,495 | $6,329 | $9,166 | 59.2% |
-| 1,000 | $30,990 | $7,301 | $23,689 | 76.4% |
-| 5,000 | $154,950 | $15,084 | $139,866 | 90.3% |
+| Users | MRR | Cash OpEx | Cash Margin | Economic OpEx | Economic Margin |
+|---:|---:|---:|---:|---:|---:|
+| 100 | $3,099 | $1,246 | 59.8% | $5,746 | -85.4% |
+| 250 | $7,748 | $1,538 | 80.2% | $6,038 | 22.1% |
+| 500 | $15,495 | $2,024 | 86.9% | $6,524 | 57.9% |
+| 1,000 | $30,990 | $2,997 | 90.3% | $7,497 | 75.8% |
+| 5,000 | $154,950 | $10,779 | 93.0% | $15,279 | 90.1% |
 
 **Founder labor 80 hrs/month:**
 
-| Users | MRR | Total OpEx | Gross Profit | Gross Margin |
-|---:|---:|---:|---:|---:|
-| 100 | $3,099 | $7,050 | -$3,951 | -127.5% |
-| 250 | $7,748 | $7,342 | $405 | 5.2% |
-| 500 | $15,495 | $7,829 | $7,666 | 49.5% |
-| 1,000 | $30,990 | $8,801 | $22,189 | 71.6% |
-| 5,000 | $154,950 | $16,584 | $138,366 | 89.3% |
+| Users | MRR | Cash OpEx | Cash Margin | Economic OpEx | Economic Margin |
+|---:|---:|---:|---:|---:|---:|
+| 100 | $3,099 | $1,246 | 59.8% | $7,246 | -133.8% |
+| 250 | $7,748 | $1,538 | 80.2% | $7,538 | 2.7% |
+| 500 | $15,495 | $2,024 | 86.9% | $8,024 | 48.2% |
+| 1,000 | $30,990 | $2,997 | 90.3% | $8,997 | 71.0% |
+| 5,000 | $154,950 | $10,779 | 93.0% | $16,779 | 89.2% |
 
 **Combined worst case** (bad tier mix + AI 3x + sports-data 2x + infra
-2x + 10% power users at 10x + founder labor 80hr + 15% contingency —
-everything going wrong at once):
+2x + 10% power users at 10x + founder labor 80hr + 15% contingency,
+NewsAPI — everything going wrong at once):
 
-| Users | MRR | Total OpEx | Gross Profit | Gross Margin |
-|---:|---:|---:|---:|---:|
-| 100 | $2,624 | $7,544 | **-$4,920** | **-187.5%** |
-| 250 | $6,560 | $8,048 | **-$1,488** | **-22.7%** |
-| 500 | $13,120 | $8,888 | $4,232 | 32.3% |
-| 1,000 | $26,240 | $10,567 | $15,673 | 59.7% |
-| 5,000 | $131,200 | $23,998 | $107,202 | 81.7% |
+| Users | MRR | Cash OpEx | Cash Margin | Economic OpEx | Economic Margin |
+|---:|---:|---:|---:|---:|---:|
+| 100 | $2,624 | $1,927 | 26.6% | **$7,927** | **-202.1%** |
+| 250 | $6,560 | $2,431 | 62.9% | **$8,431** | **-28.5%** |
+| 500 | $13,120 | $3,270 | 75.1% | $9,270 | 29.3% |
+| 1,000 | $26,240 | $4,949 | 81.1% | $10,949 | 58.3% |
+| 5,000 | $131,200 | $18,381 | 86.0% | $24,381 | 81.4% |
 
-### Break-even subscriber count
+### Break-even subscriber count — reported as TWO separate measures
 
-- **Base scenario: ~211 paying subscribers.**
-- **Combined worst case: ~316 paying subscribers.**
+**A. CASH break-even** (fixed + variable + contingency only, founder
+labor excluded — "how many subscribers before MANSA's actual cash
+outlays are covered"):
 
-Both are modest numbers relative to the 5,000-user ceiling this model
-was asked to test — the real risk this model surfaces is not "can MANSA
-ever be profitable," it's **"can MANSA survive the first ~200-300
-subscribers,"** where every scenario (including Base) shows a loss at
-100 users and only a thin margin at 250.
+- **Base, NewsAPI: 37 paying subscribers** (MRR $1,147 vs. Cash OpEx
+  $1,123).
+- **Base, GNews: 22 paying subscribers** (MRR $682 vs. Cash OpEx $660).
+- **Combined worst case: 70 paying subscribers** (MRR $1,837 vs. Cash
+  OpEx $1,826).
 
-### Which costs actually matter most
+**B. ECONOMIC break-even** (fixed + variable + contingency + founder
+labor at the $75/hr shadow rate — "how many subscribers before MANSA
+covers its cash costs AND the economic value of Mac's own time"):
+
+- **Base, NewsAPI: 217 paying subscribers** (MRR $6,725 vs. Economic
+  OpEx $6,724).
+- **Base, GNews: 203 paying subscribers** (MRR $6,291 vs. Economic OpEx
+  $6,262).
+- **Combined worst case: 332 paying subscribers** (MRR $8,712 vs.
+  Economic OpEx $8,706).
+
+**These are not interchangeable and should never be quoted without
+saying which one is meant.** Cash break-even (22-70 subscribers) is the
+real survival floor — the point below which MANSA is literally losing
+cash, not just "not paying Mac." Economic break-even (203-332
+subscribers) is the point at which the business would be sound even if
+Mac's time carried a real market cost. The gap between them — roughly
+180-260 subscribers — **is the size of the founder-labor subsidy this
+business currently runs on.**
+
+### Which costs actually matter most (rerun with MySportsFeeds included)
 
 In order of real leverage over the outcome:
 
-1. **Founder labor is the largest single line in every early-stage
-   scenario** — at 100-250 users, it dwarfs every provider cost
-   combined ($5,250-$6,000/month vs. $778/month of confirmed+assumed
-   fixed provider costs). This is a real, not-hypothetical finding:
-   **the business's early economics are dominated by the value of
-   Mac's own time, not by vendor bills.** Every stress scenario that
-   moves fixed/variable provider costs (AI 3x, sports-data 2x, infra
-   2x) changes gross margin by only a few percentage points; the two
-   founder-labor rows (60hr vs. 80hr) move it by 15-50 points at low
-   user counts.
-2. **Tier mix matters more than any single provider cost.** The bad-mix
-   scenario alone turns the 250-user break-even-adjacent row from
-   +14.9% margin to +0.4% — a bigger swing than AI/sports-data/infra
-   2-3x each produced individually.
-3. **MySportsFeeds' unquoted cost is the largest *unknown* risk in this
-   entire model.** None of the scenarios above include it. If its real
-   commercial price turns out to be materially above the ~10% general
-   contingency reserve's headroom (~$78-$1,600/month depending on
-   scale), every margin figure above needs to be revised downward.
-4. **Provider/infra cost multipliers (AI 3x, sports-data 2x, infra 2x)
-   individually move gross margin by only 1-3 percentage points at
-   every user count** — the shared-execution AI architecture and the
-   already-confirmed cheap/free tiers for Weather and (at current
-   volume) sports data mean these lines were never large enough to be
-   the dominant risk, even tripled/doubled.
-5. **The News provider decision (NewsAPI $449 vs. GNews ~$54) is a
-   real, already-identified $395/month lever** sitting unresolved in
-   the backlog — closing it is cheap to do and meaningfully improves
-   the fixed-cost base at every user count below ~1,000.
+1. **Founder labor is still the largest single line at low subscriber
+   counts**, and now the single clearest way to see this is the cash-
+   vs-economic break-even gap itself: cash break-even is ~22-70
+   subscribers; economic break-even is ~203-332. That ~180-260-
+   subscriber gap **is** the founder-labor effect, made concrete instead
+   of implied by a blended margin number the way the first pass showed
+   it.
+2. **MySportsFeeds is now a confirmed, material fixed cost — ≈$178
+   USD/month — not the open-ended unknown the first pass flagged.**
+   Resolving it didn't blow up the model (it moves cash break-even by
+   roughly 6-9 subscribers relative to a hypothetical $0 line), but it
+   is now the second-largest single confirmed fixed-cost line after
+   News, and it is **denominated in CAD** — a real, ongoing FX exposure
+   this plan did not previously carry. **This is a new, genuine risk
+   this pass surfaces**: if CAD strengthens against USD, this line gets
+   more expensive in USD terms with no product change to show for it.
+3. **The News provider decision is now the single largest remaining
+   discretionary lever in the whole model — $395/month, larger than
+   MySportsFeeds itself.** GNews cuts cash break-even from 37 to 22
+   subscribers (a >40% reduction) and economic break-even from 217 to
+   203. See the new News Provider Validation Gate below — this is cheap
+   to resolve and meaningfully changes both break-even numbers.
+4. **Tier mix still matters more than any individual provider cost
+   multiplier.** The bad-mix scenario alone turns the 250-user cash
+   margin from 80.2% to 77.5% and the economic margin from +12.4% to
+   -2.6% — a bigger swing at that user count than AI/sports-data/infra
+   2-3x individually produce.
+5. **Provider/infra cost multipliers (AI 3x, sports-data 2x, infra 2x)
+   individually still move margin by only a few percentage points** at
+   every user count — unchanged finding from the first pass; the
+   shared-execution AI architecture and already-confirmed cheap/free
+   Weather tier keep these from being the dominant risk even
+   tripled/doubled.
 
 ### Major economic risks (do not present as certainties)
 
-- **Founder-labor dependency**: the model above treats Mac's time as a
-  cost, but if it's read as "cash profit" instead, the business looks
-  far healthier than it would be if that labor ever needed to be
-  replaced with paid hires at real market rates (likely well above the
-  $75/hr shadow rate used here for anything beyond routine ops).
-- **MySportsFeeds pricing is a live unknown** with no upper bound
-  established — this plan cannot rule out it being large enough to
-  materially change the picture at any user count.
+- **Founder-labor dependency**: unchanged from the first pass — the
+  cash/economic split above makes this concrete rather than
+  hypothetical. If that labor is ever priced at a real market rate
+  (likely well above the $75/hr shadow rate), the true economic
+  break-even could be materially higher than 203-332.
+- **MySportsFeeds is now a confirmed cost, but carries a new FX risk**
+  the first pass didn't have — a CAD-denominated recurring line whose
+  USD cost moves with the exchange rate, not with anything MANSA
+  controls.
+- **MySportsFeeds' data-quality gate is still open** — this document
+  only resolves *price*; play-by-play/box-score completeness remain
+  unvalidated pending the first completed 2026 game
+  (`nfl-provider-decision-record.md`, unchanged by this pass). A poor
+  validation result could mean the $246 CAD/mo spend doesn't actually
+  close the gaps it was budgeted for, independent of cost.
+- **News provider choice remains unresolved** and is now the largest
+  discretionary lever in the model (larger than MySportsFeeds) — see
+  the new validation gate below.
 - **Railway/Supabase actual current bills were not verified** from this
-  session — both are ASSUMPTIONS. If real current spend is
-  meaningfully higher, every fixed-cost line shifts.
+  session — both are ASSUMPTIONS. If real current spend is meaningfully
+  higher, every fixed-cost line shifts.
 - **The Odds API's approved projection is a *cadence design* number,
   not a measured bill** — Gate B (live capture) is still blocked on a
   missing credential per the Phase 7.0B decision record, so real
   production credit consumption has never actually been observed.
-- **Payment processor is unchosen.** Stripe's standard rate was used
-  as a placeholder; a real negotiated rate, a different processor, or
+- **Payment processor is unchosen.** Stripe's standard rate was used as
+  a placeholder; a real negotiated rate, a different processor, or
   MANSA's actual transaction pattern (annual billing, refunds, failed
   payments) could shift this materially.
 - **Conversational MANSA/Telegram usage cost is entirely unmodeled**
   because it isn't built yet — launching it without first estimating
   its incremental AI/infra cost would be flying blind on exactly the
-  kind of "personalized compute" this whole planning sequence exists
-  to control.
+  kind of "personalized compute" this whole planning sequence exists to
+  control.
+
+---
+
+## News Provider Validation Gate (new — not run yet)
+
+**Do not select NewsAPI or GNews from this document.** $395/month is a
+real, material swing in both break-even measures above, but price alone
+is not a sufficient basis to choose — the first bake-off's own lesson
+(a cheaper/better-looking provider can be gated, restricted, or
+qualitatively worse in ways a price comparison never surfaces) applies
+here too.
+
+**Proposed gate, mirroring the same diagnostic discipline as the NFL
+provider bake-offs above** — small, controlled, DEV-only, no
+subscription committed until the comparison is in hand:
+
+Compare GNews vs. NewsAPI specifically for **NFL-relevant** content
+(not general news volume) across:
+
+1. **Breaking injury news** — speed and specificity (a real designation
+   change vs. vague "questionable" boilerplate).
+2. **Trades** — coverage completeness and how fast a trade appears
+   after being reported.
+3. **Suspensions** — same two dimensions.
+4. **Roster/lineup news** — depth-chart-relevant coverage, not just
+   headline-level roster moves.
+5. **Coaching news** — hires/fires/scheme changes that can matter to
+   game-level analysis.
+6. **Latency** — real wall-clock time from event to article availability
+   via each API.
+7. **Source coverage** — which outlets each provider actually indexes
+   for NFL content (beat reporters vs. wire-only).
+8. **Duplicates/noise** — how much of each provider's NFL feed is
+   redundant re-reporting of the same story vs. genuinely new
+   information.
+9. **Reliability** — uptime/error-rate behavior observed during the
+   test window.
+10. **Commercial rights** — confirm GNews Essential's license actually
+    covers MANSA's intended commercial use the same way NewsAPI
+    Business's does (NewsAPI's free tier's non-commercial restriction
+    was already the reason Business is the current default — GNews's
+    equivalent terms haven't been read closely yet).
+11. **API ergonomics** — request shape, rate limits, pagination,
+    response schema quality, ease of adapter integration.
+
+**Recommendation: yes, run the GNews 10-day trial** before making a
+production choice. It is the only way to get real signal on items 1-9
+and 11 above — none of them are resolvable from a pricing page — and a
+10-day trial is cheap and time-boxed relative to a $395/month decision
+that will recur for the life of the product. NewsAPI Business should be
+left running unchanged during the trial (no reason to interrupt a live
+default while evaluating a challenger). This gate should follow the
+same "temporary probe, then report, no code left behind" discipline as
+the NFL provider bake-offs, adapted for a REST news API rather than a
+sports-data API — not run as part of this planning pass, since HQ's
+explicit scope for today was planning only.
 
 ---
 
 ## STEP 3 — Tier Entitlements (proposed, not implemented)
+
+**Carried forward unchanged from the first pass.** The corrected
+economics (MySportsFeeds now a confirmed, moderate fixed cost rather
+than an open-ended unknown; the News decision now the largest
+discretionary lever) did not surface a reason to revise the matrix
+below — MySportsFeeds funds the same **Market Intelligence** row's
+"still-open provider question" rationale already noted there, now with
+a real price attached rather than an unknown one, which strengthens
+that row's existing reasoning rather than changing it.
 
 **Principle applied throughout:** cheaper tiers are not made artificially
 weak — every tier gets the real product (real markets, real
@@ -472,11 +619,19 @@ to preserve correctly:
 
 ## Unresolved decisions (need Mac's input before implementation)
 
-1. **MySportsFeeds real commercial pricing** — needs a direct quote;
-   the single biggest unbounded cost risk in this plan.
-2. **News provider**: NewsAPI Business ($449/mo, current default) vs.
-   GNews Essential (~$54/mo) — a real, already-identified $395/month
-   lever sitting unresolved since 2026-08-10.
+1. **News provider**: NewsAPI Business ($449/mo, current default) vs.
+   GNews Essential (~$54/mo) — now the **largest discretionary cost
+   lever in the model** ($395/month, larger than MySportsFeeds). The
+   new News Provider Validation Gate above recommends running the
+   GNews 10-day trial before deciding — not resolved in this pass.
+2. **MySportsFeeds live-game data-quality validation** — **pricing is
+   now resolved** ($246 CAD/mo, confirmed), but the gate covering
+   play-by-play/box-score completeness, correction semantics, and
+   whether Near-Realtime is actually needed remains **🔴 BLOCKED**
+   pending the first completed 2026 NFL regular-season game, per
+   `docs/ops/nfl-provider-decision-record.md` (unchanged by this
+   document). A poor validation result would mean the confirmed $246
+   CAD/mo doesn't close the gaps it's budgeted for, independent of cost.
 3. **Payment processor** — Stripe assumed for planning only; never
    actually chosen.
 4. **Real current Railway/Supabase bills** — both modeled as
@@ -485,15 +640,19 @@ to preserve correctly:
 5. **Redis hosting choice and quote** — not yet provisioned; Upstash vs.
    Railway's own add-on vs. another option, no pricing obtained.
 6. **Founder-labor shadow rate** — $75/hr was chosen for this exercise
-   only; Mac may want a different number, or to model it differently
-   entirely (e.g., excluded from gross margin, shown as a separate line).
+   only; Mac may want a different number. The cash-vs-economic
+   break-even split in Step 2 now makes exactly how much this choice
+   matters explicit (it's the entire ~180-260-subscriber gap between
+   the two break-even measures) — a different rate would move the
+   economic break-even number directly, without touching the cash one.
 7. **Conversational MANSA/Telegram real unit economics** — entirely
    unmodeled here because the feature isn't built; needs its own costing
    pass before launch, using real token/interaction assumptions once
    there's a prototype to measure against.
-8. **Whether/when to pursue a MySportsFeeds plan (or API-SPORTS upgrade)
-   at all**, pending the still-open 2026-09-09+ live-game validation
-   gate recorded in the provider decision record.
+8. **MySportsFeeds CAD/USD FX exposure** — new this pass. The plan now
+   carries a real, ongoing currency risk on one recurring line; whether
+   to hedge, pay in CAD directly, or simply monitor is Mac's call, not
+   resolved here.
 9. **SportsDataIO's role, if any** — this plan treats it as fully
    optional per today's task framing; if a future gap can *only* be
    closed by SportsDataIO, its $833-$1,250/month confirmed cost would
@@ -507,14 +666,20 @@ to preserve correctly:
 **Do not build billing/metering yet.** The recommended next step is
 narrower and cheaper than full implementation:
 
-1. **Close the two cheap, already-identified unresolved decisions first**
-   (News provider swap decision; a real MySportsFeeds quote) — both are
-   phone calls/support tickets, not engineering work, and both directly
-   change the numbers in this plan.
+1. **Run the News Provider Validation Gate** (GNews 10-day trial vs.
+   NewsAPI) — this is now the single cheapest, highest-leverage decision
+   left in the model ($395/month, moves cash break-even by >40%).
+   MySportsFeeds pricing is resolved this pass, so News is now the
+   clearer of the two "close this first" items the first pass named.
 2. **Verify the two "unknown actual bill" assumptions** (Railway,
    Supabase) against real billing pages, so the fixed-cost base in Step
    2 stops resting on placeholders.
-3. **Only after 1-2**, if Mac authorizes proceeding: build the
+3. **Do not act on the MySportsFeeds cost hypothesis** (i.e. don't
+   change the subscription tier, even though the 10-minute-delay price
+   is now confirmed) **until the live-game data-quality gate clears** —
+   this document only removed the pricing unknown, not the quality
+   unknown; see `docs/ops/nfl-provider-decision-record.md`.
+4. **Only after 1-3**, if Mac authorizes proceeding: build the
    `usage_events` ledger and `EntitlementResolver` skeleton *first*,
    wired to log real shared-vs-personalized executions from the
    already-running Recommendation Worker cycle, with **zero enforcement
@@ -532,10 +697,15 @@ narrower and cheaper than full implementation:
 ## Appendix: full scenario computation
 
 The complete Python model used to produce every table above (all input
-assumptions inline, labeled, and adjustable) is preserved for
-inspection and re-runs as new real data (a MySportsFeeds quote, a
-verified Railway bill, real `usage_events` telemetry) becomes available:
-`/tmp` scratch location used during this session — not committed to the
-repository, since it's a planning tool, not application code. Reproduce
-by re-running the same input table against updated confirmed figures
-whenever a Step 1 "ASSUMPTION"/"UNKNOWN" line gets a real answer.
+assumptions inline, labeled, and adjustable — including the CAD-native
+MySportsFeeds figure, the labeled FX conversion, the cash/economic
+break-even split, and the two named News scenarios) is preserved for
+inspection and re-runs as new real data (a News Provider Validation Gate
+result, a verified Railway/Supabase bill, real `usage_events`
+telemetry, or a MySportsFeeds live-game validation outcome) becomes
+available: `/tmp` scratch location used during this session (`model.py`
+= first pass, `model_v2.py` = this correction pass) — not committed to
+the repository, since it's a planning tool, not application code.
+Reproduce by re-running the same input table against updated confirmed
+figures whenever a Step 1 "ASSUMPTION"/"UNKNOWN" line gets a real
+answer.
