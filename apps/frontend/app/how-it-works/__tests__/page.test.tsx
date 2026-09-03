@@ -43,13 +43,18 @@ describe("HowItWorksPage (Public Web M2)", () => {
     expect(screen.getByText(/never a failure to find a recommendation/i)).toBeInTheDocument();
   });
 
-  it("never mentions unsupported/unfinished capabilities", async () => {
+  it("never claims sharp money or a guarantee, and only mentions parlays as an explicit 'coming at launch' note, never as a live capability", async () => {
     render(await HowItWorksPage());
     const text = document.body.textContent ?? "";
-    expect(text).not.toMatch(/parlay/i);
-    expect(text).not.toMatch(/telegram/i);
     expect(text).not.toMatch(/sharp money/i);
     expect(text).not.toMatch(/guarantee/i);
+    expect(text).not.toMatch(/telegram/i);
+    expect(text).toMatch(/intelligent parlays are coming at launch/i);
+  });
+
+  it("the real Decision step names the actual markets -- moneyline, spread, total -- never 'picking a winning team'", async () => {
+    render(await HowItWorksPage());
+    expect(screen.getByText(/moneyline, spread, or total/i)).toBeInTheDocument();
   });
 
   it("Web M1 routing correction: signed-out CTA is Create Account", async () => {

@@ -38,14 +38,43 @@ describe("FeaturesPage (Public Web M2)", () => {
     expect(screen.queryByText(/coming soon/i)).not.toBeInTheDocument();
   });
 
-  it("never advertises unfinished Phase 7, parlays, Telegram, bet verification, or sharp money", async () => {
+  it("never advertises unfinished Phase 7, bet verification, or sharp money -- those stay fully excluded even under M2.2", async () => {
     render(await FeaturesPage());
     const text = document.body.textContent ?? "";
-    expect(text).not.toMatch(/parlay/i);
-    expect(text).not.toMatch(/telegram/i);
     expect(text).not.toMatch(/sharp money/i);
     expect(text).not.toMatch(/bet verification/i);
     expect(text).not.toMatch(/anomaly/i);
+  });
+
+  it("Public Web M2.2: parlays and Telegram appear only inside the clearly-marked 'Coming at Launch' section, each with a Preview badge -- never presented as live today", async () => {
+    render(await FeaturesPage());
+    expect(screen.getByText("Coming at Launch")).toBeInTheDocument();
+    expect(screen.getByText("The Full MANSA Vision")).toBeInTheDocument();
+    expect(screen.getByText("Intelligent Parlays")).toBeInTheDocument();
+    expect(screen.getByText("Conversational MANSA & Telegram")).toBeInTheDocument();
+    // Every "Preview"-family badge actually rendered -- two feature tiles
+    // plus the conversation visual's own parlay-result badge.
+    const previewBadges = screen.getAllByText(/^Preview/);
+    expect(previewBadges.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it("Public Web M2.2: the real 'today' feature list is unchanged from M2 -- still no parlay/Telegram claim mixed into it", async () => {
+    render(await FeaturesPage());
+    for (const feature of REQUIRED_FEATURES) {
+      expect(screen.getByText(feature)).toBeInTheDocument();
+    }
+  });
+
+  it("Public Web M2.2: clarifies MANSA evaluates real markets, never just picks a winning team", async () => {
+    render(await FeaturesPage());
+    expect(screen.getByText(/moneyline, spread, and total markets/i)).toBeInTheDocument();
+  });
+
+  it("Public Web M2.2: shows the mandatory conversation preview, clearly non-interactive", async () => {
+    render(await FeaturesPage());
+    expect(
+      screen.getByRole("img", { name: /MANSA Telegram conversation/i }),
+    ).toBeInTheDocument();
   });
 
   it("never claims a derived win rate, ROI, or units figure -- Track Record only shows the real graded-sample breakdown", async () => {

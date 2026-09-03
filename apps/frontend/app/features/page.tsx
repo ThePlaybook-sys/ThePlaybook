@@ -4,17 +4,27 @@ import { PublicNav } from "@/components/marketing/PublicNav";
 import { PublicFooter } from "@/components/marketing/PublicFooter";
 import { ScrollReveal } from "@/components/marketing/ScrollReveal";
 import { IllustrativeDecisionCard } from "@/components/marketing/IllustrativeDecisionCard";
+import { ConversationalPreview } from "@/components/marketing/ConversationalPreview";
+import { PreviewBadge } from "@/components/marketing/PreviewBadge";
 import { MARKETING_BODY_CLASS } from "@/components/marketing/typography";
 import { getCurrentUser } from "@/app/lib/auth";
 
 export const metadata = { title: "Features — MANSA" };
 
 /**
- * Public Web M2 -- only real, shipped capabilities. Each description
- * below is grounded in an actual component this codebase already ships
- * (referenced in-line), never an aspirational or Phase-7-scoped claim.
- * Deliberately excludes parlays, Telegram, bet verification, sharp
- * money, and anything not yet built -- HQ's explicit M2 boundary.
+ * Public Web M2 (updated M2.2) -- real, shipped capabilities only. Each
+ * description below is grounded in an actual component this codebase
+ * already ships (referenced in-line), never an aspirational or
+ * Phase-7-scoped claim. Straight-bet recommendations already cover real
+ * markets -- moneyline, spread, and total -- never merely "picking
+ * winning teams."
+ *
+ * M2.2 adds a separate, clearly-marked "Coming at Launch" section below
+ * this list for the launch-vision capabilities HQ requires the site to
+ * show now (intelligent parlays, conversational MANSA, Telegram) even
+ * though none of them are built yet -- every item there carries a
+ * `PreviewBadge` and nothing in that section is interactive. This array
+ * stays exactly what it was in M2: only what exists today.
  */
 const FEATURES = [
   {
@@ -31,7 +41,7 @@ const FEATURES = [
   },
   {
     title: "Modeled Probability & EV",
-    body: "Where the data supports it, MANSA estimates the probability of an outcome and its expected value relative to the market price.",
+    body: "Where the data supports it, MANSA estimates the probability of an outcome and its expected value relative to the market price — across moneyline, spread, and total markets, never just a pick of who wins.",
   },
   {
     title: "Explainability",
@@ -127,6 +137,72 @@ export default async function FeaturesPage() {
                 </ScrollReveal>
               ))}
             </div>
+          </Container>
+        </section>
+
+        {/* M2.2 -- launch-vision capabilities, clearly separated from
+            "today" above (a violet-toned section, distinct from the
+            cobalt "real and active" language used everywhere else) and
+            individually marked with PreviewBadge. Nothing here is
+            interactive or backed by a real endpoint. */}
+        <section className="relative overflow-hidden border-t border-border py-3xl">
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-0 -z-10 bg-[radial-gradient(ellipse_at_top,_rgb(var(--mansa-violet)/0.12),_transparent_60%)]"
+          />
+          <Container className="flex flex-col gap-2xl lg:max-w-5xl">
+            <ScrollReveal className="mx-auto flex max-w-2xl flex-col gap-md text-center">
+              <Text variant="label" as="span" className="mx-auto tracking-wide text-mansa-violet">
+                Coming at Launch
+              </Text>
+              <Text variant="heading" as="h2">
+                The Full MANSA Vision
+              </Text>
+              <Text variant="body" className={MARKETING_BODY_CLASS}>
+                Today, MANSA lives on your Command Center dashboard. At launch, the same
+                intelligence and the same account will also be reachable as a conversational
+                companion on Telegram — ask in plain language, get the same committee-reviewed
+                answer.
+              </Text>
+            </ScrollReveal>
+
+            <div className="grid gap-xl sm:grid-cols-2">
+              <ScrollReveal>
+                <div className="flex h-full flex-col gap-sm border-l-2 border-l-mansa-violet pl-md">
+                  <div className="flex items-center gap-sm">
+                    <Text variant="heading" as="h3" className="text-lg">
+                      Intelligent Parlays
+                    </Text>
+                  </div>
+                  <PreviewBadge />
+                  <Text variant="body" className={MARKETING_BODY_CLASS}>
+                    The same committee discipline applied across legs — combining only the
+                    opportunities that clear MANSA&apos;s bar, and leaving the rest out rather than
+                    forcing a fuller slip.
+                  </Text>
+                </div>
+              </ScrollReveal>
+
+              <ScrollReveal delayMs={60}>
+                <div className="flex h-full flex-col gap-sm border-l-2 border-l-mansa-violet pl-md">
+                  <div className="flex items-center gap-sm">
+                    <Text variant="heading" as="h3" className="text-lg">
+                      Conversational MANSA & Telegram
+                    </Text>
+                  </div>
+                  <PreviewBadge />
+                  <Text variant="body" className={MARKETING_BODY_CLASS}>
+                    Ask for what you need in plain language, on Telegram, and get MANSA&apos;s real
+                    committee-reviewed reasoning back — the same intelligence behind your dashboard,
+                    just conversational.
+                  </Text>
+                </div>
+              </ScrollReveal>
+            </div>
+
+            <ScrollReveal delayMs={100} className="mx-auto w-full max-w-md">
+              <ConversationalPreview />
+            </ScrollReveal>
           </Container>
         </section>
 

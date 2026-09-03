@@ -24,7 +24,7 @@ const PIPELINE = [
   },
   {
     title: "Decision",
-    body: "The committee's agreement produces one recommendation — or the deliberate decision to make none. Both are real outcomes.",
+    body: "The committee's agreement produces one recommendation across the real market — moneyline, spread, or total — or the deliberate decision to make none. Both are real outcomes. Intelligent parlays are coming at launch.",
   },
   {
     title: "Explainability",
@@ -57,6 +57,14 @@ const PIPELINE = [
  * the same "MANSA Decision" visual treatment (illuminated top edge,
  * inset panel) the real product already uses for its own decision
  * zones, reused here for consistency, not reinvented.
+ *
+ * M2.2: the "Decision" step now names the real markets explicitly
+ * (moneyline/spread/total -- never "just picking a winning team") and
+ * notes intelligent parlays as a plain-text, non-badged "coming at
+ * launch" mention -- the fuller launch-vision preview (parlays,
+ * conversational MANSA, Telegram) lives on `/features`, where
+ * `PreviewBadge`-marked sections exist specifically for that; this page
+ * stays focused on the real, shipped pipeline.
  */
 export default async function HowItWorksPage() {
   const user = await getCurrentUser();
