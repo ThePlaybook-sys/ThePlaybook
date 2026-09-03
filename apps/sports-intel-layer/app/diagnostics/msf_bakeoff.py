@@ -198,35 +198,58 @@ async def run_msf_bakeoff(client: httpx.AsyncClient, api_key: str) -> dict[str, 
         current_slug = fallback_current
     prior_slug = _prior_season_slug(current_slug) if not used_fallback_season else fallback_prior
 
-    await step(
+    current_games = await step(
         "schedules_current_season",
         f"/nfl/{current_slug}/week/1/games.json",
     )
+    current_game_id = _first_game_id(current_games["raw_body"])
+
+    # Run 1 of this exact test found `week/N/games.json` returns 403 for a
+    # PRIOR season on this plan even though `standings.json` for that same
+    # season succeeds -- try the whole-season feed next (a real, different
+    # feed, not a retry of the same one) before concluding historical
+    # schedule access is unavailable outright.
     prior_games = await step(
-        "schedules_prior_season_completed",
+        "schedules_prior_season_weekly",
         f"/nfl/{prior_slug}/week/1/games.json",
     )
     game_id = _first_game_id(prior_games["raw_body"])
+    game_season_slug = prior_slug
+    if game_id is None:
+        prior_games_seasonal = await step(
+            "schedules_prior_season_seasonal",
+            f"/nfl/{prior_slug}/games.json",
+        )
+        game_id = _first_game_id(prior_games_seasonal["raw_body"])
+    if game_id is None:
+        # Neither prior-season schedule feed yielded a game -- fall back to
+        # the CURRENT season's own known-scheduled (not yet played) game,
+        # which at least tests box score/PBP/lineup status semantics for a
+        # game that hasn't happened yet, a real and useful data point.
+        game_id = current_game_id
+        game_season_slug = current_slug
 
     await step(
         "box_score",
-        f"/nfl/{prior_slug}/games/{game_id}/boxscore.json" if game_id else f"/nfl/{prior_slug}/games/unknown/boxscore.json",
+        f"/nfl/{game_season_slug}/games/{game_id}/boxscore.json" if game_id else f"/nfl/{game_season_slug}/games/unknown/boxscore.json",
     )
     await step(
         "play_by_play",
-        f"/nfl/{prior_slug}/games/{game_id}/playbyplay.json" if game_id else f"/nfl/{prior_slug}/games/unknown/playbyplay.json",
+        f"/nfl/{game_season_slug}/games/{game_id}/playbyplay.json" if game_id else f"/nfl/{game_season_slug}/games/unknown/playbyplay.json",
     )
     await step(
         "lineup",
-        f"/nfl/{prior_slug}/games/{game_id}/lineup.json" if game_id else f"/nfl/{prior_slug}/games/unknown/lineup.json",
+        f"/nfl/{game_season_slug}/games/{game_id}/lineup.json" if game_id else f"/nfl/{game_season_slug}/games/unknown/lineup.json",
     )
+    # Run 1 found team_gamelogs.json 400s with no params -- confirmed from
+    # the SDK's own README example usage pattern, this feed needs a `team`
+    # filter param (a hyphenated team slug, e.g. "buffalo-bills") in
+    # practice even though the bundled feed-definition table doesn't list
+    # it as a required path segment.
     await step(
         "team_gamelogs_current_season",
         f"/nfl/{current_slug}/team_gamelogs.json",
-    )
-    await step(
-        "team_gamelogs_prior_season",
-        f"/nfl/{prior_slug}/team_gamelogs.json",
+        {"team": "buffalo-bills"},
     )
     await step(
         "team_stats_totals_current_season",
@@ -249,13 +272,15 @@ async def run_msf_bakeoff(client: httpx.AsyncClient, api_key: str) -> dict[str, 
             "prior_season_slug": prior_slug,
             "used_fallback_season_guess": used_fallback_season,
             "sample_game_id": game_id,
+            "sample_game_season_slug": game_season_slug,
+            "sample_game_is_current_season_unplayed": game_season_slug == current_slug,
         },
         "note": (
             "No live/in-progress NFL game existed at test time (2026 season "
             "kicks off 2026-09-09; this test ran 2026-09-03), so Near-Realtime "
             "vs delayed-tier freshness value could not be empirically measured "
-            "-- box score/PBP/lineup were tested against a completed PRIOR "
-            "season game instead, which is a valid completeness/granularity "
-            "test but not a freshness/tier-value test."
+            "regardless of which game box score/PBP/lineup ended up tested "
+            "against -- see sample_game_is_current_season_unplayed above for "
+            "whether that game had actually been played."
         ),
     }
