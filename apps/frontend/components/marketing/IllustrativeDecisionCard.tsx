@@ -1,5 +1,6 @@
 import { Surface, Text } from "@/components/ds";
 import { formatOdds } from "@/components/recommendations/RecommendationCard";
+import { MARKETING_BODY_CLASS } from "@/components/marketing/typography";
 
 /**
  * Public Web M1 -- the landing page's one product visual (HQ's "ONE
@@ -81,7 +82,7 @@ export function IllustrativeDecisionCard() {
           </div>
         </div>
 
-        <Text variant="body">
+        <Text variant="body" className={MARKETING_BODY_CLASS}>
           Consensus favors Kansas City on value relative to the market line.
         </Text>
       </div>

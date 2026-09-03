@@ -48,6 +48,20 @@
   --text-secondary: #a3acbd;
   --text-meta: #6b7590;
 
+  /* Public Web M2.1 -- body-copy brightening for the PUBLIC marketing
+     pages only (HQ's explicit "brighten primary body copy toward white
+     ... preserve hierarchy" instruction). A new token, deliberately not
+     a change to --text-secondary (still used by the authenticated
+     Command Center's own body copy -- BoardCard, RecommendationCard,
+     TrackRecordSnapshot, etc. -- untouched by this milestone) or
+     --text-primary (still reserved for headings/data). Sits between the
+     two: brighter than --text-secondary, a shade softer than
+     --text-primary, so bold headings still visibly lead medium-weight
+     body copy even though both are now close in color. Contrast-checked
+     at ~15:1 against --plane-100 and ~13:1 against --surface-200 -- both
+     comfortably clear AAA (7:1), not just AA. */
+  --text-body-bright: #e5e8ef;
+
   /* MANSA color grammar (§3-§4). Stored as RGB triplets so Tailwind's
      opacity-modifier syntax (e.g. bg-accent/10) can apply an alpha
      channel via `rgb(var(--x) / <alpha-value>)` in tailwind.config.ts --

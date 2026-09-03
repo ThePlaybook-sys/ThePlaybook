@@ -3,6 +3,8 @@ import { Container, Text } from "@/components/ds";
 import { PublicNav } from "@/components/marketing/PublicNav";
 import { PublicFooter } from "@/components/marketing/PublicFooter";
 import { ScrollReveal } from "@/components/marketing/ScrollReveal";
+import { IllustrativeDecisionCard } from "@/components/marketing/IllustrativeDecisionCard";
+import { MARKETING_BODY_CLASS } from "@/components/marketing/typography";
 import { getCurrentUser } from "@/app/lib/auth";
 
 export const metadata = { title: "Features — MANSA" };
@@ -74,7 +76,7 @@ export default async function FeaturesPage() {
             <Text variant="display" as="h1" className="text-4xl sm:text-5xl">
               Features
             </Text>
-            <Text variant="body" className="max-w-xl text-lg text-text-secondary">
+            <Text variant="body" className={`max-w-xl text-lg ${MARKETING_BODY_CLASS}`}>
               What MANSA actually does today — nothing promised, nothing aspirational.
             </Text>
             <Link
@@ -87,15 +89,40 @@ export default async function FeaturesPage() {
         </section>
 
         <section className="border-t border-border py-3xl">
-          <Container className="lg:max-w-6xl">
+          <Container className="flex flex-col gap-2xl lg:max-w-6xl">
             <div className="grid gap-xl sm:grid-cols-2 lg:grid-cols-3">
-              {FEATURES.map((feature, index) => (
+              {FEATURES.slice(0, 6).map((feature, index) => (
                 <ScrollReveal key={feature.title} delayMs={(index % 3) * 60}>
                   <div className="flex h-full flex-col gap-xs border-l-2 border-l-border pl-md">
                     <Text variant="heading" as="h2" className="text-lg">
                       {feature.title}
                     </Text>
-                    <Text variant="body">{feature.body}</Text>
+                    <Text variant="body" className={MARKETING_BODY_CLASS}>
+                      {feature.body}
+                    </Text>
+                  </div>
+                </ScrollReveal>
+              ))}
+            </div>
+
+            {/* The one polished product visual Features needed (HQ's
+                explicit ask): breaks up the tile list with the same
+                real recommendation-card visual language used on `/`,
+                still clearly labeled illustrative. */}
+            <ScrollReveal className="mx-auto w-full max-w-md py-md">
+              <IllustrativeDecisionCard />
+            </ScrollReveal>
+
+            <div className="grid gap-xl sm:grid-cols-2 lg:grid-cols-3">
+              {FEATURES.slice(6).map((feature, index) => (
+                <ScrollReveal key={feature.title} delayMs={(index % 3) * 60}>
+                  <div className="flex h-full flex-col gap-xs border-l-2 border-l-border pl-md">
+                    <Text variant="heading" as="h2" className="text-lg">
+                      {feature.title}
+                    </Text>
+                    <Text variant="body" className={MARKETING_BODY_CLASS}>
+                      {feature.body}
+                    </Text>
                   </div>
                 </ScrollReveal>
               ))}

@@ -3,6 +3,7 @@ import { Container, Text } from "@/components/ds";
 import { PublicNav } from "@/components/marketing/PublicNav";
 import { PublicFooter } from "@/components/marketing/PublicFooter";
 import { ScrollReveal } from "@/components/marketing/ScrollReveal";
+import { MARKETING_BODY_CLASS } from "@/components/marketing/typography";
 import { getCurrentUser } from "@/app/lib/auth";
 
 export const metadata = { title: "About — MANSA" };
@@ -12,6 +13,12 @@ export const metadata = { title: "About — MANSA" };
  * history, no fabricated stats, no testimonials -- HQ's explicit
  * instruction. Personality comes from voice and conviction, not from
  * invented claims.
+ *
+ * M2.1: deliberately no added visual here (HQ's own instruction: "only
+ * add a visual if it genuinely improves the page... do not add a
+ * graphic to every section"). This page is short, voice-driven prose --
+ * a diagram or product card would compete with the personality it's
+ * trying to convey, not support it.
  */
 export default async function AboutPage() {
   const user = await getCurrentUser();
@@ -34,7 +41,7 @@ export default async function AboutPage() {
             <Text variant="display" as="h1" className="text-4xl sm:text-5xl">
               About MANSA
             </Text>
-            <Text variant="body" className="max-w-xl text-lg text-text-secondary">
+            <Text variant="body" className={`max-w-xl text-lg ${MARKETING_BODY_CLASS}`}>
               Sports betting information is everywhere. Almost none of it is organized, and most of
               it isn&apos;t built to be checked.
             </Text>
@@ -47,7 +54,7 @@ export default async function AboutPage() {
               <Text variant="heading" as="h2">
                 Why MANSA Exists
               </Text>
-              <Text variant="body">
+              <Text variant="body" className={MARKETING_BODY_CLASS}>
                 Odds boards, injury reports, national narratives, gut feel — the information a bettor
                 needs is scattered across a dozen places, most of it noise dressed up as insight.
                 MANSA exists to put that information in one place, run it through a committee of AI
@@ -60,7 +67,7 @@ export default async function AboutPage() {
               <Text variant="heading" as="h2">
                 How We Think About This
               </Text>
-              <Text variant="body">
+              <Text variant="body" className={MARKETING_BODY_CLASS}>
                 MANSA isn&apos;t built to be right every time — it&apos;s built to be checked every
                 time. Confidence is never sold as a promise. A pass is treated as seriously as a play.
                 And every decision stays reconstructable long after it&apos;s made, because a system

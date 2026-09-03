@@ -3,6 +3,8 @@ import { Container, Surface, Text } from "@/components/ds";
 import { PublicNav } from "@/components/marketing/PublicNav";
 import { PublicFooter } from "@/components/marketing/PublicFooter";
 import { ScrollReveal } from "@/components/marketing/ScrollReveal";
+import { IntelligenceFlowDiagram } from "@/components/marketing/IntelligenceFlowDiagram";
+import { MARKETING_BODY_CLASS } from "@/components/marketing/typography";
 import { getCurrentUser } from "@/app/lib/auth";
 
 export const metadata = { title: "How It Works — MANSA" };
@@ -77,7 +79,7 @@ export default async function HowItWorksPage() {
             <Text variant="display" as="h1" className="text-4xl sm:text-5xl">
               How MANSA Works
             </Text>
-            <Text variant="body" className="max-w-xl text-lg text-text-secondary">
+            <Text variant="body" className={`max-w-xl text-lg ${MARKETING_BODY_CLASS}`}>
               One pipeline, from raw data to a decision you can check afterward — every stage
               preserved, nothing hidden behind a score.
             </Text>
@@ -87,6 +89,17 @@ export default async function HowItWorksPage() {
             >
               {primaryCta.label}
             </Link>
+          </Container>
+        </section>
+
+        {/* The one polished visual How It Works needed (HQ's explicit
+            ask): the intelligence flow at a glance, before the detailed
+            seven-step breakdown below it. */}
+        <section className="border-t border-border py-2xl">
+          <Container className="lg:max-w-4xl">
+            <ScrollReveal>
+              <IntelligenceFlowDiagram />
+            </ScrollReveal>
           </Container>
         </section>
 
@@ -106,7 +119,9 @@ export default async function HowItWorksPage() {
                       <Text variant="heading" as="h2" className="text-lg">
                         {step.title}
                       </Text>
-                      <Text variant="body">{step.body}</Text>
+                      <Text variant="body" className={MARKETING_BODY_CLASS}>
+                        {step.body}
+                      </Text>
                     </div>
                   </li>
                 </ScrollReveal>
@@ -131,7 +146,7 @@ export default async function HowItWorksPage() {
                 <Text variant="heading" as="h2" className="text-lg">
                   Confidence ≠ Win Probability
                 </Text>
-                <Text variant="body">
+                <Text variant="body" className={MARKETING_BODY_CLASS}>
                   Confidence describes how strongly MANSA&apos;s committee agreed — not the likelihood
                   that a wager wins. Where the data supports it, MANSA separately estimates a modeled
                   probability; the two are never the same number, and neither is a promise.
@@ -147,7 +162,7 @@ export default async function HowItWorksPage() {
                 <Text variant="heading" as="h2" className="text-lg">
                   No Bet Is a Legitimate Decision
                 </Text>
-                <Text variant="body">
+                <Text variant="body" className={MARKETING_BODY_CLASS}>
                   MANSA is built to pass when the market doesn&apos;t offer real value. No Bet and
                   Bankroll Preservation are intentional, equally-weighted outcomes — never a failure to
                   find a recommendation.

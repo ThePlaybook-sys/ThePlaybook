@@ -47,4 +47,15 @@ describe("AboutPage (Public Web M2)", () => {
       expect(link).toHaveAttribute("href", "/today");
     }
   });
+
+  it("Public Web M2.1: body copy uses the brightened marketing tone", async () => {
+    render(await AboutPage());
+    const heroBody = screen.getByText(/Sports betting information is everywhere/);
+    expect(heroBody.className).toContain("!text-body-bright");
+  });
+
+  it("Public Web M2.1: deliberately no added visual -- HQ's 'only if it genuinely improves the page' instruction", async () => {
+    render(await AboutPage());
+    expect(document.querySelectorAll("svg").length).toBe(0);
+  });
 });

@@ -44,6 +44,10 @@ const config: Config = {
         border: {
           DEFAULT: "var(--border-default)",
         },
+        // Public Web M2.1 -- brightened body-copy tone for the public
+        // marketing pages only. See globals.css's own comment for why
+        // this is a new token rather than a change to text.secondary.
+        "body-bright": "var(--text-body-bright)",
       },
       fontFamily: {
         sans: ["var(--font-inter)", "system-ui", "sans-serif"],

@@ -4,6 +4,7 @@ import { PublicNav } from "@/components/marketing/PublicNav";
 import { PublicFooter } from "@/components/marketing/PublicFooter";
 import { ScrollReveal } from "@/components/marketing/ScrollReveal";
 import { IllustrativeDecisionCard } from "@/components/marketing/IllustrativeDecisionCard";
+import { MARKETING_BODY_CLASS } from "@/components/marketing/typography";
 import { getCurrentUser } from "@/app/lib/auth";
 
 export const metadata = { title: "MANSA — Sports Intelligence" };
@@ -71,7 +72,7 @@ export default async function RootPage() {
                 <br />
                 Own the decision.
               </Text>
-              <Text variant="body" className="max-w-xl text-lg text-text-secondary">
+              <Text variant="body" className={`max-w-xl text-lg ${MARKETING_BODY_CLASS}`}>
                 MANSA runs a committee of AI agents against the market in real time, then shows you
                 exactly how it reached its conclusion — so every decision is yours, made with full
                 visibility into the reasoning behind it.
@@ -106,7 +107,7 @@ export default async function RootPage() {
               <Text variant="heading" as="h2">
                 What MANSA Does
               </Text>
-              <Text variant="body">
+              <Text variant="body" className={MARKETING_BODY_CLASS}>
                 A committee of specialized AI agents reads the game, the market, and the surrounding
                 intelligence together — then converges on one recommendation, or the deliberate
                 decision to make none at all.
@@ -133,7 +134,9 @@ export default async function RootPage() {
                     <Text variant="heading" as="h3" className="text-lg">
                       {item.title}
                     </Text>
-                    <Text variant="body">{item.body}</Text>
+                    <Text variant="body" className={MARKETING_BODY_CLASS}>
+                      {item.body}
+                    </Text>
                   </div>
                 </ScrollReveal>
               ))}
@@ -149,7 +152,7 @@ export default async function RootPage() {
               <Text variant="heading" as="h2">
                 The MANSA Command Center
               </Text>
-              <Text variant="body">
+              <Text variant="body" className={MARKETING_BODY_CLASS}>
                 Every recommendation ships with the full picture behind it — confidence, expected
                 value, and market price, presented together, never separately. Nothing is hidden
                 behind a summary score.
@@ -171,7 +174,7 @@ export default async function RootPage() {
               <Text variant="heading" as="h2">
                 Built to Be Checked
               </Text>
-              <Text variant="body">
+              <Text variant="body" className={MARKETING_BODY_CLASS}>
                 Every MANSA decision is reconstructable after the fact — the exact reasoning, timing,
                 and market data behind it, preserved and available to review. Confidence describes
                 how strongly MANSA&apos;s committee agreed, not a promised outcome.

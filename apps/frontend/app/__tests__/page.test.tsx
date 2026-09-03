@@ -70,4 +70,19 @@ describe("RootPage (/)", () => {
       expect(link).toHaveAttribute("href", "/today");
     }
   });
+
+  it("Public Web M2.1: hero body copy uses the brightened marketing tone, not the muted default", async () => {
+    getCurrentUserMock.mockResolvedValue(null);
+
+    render(await RootPage());
+
+    const heroBody = screen.getByText(/MANSA runs a committee of AI agents/);
+    // Text's own `body` variant still ships `text-text-secondary` as a base
+    // class (untouched, since the authenticated Command Center relies on
+    // it) -- the `!` (important) override class must also be present so it
+    // wins at render time regardless of which class appears first in the
+    // generated stylesheet.
+    expect(heroBody.className).toContain("!text-body-bright");
+    expect(heroBody.className).toContain("font-medium");
+  });
 });

@@ -68,4 +68,16 @@ describe("HowItWorksPage (Public Web M2)", () => {
     }
     expect(screen.queryByRole("link", { name: "Create Account" })).not.toBeInTheDocument();
   });
+
+  it("Public Web M2.1: shows the intelligence-flow visual (Data -> Intelligence & AI Committee -> MANSA Decision)", async () => {
+    render(await HowItWorksPage());
+    const flowHeadings = screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent);
+    expect(flowHeadings).toEqual(["Data", "Intelligence & AI Committee", "MANSA Decision"]);
+  });
+
+  it("Public Web M2.1: body copy uses the brightened marketing tone", async () => {
+    render(await HowItWorksPage());
+    const heroBody = screen.getByText(/One pipeline, from raw data/);
+    expect(heroBody.className).toContain("!text-body-bright");
+  });
 });

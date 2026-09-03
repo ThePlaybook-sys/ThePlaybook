@@ -69,4 +69,16 @@ describe("FeaturesPage (Public Web M2)", () => {
       expect(link).toHaveAttribute("href", "/today");
     }
   });
+
+  it("Public Web M2.1: breaks up the tile list with the illustrative product visual, clearly labeled", async () => {
+    render(await FeaturesPage());
+    expect(screen.getByText("Illustrative Example")).toBeInTheDocument();
+    expect(screen.getByText("Not a live recommendation")).toBeInTheDocument();
+  });
+
+  it("Public Web M2.1: body copy uses the brightened marketing tone", async () => {
+    render(await FeaturesPage());
+    const heroBody = screen.getByText(/What MANSA actually does today/);
+    expect(heroBody.className).toContain("!text-body-bright");
+  });
 });
