@@ -37,9 +37,14 @@ convention every other provider credential in this project follows).
 Call budget: 9 calls total, directly targeting HQ's 11 named evaluation
 criteria plus the two comparison questions (query precision, structured
 metadata, URL/source stability, full-content value, likely volume under
-MANSA's shared/cached architecture). Paced 1.5s apart -- comfortably
-inside the Essential plan's confirmed 10 req/sec limit, and the whole
-run is a small fraction of its 1,000 req/day budget.
+MANSA's shared/cached architecture). Paced 5s apart -- Run 1 of this
+exact test used 1.5s spacing and found the account 429s well inside the
+documented "10 req/sec" Essential limit (4 of 9 calls blocked with
+"too many requests... in a short period of time") -- a real, reportable
+finding about actual vs. documented burst behavior, not a bug in this
+module, so Run 2 widens spacing rather than silently retrying at the
+same pace. The whole run remains a small fraction of the plan's
+1,000 req/day budget either way.
 """
 from __future__ import annotations
 
@@ -177,7 +182,7 @@ async def run_gnews_validation(client: httpx.AsyncClient, api_key: str) -> dict[
         logged = dict(result)
         logged["raw_body"] = _cap_list_fields(result["raw_body"])
         calls.append(logged)
-        await asyncio.sleep(1.5)
+        await asyncio.sleep(5.0)
         return result
 
     # 1-2: team-scoped queries, mirroring NewsAPINewsAdapter.fetch_news's
