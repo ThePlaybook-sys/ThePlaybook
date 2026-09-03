@@ -1,9 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
-import HowItWorksPage from "../how-it-works/page";
-import FeaturesPage from "../features/page";
 import PricingPage from "../pricing/page";
-import AboutPage from "../about/page";
 
 const getCurrentUserMock = vi.fn();
 
@@ -16,28 +13,23 @@ vi.mock("next/navigation", () => ({
 }));
 
 /**
- * Public Web M1 -- M2 will build the real How It Works / Features /
- * Pricing / About content. These four are clearly-handled placeholders,
- * never a broken link or a 404; these tests only prove that. Each page
- * is async (Web M1 routing correction) so its shared `PublicNav` can be
- * auth-aware, exactly like `/` -- rendered here via `await Page()`, the
- * same pattern `app/__tests__/page.test.tsx` already establishes for
- * `RootPage`.
+ * Public Web M2: How It Works, Features, and About are now real pages
+ * with their own dedicated test files (see
+ * `app/how-it-works/__tests__/page.test.tsx`,
+ * `app/features/__tests__/page.test.tsx`,
+ * `app/about/__tests__/page.test.tsx`). Only Pricing remains an M1-style
+ * "coming soon" placeholder (M3 scope) -- this file now covers Pricing
+ * alone.
  */
-describe.each([
-  ["How It Works", HowItWorksPage],
-  ["Features", FeaturesPage],
-  ["Pricing", PricingPage],
-  ["About", AboutPage],
-])("%s placeholder page", (title, Page) => {
+describe("Pricing placeholder page", () => {
   beforeEach(() => {
     getCurrentUserMock.mockReset();
     getCurrentUserMock.mockResolvedValue(null);
   });
 
   it("renders a real heading and a path back into account creation, never a dead end", async () => {
-    render(await Page());
-    expect(screen.getByRole("heading", { level: 1, name: title })).toBeInTheDocument();
+    render(await PricingPage());
+    expect(screen.getByRole("heading", { level: 1, name: "Pricing" })).toBeInTheDocument();
     const createAccountLinks = screen.getAllByRole("link", { name: "Create Account" });
     expect(createAccountLinks.length).toBeGreaterThan(0);
     for (const link of createAccountLinks) {
@@ -46,13 +38,18 @@ describe.each([
   });
 
   it("includes the shared public nav so a visitor can always get back to the other public pages", async () => {
-    render(await Page());
+    render(await PricingPage());
     expect(screen.getAllByRole("link", { name: "How It Works" }).length).toBeGreaterThan(0);
   });
 
-  it("Web M1 routing correction: a signed-in visitor sees the auth-aware nav here too, not a stale Create Account prompt in the header", async () => {
+  it("Web M1 routing correction: a signed-in visitor sees the auth-aware nav here too", async () => {
     getCurrentUserMock.mockResolvedValue({ id: "u1", email: "user@example.com" });
-    render(await Page());
+    render(await PricingPage());
     expect(screen.getAllByRole("link", { name: "Open MANSA" }).length).toBeGreaterThan(0);
+  });
+
+  it("deliberately shows no price -- fabricating one ahead of the real M3 page would be worse than 'coming soon'", async () => {
+    render(await PricingPage());
+    expect(screen.queryByText(/\$\d/)).not.toBeInTheDocument();
   });
 });
