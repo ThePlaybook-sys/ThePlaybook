@@ -384,39 +384,53 @@ In order of real leverage over the outcome:
 
 ---
 
-## News Provider Validation Gate (RUN 2026-09-03 — see result below)
+## News Provider Validation Gate (RUN 2026-09-03, CORRECTED 2026-09-04 — see result below)
 
 **UPDATE (2026-09-03, same day): this gate has been run.** Full report:
 `docs/ops/news-provider-validation-gnews-2026-09-03.md`, decision
 tracked going forward in `docs/ops/news-provider-decision-record.md`
 (same living-document pattern as the NFL provider decision record).
-GNews Essential was already active with `GNEWS_API_KEY` configured when
-this ran — a controlled, 18-call (2 runs) DEV-only diagnostic against
-the 11 criteria below.
+`GNEWS_API_KEY` was already configured when this ran — a controlled,
+18-call (2 runs) DEV-only diagnostic against the 11 criteria below.
 
-**Result: NOT selected, and not rejected — two concrete blockers
-identified, neither of which is "it's cheaper so it must be worse."**
-Content quality was genuinely strong on 4 of 6 named categories
-(injuries, trades, suspensions, roster/depth-chart news all tested
-GREEN, with depth-chart content arguably better than what NewsAPI's own
-current query pattern would surface). But: **(1)** every single response
-carried a real-time-delay notice ("Free plan has a 12-hour delay...
-upgrade") despite the subscription being paid, and the empirically
-freshest article for high-volume queries was 17-34 hours old — real-
-time entitlement on Essential specifically is unconfirmed; **(2)** GNews
-Essential's 1,000 req/day quota is roughly 3x short of MANSA's own News
-Worker's actual ~3,072 calls/day typical in-season volume (flat
-15-minute cadence, no ramp, up to 32 teams) — a hard capacity ceiling
-independent of price. **Recommendation: ask GNews support directly
-whether Essential includes real-time delivery before spending a 10-day
-trial on it** — if it doesn't, a higher (likely costlier) tier is the
-real comparison point against NewsAPI, not Essential's ≈$54/mo. The
-$395/month delta this plan's economics are built around may not be the
-real delta once that's answered. See the decision record for the full
-"what's needed before this closes" list. **News provider selection
-remains UNRESOLVED in this business plan** — NewsAPI Business stays the
-modeled default for the same reason it already was: it's the one that's
-live, not because it's been confirmed better.
+**CORRECTION (2026-09-04, HQ clarification): the credential this
+diagnostic actually exercised resolved to GNews's FREE plan, not the
+committed Essential subscription.** The real-time-delay notice and the
+`expand=content` no-op described below were expected Free-plan
+behavior, not evidence of an Essential provisioning problem — corrected
+in the source report and the decision record directly. What survives
+this correction: content quality (plan-independent) and the request-
+volume finding (superseded on separate grounds, see below) — what does
+NOT survive is treating freshness/full-content as "unconfirmed on a
+paid plan"; they were simply never tested on one.
+
+**Current HQ decision (2026-09-04): GNews remains MANSA's development
+news provider. No upgrade or migration now.** A 6-item production/beta
+gate (upgrade to a commercially-usable tier, validate real-time
+freshness, validate paid full-content if needed, validate quota/rate
+under the redesigned cadence, reconfirm commercial terms, then decide)
+must clear before any GNews production selection — see the decision
+record for the full list. NewsAPI Business remains an alternative
+benchmark, not an authorized purchase, and stays the modeled default in
+this document's own economics for the same reason as before: it's the
+one that's live in production, not because it's been confirmed better.
+
+**Result (content-quality findings, unaffected by the correction):**
+genuinely strong on 4 of 6 named categories (injuries, trades,
+suspensions, roster/depth-chart news all tested GREEN, with
+depth-chart content arguably better than what NewsAPI's own current
+query pattern would surface). The two items originally framed as
+"blockers" are now understood differently: **(1)** real-time
+entitlement is **untested**, not unconfirmed-and-failing — the Free-plan
+result says nothing about a paid tier; **(2)** the ~3,072 calls/day
+capacity concern is **resolved** under the redesigned centralized/
+adaptive cadence (`docs/ops/news-cadence-architecture-audit-2026-09-04.md`),
+independent of which tier or provider ends up serving production. The
+$395/month delta this plan's economics are built around remains the
+right planning number for Essential specifically; it would change only
+if the production/beta gate determines a higher tier is actually
+required. **News provider selection for production remains UNRESOLVED
+in this business plan.**
 
 ### Original gate design (run as specified below)
 
@@ -653,18 +667,22 @@ to preserve correctly:
 
 ## Unresolved decisions (need Mac's input before implementation)
 
-1. **News provider**: NewsAPI Business ($449/mo, current default) vs.
-   GNews Essential (~$54/mo) — still the **largest discretionary cost
-   lever in the model** ($395/month, larger than MySportsFeeds), and
-   the News Provider Validation Gate has now been run
-   (`docs/ops/news-provider-validation-gnews-2026-09-03.md`,
-   2026-09-03). Result: GNews's content quality tested well, but two
-   concrete blockers (unconfirmed real-time entitlement on the
-   Essential tier; a ~3x request-volume shortfall against MANSA's own
-   News Worker cadence) mean the $395/mo delta modeled throughout this
-   document is not yet a decision Mac can safely act on. Still
-   unresolved — see `docs/ops/news-provider-decision-record.md` for
-   what needs to happen before it closes.
+1. **News provider (production)**: NewsAPI Business ($449/mo, current
+   production default) vs. GNews (~$54/mo at Essential) — still the
+   **largest discretionary cost lever in the model** ($395/month,
+   larger than MySportsFeeds). The News Provider Validation Gate has
+   been run and corrected (`docs/ops/news-provider-validation-gnews-2026-09-03.md`,
+   2026-09-03, plan-tier correction 2026-09-04): content quality tested
+   well, and the request-volume concern is resolved under the
+   redesigned cadence — but the validation actually ran on GNews's Free
+   plan, so real-time freshness, paid full-content, and commercial
+   terms remain **untested**, not confirmed-and-failing. **Current HQ
+   decision: GNews is MANSA's development provider; production
+   selection is gated on a 6-item validation (upgrade tier → validate
+   freshness/full-content/quota → reconfirm terms → decide)** — see
+   `docs/ops/news-provider-decision-record.md`. The $395/mo delta
+   modeled throughout this document remains the right planning number
+   for Essential specifically, pending that gate.
 2. **MySportsFeeds live-game data-quality validation** — **pricing is
    now resolved** ($246 CAD/mo, confirmed), but the gate covering
    play-by-play/box-score completeness, correction semantics, and
@@ -707,13 +725,13 @@ to preserve correctly:
 **Do not build billing/metering yet.** The recommended next step is
 narrower and cheaper than full implementation:
 
-1. **Ask GNews support directly whether Essential includes real-time
-   delivery, and confirm its real sustained rate limit** — the two
-   concrete blockers the 2026-09-03 News Provider Validation Gate
-   surfaced. This is cheaper and faster than a 10-day trial and
-   determines which GNews tier (Essential's ≈$54/mo, or a costlier
-   real-time tier) is actually the right comparison point against
-   NewsAPI's $449/mo before any trial is spent.
+1. **Run the 6-item GNews production/beta gate** (`docs/ops/news-provider-decision-record.md`):
+   upgrade to a commercially-usable tier, validate real-time delivery
+   and sustained rate limit for real (the 2026-09-03 validation ran on
+   the Free plan by mistake, so this is genuinely unstarted, not a
+   re-check) — cheaper and faster than a full trial-and-error cycle, and
+   determines which GNews tier is actually the right comparison point
+   against NewsAPI's $449/mo.
 2. **Verify the two "unknown actual bill" assumptions** (Railway,
    Supabase) against real billing pages, so the fixed-cost base in Step
    2 stops resting on placeholders.

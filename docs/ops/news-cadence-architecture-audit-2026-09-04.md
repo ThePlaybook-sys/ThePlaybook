@@ -172,20 +172,26 @@ estimate lands one to two orders of magnitude under Essential's quota,
 with headroom to spare for the unverified query-batching improvement
 in §5 above, which was not even counted toward this estimate.
 
-**This does NOT resolve GNews as the selected provider.** The two
-blockers the 2026-09-03 validation actually found were about
-*freshness/provisioning*, not volume:
-1. **Real-time entitlement on the Essential tier remains unconfirmed**
-   — every validation call carried a real-time-delay notice despite the
-   paid subscription; empirically freshest articles were 17-34 hours
-   old.
-2. **`expand=content` did not appear to unlock full content** on the
-   tested key/tier.
+**This does NOT resolve GNews as the selected provider.** The 2026-09-03
+validation's other two items were about *freshness/full-content*, not
+volume — and **CORRECTED 2026-09-04 (HQ clarification): that validation
+actually ran on GNews's Free plan, not Essential**, so neither is a
+"blocker" in the sense of a paid tier failing a test:
+1. **Real-time entitlement on a commercially-usable tier remains
+   UNTESTED** — the 12-hour-delay notice and 17-34-hour-old freshest
+   articles observed were expected Free-plan behavior, not evidence
+   Essential (or any paid tier) is broken.
+2. **`expand=content` on a paid tier remains UNTESTED** — it had no
+   effect on the Free plan, exactly as documented (paid-only feature).
 
-**Both remain explicitly OPEN** — this cadence redesign does not touch,
-test, or resolve either, and neither should be treated as answered by
-a favorable volume recalculation. `docs/ops/news-provider-decision-record.md`
-is updated alongside this audit to carry this forward.
+**Both remain explicitly OPEN, now correctly understood as "never
+tested" rather than "tested and failing"** — this cadence redesign does
+not touch, test, or resolve either, and neither should be treated as
+answered by a favorable volume recalculation. HQ's current decision
+(2026-09-04): GNews remains MANSA's development provider; both items
+above are now items 2-3 of the 6-item production/beta gate in
+`docs/ops/news-provider-decision-record.md`, updated alongside this
+audit to carry this forward.
 
 ---
 

@@ -1,20 +1,46 @@
-# MANSA News Provider Validation — GNews Essential (2026-09-03)
+# MANSA News Provider Validation — GNews (2026-09-03)
+
+**CORRECTION (2026-09-04, HQ clarification): the credential this
+validation actually exercised resolved to GNews's FREE plan, not
+Essential.** The original version of this report assumed the
+already-committed Essential subscription (€49.99/mo) was the plan under
+test, and interpreted the 12-hour real-time-delay notice and the
+`expand=content` no-op as possible *Essential provisioning problems*.
+That interpretation is corrected below: **both are expected, documented
+Free-plan behavior, not evidence that a paid tier is broken or
+under-provisioned.** Content-quality findings (injuries, trades,
+suspensions, depth-chart/lineup — Sections 1-8, 10 in part) are
+unaffected by this correction; they describe real articles GNews
+returned regardless of which plan served them. What changes is entirely
+the interpretation of Sections 9 and 11, the `expand=content` bullet,
+and the Recommendation's framing — corrected in place below, not
+silently. **Real-time freshness, `expand=content`, and sustained
+rate-limit behavior on an actual paid/commercial GNews tier remain
+UNTESTED** — this report answers none of them; see
+`docs/ops/news-provider-decision-record.md` for the current gate this
+now feeds into.
 
 **Diagnostic only. No provider migration, no subscription change, no
-News Worker/adapter rewrite. DEV only.** GNews Essential (€49.99/mo) is
-already active and `GNEWS_API_KEY` was already configured on
-`sports-intel-layer`/dev when this task started. This report evaluates
-whether it can credibly replace NewsAPI Business ($449/mo) as MANSA's
-production NFL news provider — it does not decide that question.
+News Worker/adapter rewrite. DEV only.** `GNEWS_API_KEY` was already
+configured on `sports-intel-layer`/dev when this task started; per the
+correction above, the key's actual observed behavior during this pass
+is consistent with GNews's Free plan. This report evaluates whether
+GNews can credibly replace NewsAPI Business ($449/mo) as MANSA's
+production NFL news provider — it does not decide that question, and
+per the production/beta gate now recorded in the decision record, a
+commercially-usable tier must be validated separately before that
+decision is made at all.
 
-**Answer up front: not yet, and not on price alone.** GNews Essential
+**Answer up front: not yet, and not on price alone — and this pass
+alone was never going to be enough to decide it.** GNews (even on Free)
 is genuinely strong on query precision for structured categories
 (injuries, roster/depth-chart news) and offers richer structured
-metadata than MANSA's current NewsAPI adapter uses. But two real
-problems surfaced — an apparent freshness/delay gap despite being on a
-paid, real-time-eligible plan, and a stricter-than-documented burst rate
-limit — that need a direct answer from GNews before a production
-decision is defensible. See Recommendation at the end.
+metadata than MANSA's current NewsAPI adapter uses. But this pass
+tested the wrong tier for a production decision: real-time freshness,
+paid full-content access, and sustained rate/quota behavior all need to
+be re-validated on a commercially-usable GNews tier before any
+production recommendation is defensible. See Recommendation at the
+end.
 
 ---
 
@@ -35,20 +61,27 @@ Endpoint shape (base URL, `q`/`lang`/`country`/`max`/`sortby`/`page`/
 content, url, image, publishedAt, lang, source: {id, name, url,
 country}}]` response shape) was confirmed from the official
 `gnews-io/gnews-io-js` TypeScript client's README plus multiple
-independent WebSearch-indexed sources for the Essential plan's real
-limits (1,000 req/day, 10 req/sec, 25 articles/request max, `expand=
-content` as a documented paid-only full-content parameter) — not from
-the unrelated `gnews` PyPI package (a Google-News RSS scraper by a
-different, unaffiliated author, deliberately not used as a schema
-source despite the name collision).
+independent WebSearch-indexed sources for **Essential's published,
+NOT independently exercised, real limits** (1,000 req/day, 10 req/sec,
+25 articles/request max, `expand=content` as a documented paid-only
+full-content parameter) — quoted here only as future-planning context
+for whichever paid tier is eventually validated, per the correction
+above. Not from the unrelated `gnews` PyPI package (a Google-News RSS
+scraper by a different, unaffiliated author, deliberately not used as a
+schema source despite the name collision).
 
 **Two runs, 18 total calls (9 attempted per run).** Run 1 (1.5s spacing
 between calls) hit 4 of 9 calls rate-limited (`429`, "too many requests
-... in a short period of time") despite being comfortably inside the
-documented 10 req/sec Essential limit — a real finding about actual vs.
-documented burst behavior, not a probe bug. Run 2 (5s spacing) got a
-clean 9/9 `200` sample. All figures below are drawn from Run 2's clean
-data; Run 1's rate-limit behavior is itself reported as a finding.
+... in a short period of time"). **CORRECTED (2026-09-04): this pass
+originally compared that failure rate against Essential's documented
+10 req/sec ceiling — the wrong comparison, since the credential
+actually tested resolved to Free-plan behavior, whose own real rate
+limit is undocumented here and plausibly much lower.** The 429s are
+therefore better read as expected Free-plan throttling, not a
+"stricter than documented Essential limits" anomaly. Run 2 (5s spacing)
+got a clean 9/9 `200` sample. All figures below are drawn from Run 2's
+clean data; Run 1's rate-limit behavior is still reported as a finding,
+just correctly attributed to the Free plan actually tested.
 
 Queries, mirroring `NewsAPINewsAdapter.fetch_news`'s own query
 construction (`f"{team} NFL"`) for direct comparability, plus one query
@@ -172,8 +205,8 @@ already never issues one (see `app/workers/news_worker.py`'s own
 docstring: it always calls `fetch_news(team=<resolved name>)`, never
 `fetch_news(team=None)`).
 
-### 9. Publication timestamps and real-time latency — the most important
-finding
+### 9. Publication timestamps and real-time latency — CORRECTED, was
+mischaracterized as an Essential problem
 
 **Every single successful call (all 9 in Run 2, all 5 successful in Run
 1) carried this notice in the response body's `information` field:**
@@ -182,28 +215,30 @@ finding
 > 12-hour delay. Upgrade your plan here to remove the delay:
 > https://gnews.io/change-plan"
 
-This is HQ's confirmed, already-paid Essential subscription — the
-notice's own wording ("Free plan has a 12-hour delay... upgrade") reads
-as though it should not apply here. Two explanations are possible, and
-this report cannot distinguish between them from outside GNews's own
-account dashboard: **(a)** real-time delivery is gated to a *higher*
-tier than Essential specifically (Essential may be a "paid but still
-delayed" tier, distinct from "paid and real-time"), or **(b)** the
-subscription hasn't fully propagated on GNews's backend yet. Empirical
-evidence leans toward this being a real, current limitation rather than
-a stale label: sorted strictly by `publishedAt` descending, the single
-freshest article for high-volume queries (`"Kansas City Chiefs NFL"`,
-`"NFL trade"`, bare `"NFL"`) was consistently **17–34 hours old** at
-capture time — worse than the 12 hours the notice itself claims as the
-*free*-tier ceiling.
+**CORRECTION (2026-09-04, HQ clarification): the credential this pass
+exercised resolved to GNews's Free plan, not the already-committed
+Essential subscription.** The notice's own wording — "Free plan has a
+12-hour delay" — is therefore exactly correct and expected, not a sign
+of a provisioning problem or a gap between Essential's marketing and
+its real behavior. The original version of this section speculated
+about two possible Essential-tier explanations for this notice; both
+speculations are withdrawn — there is nothing to explain, since Free
+plan is documented to behave exactly this way. The empirical finding
+that the freshest article for high-volume queries (`"Kansas City
+Chiefs NFL"`, `"NFL trade"`, bare `"NFL"`) was **17–34 hours old** at
+capture time is retained as a real observation of Free-plan freshness,
+but it says nothing about Essential's (or a higher tier's) real
+freshness — **that remains completely untested by this pass.**
 
-**This is squarely a live-game-adjacent freshness question, the same
-class of unresolved item the MySportsFeeds gate exists for** — pricing
-and category coverage being confirmed doesn't mean the timeliness this
-plan actually needs is confirmed. **Recommendation: HQ should ask GNews
-support directly whether Essential includes real-time delivery or
-whether it requires a higher tier**, before this plan is treated as
-settled either way.
+**Real-time freshness on a commercially-usable GNews tier is now an
+explicit item on the production/beta gate** (`docs/ops/news-provider-decision-record.md`)
+— not resolved here, and not something this report ever actually
+measured. The MySportsFeeds live-game validation gate remains a
+separate, unrelated item; the parallel drawn in the original version of
+this section (both being "live-game-adjacent freshness questions") is
+accurate as a category description but should not be read as implying
+this pass produced comparable evidence for GNews — it didn't, since it
+tested the wrong tier.
 
 ### 10. API reliability / pagination / schema quality — MIXED
 
@@ -237,11 +272,16 @@ Could not be independently confirmed (docs.gnews.io/gnews.io/legal
 pages are blocked by this workspace's own egress policy, same
 constraint as every prior vendor). Public/WebSearch-indexed sources
 consistently describe GNews's *free* tier as explicitly non-commercial
-and paid tiers (including Essential) as commercial-use-eligible — but
-given the real-time-delay notice above appearing on a supposedly-paid
-key, **this report does not treat any GNews-side claim about this
-key's entitlements as settled without direct confirmation from GNews
-or Mac's own account dashboard.**
+and paid tiers (including Essential) as commercial-use-eligible.
+**CORRECTED (2026-09-04):** the credential tested in this pass resolved
+to the Free plan, which — per those same sources — is exactly the tier
+expected to be non-commercial; this is not itself a red flag about
+Essential. It does, however, confirm the underlying point the original
+text was reaching for from the wrong evidence: **commercial-use terms
+must be reconfirmed directly against whatever paid tier is actually
+provisioned before launch**, now an explicit item on the production/
+beta gate (`docs/ops/news-provider-decision-record.md`), not assumed
+from a public pricing page alone.
 
 ---
 
@@ -277,15 +317,18 @@ or Mac's own account dashboard.**
   change the `content` field's length in this test.** Every article
   across all 9 Run 2 calls, including the dedicated `expand=content`
   call, carried the identical ~266-character truncated content with a
-  `"... [N chars]"` suffix naming the true total length. Either
-  `expand=content` requires a tier above Essential, or (again) the
-  account isn't fully provisioned — the same open question as the
-  real-time-delay finding above, and not resolved by this report. Worth
-  noting: MANSA's current `NewsAPINewsAdapter` doesn't use NewsAPI's
-  `content` field at all today (only `description`), so this
-  limitation is parity with current behavior, not a new regression —
-  but it does mean "full content" isn't a confirmed upside of switching
-  either.
+  `"... [N chars]"` suffix naming the true total length. **CORRECTED
+  (2026-09-04): this is fully expected, not a finding.** `expand=content`
+  is a documented paid-only parameter, and the credential tested here
+  resolved to the Free plan — of course it had no effect; this is not
+  evidence the paid feature is broken or under-provisioned on Essential.
+  Whether `expand=content` actually works on a real paid tier remains
+  **untested**, now an explicit item on the production/beta gate. Worth
+  noting, unaffected by this correction: MANSA's current
+  `NewsAPINewsAdapter` doesn't use NewsAPI's `content` field at all
+  today (only `description`), so even a confirmed-working paid
+  `expand=content` wouldn't be a regression to match — it would be new
+  capability, not parity.
 - **Likely request volume under a centralized/cached MANSA
   architecture — a real capacity concern, not just a cost one.**
   `news_worker.py`'s own confirmed design (Volume 2 §8): flat 15-minute
@@ -293,9 +336,11 @@ or Mac's own account dashboard.**
   During an NFL week, most/all 32 teams have a game inside the worker's
   7-day candidate window simultaneously — worst-case (and, in-season,
   close to *typical*-case) volume is **32 teams × 96 cycles/day = up to
-  3,072 calls/day**, roughly **3x GNews Essential's confirmed 1,000
-  req/day cap**, before even accounting for Run 1's evidence that real
-  burst behavior is stricter than the per-second ceiling implies. This
+  3,072 calls/day**, roughly **3x GNews Essential's published (not
+  independently re-verified against the plan actually tested) 1,000
+  req/day cap**, before even accounting for Run 1's Free-plan rate-limit
+  behavior, which says nothing about Essential's real sustained
+  throughput either. This
   is independent of the pricing question — even a materially cheaper
   provider is not viable if its quota can't cover MANSA's actual
   per-team cadence. **This should be treated as a hard input to any
@@ -305,64 +350,70 @@ or Mac's own account dashboard.**
 
 ## Comparison against the known NewsAPI Business baseline
 
-| Dimension | NewsAPI Business ($449/mo) | GNews Essential (€49.99/mo, ≈$54 USD) |
+**CORRECTED (2026-09-04): the "GNews" column below reflects what was
+actually tested — the Free plan — not the Essential subscription.**
+Rows describing content quality/metadata/pagination reflect real
+observed GNews behavior (plan-independent). Rows describing
+freshness/full-content/rate-limits reflect Free-plan behavior only and
+say nothing about Essential or any commercially-usable tier, which
+remain untested.
+
+| Dimension | NewsAPI Business ($449/mo) | GNews (Free plan actually tested; Essential €49.99/mo committed but not yet exercised) |
 |---|---|---|
 | Injury/trade/suspension/roster content quality | Not independently re-tested this pass (baseline assumed from existing production use) | GREEN across all four in this sample |
 | Depth-chart/lineup specificity | `"{team} NFL"` query only, no depth-chart-specific querying done today | GREEN, genuinely strong with a targeted query |
 | Structured metadata | `source: {id?, name}` (adapter uses `name` only), no country/lang field | Richer: `id`, `source.id`, `source.country`, `lang` all present and usable |
-| Full-content access | Adapter doesn't use NewsAPI's `content` field today | Could not confirm `expand=content` works on this key/tier — unresolved |
-| Real-time freshness | Assumed real-time on Business tier (not independently re-verified this pass) | **Every response flagged a real-time-delay notice; empirical freshest article was 17-34 hours old** — a real, unresolved gap |
-| Rate-limit reliability | Not tested this pass | 44% failure rate at 1.5s spacing in Run 1; clean only at 5s spacing |
-| Request-volume headroom vs. MANSA's actual cadence | Not directly compared (NewsAPI's own daily cap wasn't re-verified this pass) | **~3x under MANSA's own worst-case/typical-case 32-team, 15-minute-flat cadence** — a real, material capacity gap |
-| Commercial-use terms | Confirmed (NewsAPI Business is explicitly commercial-use-eligible, the reason it's the current default) | Publicly described as commercial-eligible on paid tiers, but not independently confirmed for this key given the real-time-delay anomaly above |
-| Price | $449/mo | ≈$54/mo — the ~$395/mo delta the business plan's News Provider Validation Gate was built around |
+| Full-content access | Adapter doesn't use NewsAPI's `content` field today | `expand=content` had no effect — expected on Free (paid-only feature); untested on a paid tier |
+| Real-time freshness | Assumed real-time on Business tier (not independently re-verified this pass) | Free plan's documented 12-hour delay observed exactly as expected; **real-time behavior on a paid tier untested** |
+| Rate-limit reliability | Not tested this pass | 44% failure rate at 1.5s spacing in Run 1 on the Free plan; clean only at 5s — Essential's real sustained throughput untested |
+| Request-volume headroom vs. MANSA's actual cadence | Not directly compared (NewsAPI's own daily cap wasn't re-verified this pass) | Essential's published 1,000/day cap now judged NOT a blocker under the redesigned cadence (`docs/ops/news-cadence-architecture-audit-2026-09-04.md`) — separate from this correction |
+| Commercial-use terms | Confirmed (NewsAPI Business is explicitly commercial-use-eligible, the reason it's the current default) | Free plan is documented non-commercial, as expected; Essential's terms need direct reconfirmation before launch, per the production/beta gate |
+| Price | $449/mo | ≈$54/mo (Essential) — the ~$395/mo delta the business plan's News Provider Validation Gate was built around |
 
 ---
 
 ## Recommendation
 
-**Do not select GNews Essential as MANSA's production news provider
-from this report alone.** Content quality for four of six named
-categories (injuries, trades, suspensions, depth-chart/lineup) was
-genuinely strong — better than the "unknown"-riddled injury data
-MySportsFeeds and SportsDataIO both showed in prior bake-offs — and the
-richer structured metadata (`source.country`, stable `source.id`) is a
-real, usable win over NewsAPI's current adapter shape. **But three
-concrete, unresolved problems block a production recommendation on
-price alone, exactly as HQ's own instruction anticipated:**
+**CORRECTED (2026-09-04) — superseded by HQ's current decision below;
+the original three-item framing is retained struck through for the
+record, not deleted, since it shaped real follow-up work that already
+happened.**
 
-1. **The real-time-delay notice on every call, and freshest-article
-   ages of 17-34 hours, are inconsistent with paying for a plan whose
-   own marketing implies real-time delivery.** This needs a direct
-   answer from GNews (does Essential include real-time, or does it
-   require a higher tier?) before HQ can trust GNews for anything
-   latency-sensitive (injury alerts, breaking trades).
-2. **Essential's 1,000 req/day quota is materially short of MANSA's own
-   confirmed News Worker cadence (~3,072 calls/day at typical in-season
-   volume)** — this is a hard capacity ceiling, not a soft cost
-   optimization; adopting GNews as-is would require either relaxing the
-   worker's flat 15-minute cadence (a real product/architecture change,
-   not assumed here) or a higher, likely more expensive, GNews tier
-   that would erode some or all of the price advantage this gate exists
-   to evaluate.
+~~1. The real-time-delay notice on every call, and freshest-article ages
+   of 17-34 hours, are inconsistent with paying for a plan whose own
+   marketing implies real-time delivery.~~ **Wrong premise — no paid
+   plan was tested.** The notice was expected Free-plan behavior.
+   Real-time freshness on a paid tier is simply untested, not found
+   broken.
+
+~~2. Essential's 1,000 req/day quota is materially short of MANSA's own
+   confirmed News Worker cadence.~~ **Superseded on different grounds**
+   (`docs/ops/news-cadence-architecture-audit-2026-09-04.md`): the
+   ~3,072 calls/day figure was a property of a News Worker design HQ
+   has since confirmed is not an accepted production requirement: a
+   redesigned, centralized/adaptive cadence brings volume one to two
+   orders of magnitude under Essential's published quota.
+
 3. **The observed 44%-then-clean rate-limit behavior (Run 1 vs. Run 2)
-   means the account's real, sustainable throughput is not yet known
-   with confidence** — 5s-per-call spacing worked once; it has not been
-   proven to hold under sustained, production-scale request volume.
+   still means the account's real, sustainable throughput is not known
+   with confidence — this item survives the correction essentially
+   unchanged**, except that it was Free-plan throughput observed, not
+   Essential's; a paid tier's real sustained rate limit remains a
+   separate open question.
 
-**None of these three is a reason to reject GNews outright** — they are
-exactly the kind of thing a controlled trial period exists to surface
-before a $449/month recurring decision is made either way. **Escalate
-items 1 and 2 to GNews support directly** (a specific, answerable
-question: "does Essential include real-time delivery, and what's the
-actual sustained rate limit in practice?") **before spending a 10-day
-trial on anything** — if Essential structurally cannot deliver
-real-time or cannot clear MANSA's own request volume, no amount of
-additional trial time changes that, and a different (likely costlier)
-GNews tier would need to be the actual comparison point against NewsAPI
-Business, not Essential. Once that's answered, the News Provider
-Validation Gate's original 10-day-trial recommendation still stands for
-whatever tier turns out to be the real comparison.
+**Current HQ decision (2026-09-04, recorded in full in
+`docs/ops/news-provider-decision-record.md`): GNews remains MANSA's
+development news provider. No upgrade or migration now.** Before
+Beta/production, six items must be validated on an actual
+commercially-usable GNews tier: (1) upgrade to that tier, (2) validate
+real-time NFL freshness, (3) validate paid full-content behavior if
+required, (4) validate quota/rate behavior under the redesigned
+cadence, (5) reconfirm commercial-use terms, (6) then make the final
+production-provider decision. NewsAPI Business remains an alternative
+benchmark, not an authorized purchase. This report's own "escalate to
+GNews support / run a 10-day trial" recommendation is superseded by
+that six-item gate, which supersedes it with a fuller, HQ-approved
+sequence rather than contradicting its substance.
 
 ---
 
@@ -383,15 +434,20 @@ diagnostic module present), and after the revert. **Deployment**: DEV
 only, `sports-intel-layer` only. `cron-odds-worker` untouched throughout
 (a separate service; nothing in this task's pushes touched it or its
 frozen state). Staging and production untouched throughout. No database
-writes at any point. No subscription purchased, upgraded, or changed —
-GNews Essential was already active before this task began, and remains
-unchanged.
+writes at any point. No subscription purchased, upgraded, or changed
+by this task. **CORRECTED (2026-09-04):** the credential actually
+exercised resolved to Free-plan behavior — whatever the state of the
+committed Essential subscription at the time, it was not what this
+validation's calls actually ran against. Not re-litigated further here;
+GNews remains MANSA's development provider per the current decision
+record, unchanged in tier by anything in this report.
 
-**Remaining validation, not done here**: a direct GNews support inquiry
-on real-time entitlement and sustained rate limits (recommended above);
-a request-volume trial run against MANSA's actual News Worker cadence
-once the tier/entitlement question is resolved; confirmation of
-`expand=content`'s real behavior once account provisioning is
-confirmed; a same-day cross-check of GNews vs. NewsAPI on an identical
-query, if NewsAPI is ever re-tested for direct comparison (not done
-this pass, since GNews was the only new credential HQ configured).
+**Remaining validation, not done here, now tracked as the explicit
+production/beta gate in `docs/ops/news-provider-decision-record.md`**:
+upgrade to a commercially-usable GNews tier; validate real-time NFL
+freshness on it; validate paid `expand=content` behavior if required;
+validate quota/rate behavior under the redesigned News Worker cadence;
+reconfirm commercial-use terms; a same-day cross-check of GNews vs.
+NewsAPI on an identical query, if NewsAPI is ever re-tested for direct
+comparison (not done this pass, since GNews was the only new credential
+HQ configured).
