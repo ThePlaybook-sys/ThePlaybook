@@ -76,7 +76,7 @@ from app.adapters.models import AdapterResponse, WeatherConditions
 from app.adapters.providers.weatherapi import WeatherAPIWeatherAdapter
 from app.persistence.games import GamesQueryError, list_games_in_window
 from app.persistence.weather_snapshots import PersistenceError, persist_weather_snapshots
-from app.workers.windows import Window, classify_window
+from app.workers.windows import Window, classify_window, in_game
 
 #: Same candidate-window convention as every other specialized worker --
 #: an independent worker-level scoping decision, not a reinterpretation of
@@ -93,6 +93,7 @@ class WeatherWorkerResult:
     status: str  # "success" | "partial" | "failed"
     games_considered: int = 0
     games_due: int = 0
+    games_in_game: list[str] = field(default_factory=list)
     games_skipped_not_due: int = 0
     games_skipped_dome: list[str] = field(default_factory=list)
     games_skipped_unresolved_location: list[str] = field(default_factory=list)
@@ -137,8 +138,21 @@ def _location_for_game(game: dict) -> str | None:
 
 def _should_poll(*, now: datetime, kickoff: datetime, last_polled_at: datetime | None) -> bool:
     """Flat interval, reusing only `classify_window`'s STOPPED
-    classification (DERIVED) -- never its ramp-tier intervals."""
-    if classify_window(now=now, kickoff=kickoff) is Window.STOPPED:
+    classification (DERIVED) -- never its ramp-tier intervals.
+
+    **2026 Data Preservation Readiness Plan (pre-9/9 minimum,
+    2026-09-04):** a game classified STOPPED (at/after kickoff) is no
+    longer an automatic stop -- `in_game()` (`app.workers.windows`, a
+    bounded, disclosed-conservative post-kickoff window shared with
+    Injury Worker, NOT with Odds/Player Props) keeps this worker polling
+    at the SAME existing flat 900s cadence through a live game, so
+    in-game weather changes ("where the provider supports them," per
+    HQ's own instruction) get captured instead of silently stopping
+    solely because kickoff occurred. Once `in_game()` also returns
+    `False` (the bounded window has elapsed), polling stops exactly as
+    before."""
+    window = classify_window(now=now, kickoff=kickoff)
+    if window is Window.STOPPED and not in_game(now=now, kickoff=kickoff):
         return False
     if last_polled_at is None:
         return True
@@ -211,6 +225,10 @@ async def run_weather_worker(
             status="success", games_considered=len(games), games_skipped_not_due=skipped_not_due
         )
 
+    games_in_game = [
+        game["id"] for game in due_games if in_game(now=now, kickoff=_parse_datetime(game["scheduled_start"]))
+    ]
+
     skipped_dome: list[str] = []
     skipped_unresolved_location: list[str] = []
     pollable_games: list[dict] = []
@@ -234,6 +252,7 @@ async def run_weather_worker(
             status=status,
             games_considered=len(games),
             games_due=len(due_games),
+            games_in_game=games_in_game,
             games_skipped_not_due=skipped_not_due,
             games_skipped_dome=skipped_dome,
             games_skipped_unresolved_location=skipped_unresolved_location,
@@ -281,6 +300,7 @@ async def run_weather_worker(
         status=status,
         games_considered=len(games),
         games_due=len(due_games),
+        games_in_game=games_in_game,
         games_skipped_not_due=skipped_not_due,
         games_skipped_dome=skipped_dome,
         games_skipped_unresolved_location=skipped_unresolved_location,

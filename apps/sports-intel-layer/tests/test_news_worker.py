@@ -102,7 +102,22 @@ def _by_team_response(responses: dict[str, dict]):
     return _respond
 
 
+def _mock_news_article_history_insert():
+    """2026 Data Preservation Readiness Plan (2026-09-04): every
+    successful team fetch now also writes to news_article_history
+    (app.persistence.news_article_history), alongside the existing
+    daily_game_intelligence write -- mocked here, in the one shared
+    execution helper every test in this file goes through, rather than
+    in each test individually. `return_value=[]` (an empty PostgREST
+    `ignore-duplicates` response body) is a safe default for tests that
+    don't specifically assert on this route's own call count."""
+    return respx.post(f"{SUPABASE_URL}/rest/v1/news_article_history").mock(
+        return_value=httpx.Response(201, json=[])
+    )
+
+
 async def _run(*, now, last_polled_at=None, cache_backend=None):
+    _mock_news_article_history_insert()
     async with httpx.AsyncClient(base_url=SUPABASE_URL) as supabase_client, httpx.AsyncClient(
         base_url=NEWSAPI_URL
     ) as newsapi_client:

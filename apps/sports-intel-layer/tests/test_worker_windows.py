@@ -17,10 +17,12 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from app.workers.windows import (
+    IN_GAME_DURATION,
     InjuryWindow,
     Window,
     classify_injury_window,
     classify_window,
+    in_game,
     injury_poll_interval_seconds,
     injury_ttl_seconds,
     poll_interval_seconds,
@@ -422,3 +424,58 @@ def test_injury_window_dst_safety_reuses_classify_window_utc_normalization():
     # Correct (UTC-normalized) real gap: 1h0m, one hour skipped by the
     # spring-forward transition -> INACTIVE_LIST.
     assert classify_injury_window(now=now, kickoff=kickoff) == InjuryWindow.INACTIVE_LIST
+
+
+# ============================================================================
+# in_game() -- 2026 Data Preservation Readiness Plan (2026-09-04). A
+# bounded post-kickoff continuation shared by Weather and Injury Workers
+# only -- NOT consulted by classify_window/classify_injury_window
+# themselves, and NOT used by Odds/Player Props Worker, which remain
+# STOPPED at kickoff exactly as before this addition.
+# ============================================================================
+
+
+def test_in_game_false_before_kickoff():
+    kickoff = datetime(2026, 9, 14, 17, 0, tzinfo=timezone.utc)
+    now = kickoff - timedelta(minutes=1)
+    assert in_game(now=now, kickoff=kickoff) is False
+
+
+def test_in_game_true_immediately_at_kickoff():
+    kickoff = datetime(2026, 9, 14, 17, 0, tzinfo=timezone.utc)
+    assert in_game(now=kickoff, kickoff=kickoff) is True
+
+
+def test_in_game_true_partway_through_the_bounded_window():
+    kickoff = datetime(2026, 9, 14, 17, 0, tzinfo=timezone.utc)
+    now = kickoff + (IN_GAME_DURATION / 2)
+    assert in_game(now=now, kickoff=kickoff) is True
+
+
+def test_in_game_false_once_the_bounded_window_has_elapsed():
+    kickoff = datetime(2026, 9, 14, 17, 0, tzinfo=timezone.utc)
+    now = kickoff + IN_GAME_DURATION
+    assert in_game(now=now, kickoff=kickoff) is False
+
+
+def test_in_game_requires_aware_datetimes():
+    kickoff = datetime(2026, 9, 14, 17, 0, tzinfo=timezone.utc)
+    naive_now = datetime(2026, 9, 14, 18, 0)
+    with pytest.raises(ValueError):
+        in_game(now=naive_now, kickoff=kickoff)
+
+
+def test_in_game_dst_safety_uses_utc_normalization():
+    # Same DST subtlety this module already guards against elsewhere --
+    # two datetimes sharing the same ZoneInfo tzinfo object straddling a
+    # spring-forward transition must not fall back to a naive wall-clock
+    # subtraction.
+    kickoff = datetime(2026, 3, 8, 1, 0, tzinfo=EASTERN)  # 1:00 AM EST (just before spring-forward)
+    now = datetime(2026, 3, 8, 3, 30, tzinfo=EASTERN)  # 3:30 AM EDT (just after spring-forward)
+    assert now.tzinfo is kickoff.tzinfo
+    # Naive (wrong) wall-clock gap: 2h30m -- still "in game" under a 4h bound.
+    # Correct (UTC-normalized) real gap: 1h30m (one hour skipped by the
+    # spring-forward transition) -- also still "in game" under a 4h bound,
+    # but the point is the UTC-normalized path is the one actually taken,
+    # not that this particular case would fail otherwise.
+    assert in_game(now=now, kickoff=kickoff) is True

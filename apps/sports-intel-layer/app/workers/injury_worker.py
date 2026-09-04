@@ -68,6 +68,8 @@ from app.persistence.seasons import SeasonResolutionError, fetch_current_season_
 from app.workers.windows import (
     InjuryWindow,
     classify_injury_window,
+    in_game,
+    injury_poll_interval_seconds,
     injury_ttl_seconds,
     should_poll_injuries,
 )
@@ -85,6 +87,7 @@ class InjuryWorkerResult:
     status: str  # "success" | "partial" | "failed"
     games_considered: int = 0
     active_games: int = 0
+    driver_in_game: bool = False
     polled: bool = False
     reports_persisted: int = 0
     failures: list[str] = field(default_factory=list)
@@ -184,11 +187,19 @@ async def run_injury_worker(
     if not games:
         return InjuryWorkerResult(status="success", games_considered=0)
 
+    # 2026 Data Preservation Readiness Plan (pre-9/9 minimum, 2026-09-04):
+    # a game classified STOPPED is still "active" for this worker's
+    # purposes if it's inside the bounded post-kickoff in_game() window
+    # (app.workers.windows, shared with Weather, NOT with Odds/Player
+    # Props) -- so this worker's own existing cadence continues through a
+    # live game instead of stopping solely because kickoff occurred, per
+    # HQ's explicit instruction not to redesign injury intelligence
+    # otherwise.
     active_games = [
         g
         for g in games
-        if classify_injury_window(now=now, kickoff=_parse_datetime(g["scheduled_start"]))
-        is not InjuryWindow.STOPPED
+        if classify_injury_window(now=now, kickoff=_parse_datetime(g["scheduled_start"])) is not InjuryWindow.STOPPED
+        or in_game(now=now, kickoff=_parse_datetime(g["scheduled_start"]))
     ]
     if not active_games:
         return InjuryWorkerResult(status="success", games_considered=len(games), active_games=0)
@@ -198,13 +209,29 @@ async def run_injury_worker(
 
     driver_game = forced_driver or min(active_games, key=lambda g: _parse_datetime(g["scheduled_start"]))
     driver_kickoff = _parse_datetime(driver_game["scheduled_start"])
+    driver_window = classify_injury_window(now=now, kickoff=driver_kickoff)
+    driver_in_game = driver_window is InjuryWindow.STOPPED and in_game(now=now, kickoff=driver_kickoff)
 
-    if forced_driver is None and not should_poll_injuries(
-        now=now, kickoff=driver_kickoff, last_polled_at=last_polled_at
-    ):
-        return InjuryWorkerResult(
-            status="success", games_considered=len(games), active_games=len(active_games), polled=False
-        )
+    if forced_driver is None:
+        if driver_in_game:
+            # STOPPED-but-in-game: continue at the SAME already-established
+            # tightest pre-kickoff interval (INACTIVE_LIST's 15 minutes) --
+            # a reused existing number, not a new one, per HQ's "do not
+            # redesign injury intelligence" instruction.
+            interval = injury_poll_interval_seconds(InjuryWindow.INACTIVE_LIST)
+            due = last_polled_at is None or (
+                now.astimezone(timezone.utc) - last_polled_at.astimezone(timezone.utc) >= timedelta(seconds=interval)
+            )
+        else:
+            due = should_poll_injuries(now=now, kickoff=driver_kickoff, last_polled_at=last_polled_at)
+        if not due:
+            return InjuryWorkerResult(
+                status="success",
+                games_considered=len(games),
+                active_games=len(active_games),
+                driver_in_game=driver_in_game,
+                polled=False,
+            )
 
     week = driver_game["week"]
     if week is None:
@@ -270,6 +297,7 @@ async def run_injury_worker(
             status="failed",
             games_considered=len(games),
             active_games=len(active_games),
+            driver_in_game=driver_in_game,
             polled=True,
             error=f"injuries fetch failed: {exc}",
         )
@@ -287,6 +315,7 @@ async def run_injury_worker(
         status=status,
         games_considered=len(games),
         active_games=len(active_games),
+        driver_in_game=driver_in_game,
         polled=True,
         reports_persisted=persisted,
         failures=failures,

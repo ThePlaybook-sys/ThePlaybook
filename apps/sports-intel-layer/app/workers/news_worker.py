@@ -1,5 +1,15 @@
 """News Worker orchestration (Phase 3E-7).
 
+**2026 Data Preservation Readiness Plan (pre-9/9 minimum, 2026-09-04):**
+this worker gained one additive write, `app.persistence.
+news_article_history.write_news_article_history`, called per team
+alongside (never instead of) the existing `write_news` current-state
+write below. It preserves first-sighting `ingested_at`/`published_at`/
+identity/team-attribution history that `daily_game_intelligence.news`'s
+own overwrite-on-every-cycle shape cannot. This is NOT a GNews/NewsAPI
+provider decision and does NOT change this worker's fetch logic, cadence,
+or team-scoping -- see `docs/ops/2026-data-preservation-readiness-plan-2026-09-04.md`.
+
 **Provider decision status -- BLOCKER, not silently resolved.** Volume 2
 §8 names NewsAPI as default vendor and GNews as fallback, but Mac
 explicitly held back any primary/fallback comparison on 2026-08-11 and
@@ -150,6 +160,8 @@ from app.adapters.models import AdapterResponse, NewsArticle
 from app.adapters.providers.newsapi import NewsAPINewsAdapter
 from app.persistence.daily_game_intelligence import DailyGameIntelligenceError, write_news
 from app.persistence.games import GamesQueryError, list_games_in_window
+from app.persistence.news_article_history import PersistenceError as NewsHistoryPersistenceError
+from app.persistence.news_article_history import write_news_article_history
 from app.persistence.team_identity import TeamIdentityError, resolve_team_ids
 from app.persistence.teams import TeamsQueryError, list_teams_by_id
 
@@ -178,6 +190,7 @@ class NewsWorkerResult:
     articles_dropped_unresolved: int = 0
     games_updated: int = 0
     games_skipped_no_data: int = 0
+    history_rows_written: int = 0
     failures: list[str] = field(default_factory=list)
     error: str | None = None
 
@@ -298,6 +311,7 @@ async def run_news_worker(
     provider_source = "newsapi"
     failures: list[str] = []
     articles_dropped_unresolved = 0
+    history_rows_written = 0
 
     for team_id in due_team_ids:
         team_name = team_id_to_name[team_id]
@@ -312,6 +326,22 @@ async def run_news_worker(
         validated, dropped = _validate_articles(team_name, response.value)
         articles_dropped_unresolved += dropped
         team_articles[team_id] = validated
+
+        # 2026 Data Preservation Readiness Plan (pre-9/9 minimum): first-
+        # sighting history, additive alongside the existing daily_game_
+        # intelligence.news current-state write below -- never a
+        # replacement for it, never a GNews/NewsAPI selection, never a
+        # cadence change. A history-write failure is recorded but does not
+        # drop this team's articles from the rest of the cycle (the
+        # existing daily_game_intelligence write is the load-bearing path;
+        # history is best-effort on top of it).
+        if validated:
+            try:
+                history_rows_written += await write_news_article_history(
+                    AdapterResponse(value=validated, source=response.source), team_id=team_id
+                )
+            except NewsHistoryPersistenceError as exc:
+                failures.append(f"{team_name}: news history write failed: {exc}")
 
     games_updated = 0
     games_skipped_no_data = 0
@@ -354,5 +384,6 @@ async def run_news_worker(
         articles_dropped_unresolved=articles_dropped_unresolved,
         games_updated=games_updated,
         games_skipped_no_data=games_skipped_no_data,
+        history_rows_written=history_rows_written,
         failures=failures,
     )

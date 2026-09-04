@@ -286,8 +286,11 @@ async def test_no_games_in_candidate_window_skips_provider_calls_entirely(monkey
 @pytest.mark.asyncio
 @respx.mock
 async def test_all_games_stopped_skips_provider_calls_entirely(monkeypatch):
-    """Every candidate game has already kicked off (or is kicking off
-    right now) -- STOPPED, excluded from driver selection, no poll."""
+    """2026 Data Preservation Readiness Plan (2026-09-04): a game is only
+    genuinely excluded once the bounded post-kickoff in_game() window has
+    actually elapsed (IN_GAME_DURATION = 4h) -- 6 hours after kickoff is
+    well past that bound, unlike the 1-hour case covered by
+    test_in_game_window_continues_polling below."""
     _headers_env(monkeypatch)
     games = [
         _game_row(game_id=DB_GAME_ARI_NO, home="ARI", away="NO", scheduled_start="2026-09-16T11:00:00Z"),
@@ -297,13 +300,46 @@ async def test_all_games_stopped_skips_provider_calls_entirely(monkeypatch):
         return_value=httpx.Response(200, json=load("injuries_normal.json"))
     )
 
-    now = datetime(2026, 9, 16, 12, 0, tzinfo=timezone.utc)  # 1 hour after this game's kickoff
+    now = datetime(2026, 9, 16, 17, 0, tzinfo=timezone.utc)  # 6 hours after kickoff -- genuinely over
     result = await _run(now=now)
 
     assert result.status == "success"
     assert result.games_considered == 1
     assert result.active_games == 0
+    assert result.driver_in_game is False
     assert injuries_route.call_count == 0
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_in_game_window_continues_polling(monkeypatch):
+    """2026 Data Preservation Readiness Plan (2026-09-04): a game 1 hour
+    past kickoff is no longer excluded solely because kickoff occurred --
+    it falls inside the bounded in_game() window, remains active, and
+    polls (reusing the existing INACTIVE_LIST interval, not a new
+    number), so in-game injury/availability changes get captured instead
+    of the worker terminating solely because kickoff occurred."""
+    _headers_env(monkeypatch)
+    games = [
+        _game_row(game_id=DB_GAME_ARI_NO, home="ARI", away="NO", scheduled_start="2026-09-16T11:00:00Z"),
+    ]
+    _mock_games(games)
+    _mock_season()
+    _mock_game_provider_ids({DB_GAME_ARI_NO: SDIO_GAME_ARI_NO})
+    insert_route = _mock_injury_reports_insert()
+    injuries_route = respx.get(_injuries_url("2026REG", 1)).mock(
+        return_value=httpx.Response(200, json=load("injuries_normal.json"))
+    )
+
+    now = datetime(2026, 9, 16, 12, 0, tzinfo=timezone.utc)  # 1 hour after kickoff -- in-game
+    result = await _run(now=now)
+
+    assert result.status == "success"
+    assert result.active_games == 1
+    assert result.driver_in_game is True
+    assert result.polled is True
+    assert injuries_route.call_count == 1
+    assert insert_route.call_count == 1
 
 
 @pytest.mark.asyncio

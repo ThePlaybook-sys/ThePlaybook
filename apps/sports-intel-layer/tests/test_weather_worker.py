@@ -272,17 +272,47 @@ async def test_no_games_in_candidate_window_skips_provider_calls(monkeypatch):
 @pytest.mark.asyncio
 @respx.mock
 async def test_stopped_game_excluded_from_polling(monkeypatch):
+    """2026 Data Preservation Readiness Plan (2026-09-04): a game is only
+    genuinely excluded once the bounded post-kickoff in_game() window has
+    actually elapsed (IN_GAME_DURATION = 4h) -- 6 hours after kickoff is
+    well past that bound, unlike the 1-hour case covered by
+    test_in_game_window_continues_polling below."""
     _headers_env(monkeypatch)
     _mock_games([_game_row(game_id=DB_GAME_OUTDOOR, scheduled_start="2026-09-14T11:00:00Z")])
     forecast_route = _forecast_route().mock(return_value=httpx.Response(200, json=load("forecast_normal.json")))
 
-    now = datetime(2026, 9, 14, 12, 0, tzinfo=timezone.utc)  # 1 hour after kickoff -- STOPPED
+    now = datetime(2026, 9, 14, 17, 0, tzinfo=timezone.utc)  # 6 hours after kickoff -- genuinely over
     result = await _run(now=now)
 
     assert result.status == "success"
     assert result.games_considered == 1
     assert result.games_due == 0
+    assert result.games_in_game == []
     assert forecast_route.call_count == 0
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_in_game_window_continues_polling(monkeypatch):
+    """2026 Data Preservation Readiness Plan (2026-09-04): a game 1 hour
+    past kickoff is no longer excluded solely because kickoff occurred --
+    it falls inside the bounded in_game() window and polls at the SAME
+    existing flat 15-minute cadence, so in-game weather changes get
+    captured where the provider supports them."""
+    _headers_env(monkeypatch)
+    _mock_games([_game_row(game_id=DB_GAME_OUTDOOR, scheduled_start="2026-09-14T11:00:00Z")])
+    insert_route = _mock_weather_snapshots_insert()
+    forecast_route = _forecast_route().mock(return_value=httpx.Response(200, json=load("forecast_normal.json")))
+
+    now = datetime(2026, 9, 14, 12, 0, tzinfo=timezone.utc)  # 1 hour after kickoff -- in-game
+    result = await _run(now=now)
+
+    assert result.status == "success"
+    assert result.games_considered == 1
+    assert result.games_due == 1
+    assert result.games_in_game == [DB_GAME_OUTDOOR]
+    assert forecast_route.call_count == 1
+    assert insert_route.call_count == 1
 
 
 @pytest.mark.asyncio

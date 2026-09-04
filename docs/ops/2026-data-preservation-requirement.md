@@ -1,14 +1,31 @@
 # 2026 Data Preservation Requirement
 
-**UPDATE (2026-09-04, same day): a full readiness plan answering "what
+**UPDATE 2 (2026-09-04, same day): the minimum pre-9/9 implementation is
+DONE, in DEV.** `game_events` and `news_article_history` (Volume 3
+§4.3/§4.4) are live tables, both migrations applied and verified
+(append-only triggers live-proven by real rejected `UPDATE`s;
+`news_article_history`'s dedup live-proven by a real rollback-wrapped
+insert-twice test). Weather Worker and Injury Worker both now continue
+through a bounded 4-hour post-kickoff window instead of stopping solely
+at kickoff (Volume 2 §8 v5.4). News Worker now writes first-sighting
+history alongside its existing current-state write. **Still NOT done,
+by design:** any `game_events` normalization, any real MySportsFeeds
+adapter wiring, any in-game Odds/Player Props capture (a separate HQ
+decision), and any live invocation against a real game — all deferred
+to after the 2026-09-09/10 live-game validation. Full implementation
+report: `docs/ops/2026-data-preservation-readiness-plan-2026-09-04.md`
+(§9's sequence, steps 1-4 now complete). 654/654 sports-intel-layer
+tests passing. DEV only; staging/production untouched.
+
+**UPDATE 1 (2026-09-04, same day): a full readiness plan answering "what
 do we do about this" is now available at
 `docs/ops/2026-data-preservation-readiness-plan-2026-09-04.md`** —
 proposed provider-neutral schema (Volume 3 §4.3 Game Events/PBP, §4.4
 News History), a cost-conscious in-game capture strategy per category,
 and a recommended pre-9/9 implementation sequence. This document
 remains the original audit/risk-identification pass; the readiness plan
-is the follow-on design work built on top of it. Neither document
-implements anything.
+was the follow-on design work built on top of it, since implemented per
+Update 2 above.
 
 **STATUS: URGENT, TIME-SENSITIVE.** The 2026 NFL regular season opens
 2026-09-09 (Seahawks host Patriots, kickoff 2026-09-10T00:20:00Z, per

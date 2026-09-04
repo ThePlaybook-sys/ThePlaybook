@@ -1,14 +1,20 @@
 # MANSA 2026 Regular-Season Data Preservation Readiness Plan
 
-**STOP BEFORE IMPLEMENTATION — this document is a design/planning
-deliverable only.** No migration has been applied, no worker has been
-rewritten, no provider/subscription has been changed, and no Railway
-service has been touched. This is not Phase 8 implementation and does
-not reopen Phase 4 recommendation/probability wiring. It builds
-directly on `docs/ops/2026-data-preservation-requirement.md` (the
-2026-09-04 audit that first identified this risk) and the new
-architecture reservations at Volume 3 §4.3 (Game Events / Play-by-Play)
-and §4.4 (News History).
+**IMPLEMENTATION STATUS (2026-09-04, same day): the minimum pre-9/9 set
+(§3, §9 steps 1-4) is DONE, in DEV.** This document was originally
+written as a design/planning deliverable ("STOP BEFORE IMPLEMENTATION");
+HQ subsequently authorized building exactly the minimum pre-9/9 set it
+recommended. What follows is preserved as written (the original
+analysis), with §3 and §9 annotated inline to show what's actually
+built versus what remains deferred. **Still not done, by design:** any
+`game_events` normalization, any real MySportsFeeds adapter wiring, any
+in-game Odds/Player Props capture (a separate HQ decision), and any
+live invocation against a real game — all correctly deferred to after
+the 2026-09-09/10 live-game validation. This does not implement Phase 8
+and does not reopen Phase 4 recommendation/probability wiring. It
+builds directly on `docs/ops/2026-data-preservation-requirement.md` (the
+2026-09-04 audit that first identified this risk) and Volume 3
+§4.3/§4.4 (now implemented, see their own updated status notes).
 
 **Season opener: 2026-09-09** (Seahawks host Patriots, kickoff
 2026-09-10T00:20:00Z). This document is dated five days before that.
@@ -69,6 +75,8 @@ real, existing strength, not something this plan needs to fix:
 ---
 
 ## 3. Minimum pre-9/9 implementation required
+
+**STATUS: DONE (2026-09-04), all five items below, in DEV.**
 
 **Recommended for HQ authorization before 2026-09-09** (implementation
 itself is not performed by this planning pass):
@@ -239,30 +247,32 @@ either free or reuses a call that was already going to happen.
 **All items below require separate HQ authorization before any code is
 written — this plan only proposes the order.**
 
-1. **Apply Volume 3 §4.3/§4.4 as real DEV-only migrations** — empty
-   tables, zero behavioral risk, unblocks everything else.
-2. **Wire `news_article_history`'s insert-once capture into News
-   Worker** — pure additive write, no fetch-logic change, $0 marginal
-   cost. Lowest-risk, highest-value first implementation step.
-3. **Extend Weather Worker past kickoff** — $0 marginal cost, second
-   lowest-risk step.
-4. **Extend Injury Worker's cadence through kickoff** — near-$0
-   marginal cost.
-5. **Wire the `game_events` raw-capture path**, targeting the
-   2026-09-09/10 MySportsFeeds live-game validation call specifically —
-   must be ready *before* that call fires, so step 5 has the nearest
-   real deadline of anything in this sequence.
-6. **Run the 2026-09-09/10 MySportsFeeds live-game validation** (the
-   already-existing, separately-gated task) — produces the first real
-   `game_events` rows (raw payload only) and the evidence needed for
-   step 8.
-7. **Decide on the Odds in-game coarse tier** — the one item with a
-   real (if small) cost, deserving its own explicit go/no-go rather
-   than bundling it with the free/near-free items above.
-8. **Only after step 6**, design and authorize `game_events`'
-   normalization logic (`period`/`clock`/`event_type`/player
-   involvement) against the real, validated MySportsFeeds payload shape
-   — never before it.
+1. **DONE — Apply Volume 3 §4.3/§4.4 as real DEV-only migrations.** Both
+   tables live, append-only triggers live-verified.
+2. **DONE — Wire `news_article_history`'s insert-once capture into News
+   Worker.** Additive write alongside the existing `write_news` call;
+   dedup live-verified.
+3. **DONE — Extend Weather Worker past kickoff.** Bounded 4-hour
+   `in_game()` window, same flat cadence, tested.
+4. **DONE — Extend Injury Worker's cadence through kickoff.** Same
+   bounded window, reuses the existing INACTIVE_LIST interval, tested.
+5. **DONE — Wire the `game_events` raw-capture path** (`app.persistence.
+   game_events.write_raw_game_events`), ready to be called once the
+   2026-09-09/10 MySportsFeeds live-game validation actually runs. This
+   pass does not itself call MySportsFeeds — that remains the separate,
+   already-gated validation task.
+6. **NOT YET DONE — Run the 2026-09-09/10 MySportsFeeds live-game
+   validation** (the already-existing, separately-gated task) — produces
+   the first real `game_events` rows (raw payload only) and the evidence
+   needed for step 8.
+7. **NOT YET DONE — Decide on the Odds in-game coarse tier** — the one
+   item with a real (if small) cost, deserving its own explicit go/no-go
+   rather than bundling it with the free/near-free items above. Remains
+   a separate HQ decision, not authorized by this pass.
+8. **NOT YET DONE — Only after step 6**, design and authorize
+   `game_events`' normalization logic (`period`/`clock`/`event_type`/
+   player involvement) against the real, validated MySportsFeeds payload
+   shape — never before it.
 
 Steps 1-4 are the actual "minimum pre-9/9" set (§3 above); step 5 has
 the hardest deadline (it must exist before the 9/9 game, or the

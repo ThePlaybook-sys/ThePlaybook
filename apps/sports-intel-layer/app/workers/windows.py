@@ -329,6 +329,46 @@ def injury_ttl_seconds(window: InjuryWindow) -> int:
     return _INJURY_TTL_SECONDS[window]
 
 
+# ============================================================================
+# In-game continuation (2026 Data Preservation Readiness Plan, pre-9/9
+# minimum, 2026-09-04) -- a bounded EXTENSION opted into explicitly by
+# Weather and Injury Workers only, never by classify_window/
+# classify_injury_window themselves and never by Odds/Player Props
+# Worker, which remain STOPPED at kickoff exactly as before (Phase 7's
+# own frozen scope; in-game Odds/Player Props capture is a separate,
+# not-yet-authorized HQ decision).
+#
+# Weather changes slowly and Injury's own bulk-fetch call shape doesn't
+# multiply per-game, so both can safely keep polling through a live game
+# at their EXISTING flat/day-of-week cadence rather than stopping dead at
+# kickoff -- but "keep polling forever" is not economical either (a game
+# that never gets marked final would poll indefinitely). `IN_GAME_DURATION`
+# is a disclosed, conservative, ASSUMED upper bound for a real NFL game
+# including overtime -- not empirically derived, not Blueprint-stated,
+# chosen the same way this project's other undecided numbers are chosen
+# (a deliberately generous, not-tightly-optimized default that can be
+# revisited once real season data exists) -- deliberately NOT status-aware
+# (it does not check `games.status`/`finalized_at`): a fixed bound is the
+# simplest, most economical design that needs no extra query, per HQ's own
+# "keep cadence economical... do not redesign" instruction for this pass.
+IN_GAME_DURATION = timedelta(hours=4)
+
+
+def in_game(*, now: datetime, kickoff: datetime) -> bool:
+    """True if `now` falls inside the bounded post-kickoff window a
+    worker that has explicitly opted into in-game capture should keep
+    treating as active -- `[kickoff, kickoff + IN_GAME_DURATION)`. Both
+    arguments must be timezone-aware, same requirement as every other
+    function in this module. Returns `False` both before kickoff (that's
+    what the existing pregame tiers already handle) and at/after the
+    bound (genuinely over -- the worker should stop)."""
+    _require_aware(now, "now")
+    _require_aware(kickoff, "kickoff")
+    kickoff_utc = kickoff.astimezone(timezone.utc)
+    now_utc = now.astimezone(timezone.utc)
+    return kickoff_utc <= now_utc < kickoff_utc + IN_GAME_DURATION
+
+
 def should_poll_injuries(*, now: datetime, kickoff: datetime, last_polled_at: datetime | None) -> bool:
     """Same shape/semantics as `should_poll`, against the injury tiers.
     `last_polled_at` here is a single, worker-level timestamp (not
