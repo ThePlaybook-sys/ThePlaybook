@@ -1,5 +1,15 @@
 # 2026 Data Preservation Requirement
 
+**UPDATE (2026-09-04, same day): a full readiness plan answering "what
+do we do about this" is now available at
+`docs/ops/2026-data-preservation-readiness-plan-2026-09-04.md`** —
+proposed provider-neutral schema (Volume 3 §4.3 Game Events/PBP, §4.4
+News History), a cost-conscious in-game capture strategy per category,
+and a recommended pre-9/9 implementation sequence. This document
+remains the original audit/risk-identification pass; the readiness plan
+is the follow-on design work built on top of it. Neither document
+implements anything.
+
 **STATUS: URGENT, TIME-SENSITIVE.** The 2026 NFL regular season opens
 2026-09-09 (Seahawks host Patriots, kickoff 2026-09-10T00:20:00Z, per
 schedule data already pulled in the NFL provider bake-offs). **This

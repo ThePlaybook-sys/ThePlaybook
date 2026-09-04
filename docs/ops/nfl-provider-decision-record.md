@@ -129,6 +129,18 @@ assume permission for here.
 - Leave the diagnostic probe in the codebase afterward — revert it, per
   the established discipline, once the report is written.
 
+### Related preparation (2026-09-04, does not change this gate)
+
+`docs/ops/2026-data-preservation-readiness-plan-2026-09-04.md` proposes
+a provider-neutral `game_events` table (Volume 3 §4.3) and a raw-
+capture-only wiring plan intended to consume this exact gate's own
+2026-09-09/10 live-game validation call — so that call's real response,
+whatever it turns out to contain, gets preserved rather than only
+logged diagnostically and discarded. This does not change what the gate
+itself validates, does not add a new provider call, and does not
+pre-decide MySportsFeeds' field shapes — normalization work explicitly
+waits for this gate's own real result, per that plan's own §7.
+
 ### Closing the gate
 
 Update this record's "Current working hypothesis" section above with

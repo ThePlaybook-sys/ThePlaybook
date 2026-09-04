@@ -1,9 +1,10 @@
 # The Playbook — Volume 3
 ## Database Architecture: Tables, Relationships, Indexes, Triggers, Migrations, RLS
 
-**Version:** v4.24
-**Last updated:** 2026-08-28
+**Version:** v4.25
+**Last updated:** 2026-09-04
 
+**v4.25 note (MINOR, HQ decision):** New §4.3 (Game Events / Play-by-Play) and §4.4 (News History) — both architecture reservations only, mirroring Volume 4 §8.5/§8.6's identical "nothing described exists yet" treatment, prepared ahead of the 2026-09-09 NFL regular-season opener per the 2026 Data Preservation Readiness Plan (`docs/ops/2026-data-preservation-readiness-plan-2026-09-04.md`). §4.3 proposes a provider-neutral `game_events` table (raw provider payload as the load-bearing column, typed fields as best-effort normalization only) deliberately without locking any MySportsFeeds-specific field names ahead of that provider's still-pending live-game validation. §4.4 proposes an append-only `news_article_history` table (insert-once-per-article, not per-poll) closing the News-has-no-history gap both the Phase 7 and Phase 8 audits already found. Neither table is created by this entry — no migration applied. See `CHANGELOG.md`'s 2026-09-04 entry for full reasoning.
 **v4.24 note (PATCH):** §10's named list of tables following the `auth.uid() = user_id` RLS pattern extended to explicitly include `subscriptions` and `user_recommendation_selections` — both already carry that exact live policy, but the list omitted them (a self-acknowledged gap flagged in the `20260825120000_recommendation_products_schema.sql` migration's own comment for `subscriptions` at the time it was written, never corrected here until now). Found during Phase 6 Product/UX planning (Pass 3 §14 backend research). No schema or policy change. See `CHANGELOG.md` v4.24 entry for full reasoning.
 **v4.21 note (MINOR):** §5B gains a new §5C — `recommendation_activation_snapshots`/`_legs`/`_source_products` + `recommendation_product_lifecycle_events` (Phase 5 Milestone 5.3, Time Machine) — an additive activation manifest that composes already-frozen Milestone 5.1/5.2 rows by FK, never duplicating odds/EV/confidence/explanation content a second time. The legacy `recommendation_snapshots` (§5, Phase 1) is confirmed unfit for the Phase 5 product/leg layer and is left completely untouched. Two real, live-verified provenance gaps found during the Milestone 5.3 inspection are also closed: `consensus_snapshots` gains the append-only `BEFORE UPDATE` trigger every sibling table already had; `recommendation_agent_outputs` gains nullable `model_name`/`provider`/`used_fallback` columns recording the ACTUAL model/provider that produced each output (never the requested routing rule). `recommendation_product_explanations`/`recommendation_leg_explanations` gain `explainability_version`. See `CHANGELOG.md` v4.21 entry for full reasoning.
 **v4.20 note (MINOR):** §5A gains a new §5B — `recommendation_product_explanations`/`recommendation_leg_explanations` (Phase 5 Milestone 5.2, Deterministic V1) — two new additive tables giving every `recommendation_products`/`recommendation_legs` row exactly one, ever, append-only explanation. `explainability_payloads` (§5, Phase 1) is left completely untouched: not repointed, not retrofitted, not deleted, its existing row not migrated — its sole FK target (`recommendations.id`) has no path to the Phase 5 product layer, and it carries no append-only protection at all. See `CHANGELOG.md` v4.20 entry for full reasoning.
@@ -462,6 +463,79 @@ create table weather_scores (
 -- coaching_edge_scores, public_sentiment_scores
 ```
 Deliberately kept as separate tables rather than folded directly into `daily_game_intelligence` alone, so each score's calculation can be independently tested, versioned, and eventually fed into the Continuous Learning Engine's evaluation of which score types actually correlate with agent accuracy (Volume 4 §10) — a question that's only answerable if each score has its own queryable history.
+
+---
+
+### 4.3 Game Events / Play-by-Play (v4.25, proposed schema — ARCHITECTURE RESERVATION ONLY, NOT YET IMPLEMENTED, 2026-09-04)
+
+**Status: nothing described in this subsection exists in the database today.** Documented ahead of implementation, specifically so the 2026 regular season (opening 2026-09-09) does not pass with no schema ready to receive play-by-play/game-event data if a provider is confirmed to supply it usably — see `docs/ops/2026-data-preservation-readiness-plan-2026-09-04.md` for the full audit and sequencing this section supports.
+
+**No play-by-play or game-event table has ever existed in this schema** (confirmed by direct search, Phase 8 Milestone 8.0 audit, 2026-09-04) — `player_stats`/`team_stats` are single, final, post-game snapshots with no record of how a final line was produced. This subsection is the minimum, provider-neutral shape needed to start closing that gap, **deliberately without locking any MySportsFeeds-specific (or any other single provider's) field names** — the live MySportsFeeds PBP/box-score response shape is not yet validated against a real, played game (gated on the 2026-09-09/10 opener per `docs/ops/nfl-provider-decision-record.md`), and inventing provider-specific fields ahead of that validation is explicitly out of scope.
+
+```sql
+create table game_events (
+  id uuid primary key default gen_random_uuid(),
+  game_id uuid not null references games(id) on delete cascade,
+  provider_name text not null,              -- provenance: which provider this event came from
+  provider_event_id text,                   -- provider's own play/event id, where one exists — nullable, unvalidated until a real payload is seen
+  sequence_number integer,                  -- MANSA-derived ordering if the provider doesn't supply a clean one; provider's own sequence if it does — nullable pre-validation
+  period text,                              -- quarter/half/OT, kept as text (not an enum) until real provider vocabulary is confirmed
+  clock text,                               -- raw game-clock string as reported (e.g. "12:45") — kept as text, never parsed/typed ahead of seeing a real payload
+  event_type text,                          -- conservative bucket (e.g. 'play'/'score'/'turnover'/'penalty'/'substitution'/'timeout'/'other') — NOT a fabricated fine-grained taxonomy; raw_payload carries the real detail
+  description text,                         -- human-readable play description, if the provider supplies one
+  score_home integer,                       -- running score after this event, if determinable
+  score_away integer,
+  involved_team_id uuid references teams(id),      -- nullable — the team "on" this event, if determinable
+  involved_player_ids jsonb,                -- nullable array of player_id — populated only once player-identity resolution against a real payload is validated
+  raw_payload jsonb not null,               -- the complete, unmodified provider response fragment for this event — the actual "capture first" mechanism; every other column above is a best-effort normalization on top of this, never a replacement for it
+  captured_at timestamptz not null default now(),   -- MANSA's own ingestion clock — distinct from the in-game `clock` column
+  created_at timestamptz not null default now()
+);
+create index idx_game_events_game_seq on game_events(game_id, sequence_number);
+create index idx_game_events_game_time on game_events(game_id, captured_at desc);
+```
+
+**Append-only by design**, reusing `block_snapshot_updates()` verbatim — same trigger every other snapshot table in this document uses. A correction to an already-captured event is a new row, never an UPDATE, matching this document's own non-negotiable historical-integrity principle.
+
+**Why `raw_payload jsonb not null` is the load-bearing column, not a convenience.** Every typed column above (`period`/`clock`/`event_type`/`score_home`/`score_away`/`involved_team_id`/`involved_player_ids`) is a normalization attempt that may legitimately come back `null` for a given event, a given provider, or before that provider's real shape is validated — the raw payload never does. This mirrors `player_stats.stats`'s own precedent exactly (v4.12.1: "jsonb preserves the complete provider stat payload," typed extension columns added only once a real, demonstrated consumer needs them) — **do not add a typed extension table (a hypothetical `game_events_nfl`) until Phase 8 Milestone 8.1+ actually needs one**, per that same precedent.
+
+**What can be built safely before the live MySportsFeeds validation, and what must wait — the actual point of designing this table now:**
+- **Safe now:** the table itself, its append-only trigger, and a capture path that writes `game_id`/`provider_name`/`raw_payload`/`captured_at` unconditionally, regardless of what shape `raw_payload` turns out to hold. This requires zero assumption about MySportsFeeds' (or any provider's) real field names.
+- **Must wait for the 2026-09-09/10 live-game validation:** any normalization logic populating `period`/`clock`/`event_type`/`score_home`/`score_away`/`involved_team_id`/`involved_player_ids` from a real payload — attempting this before a real payload is seen would be exactly the "fabricate MSF fields" this section's own directive prohibited.
+
+**Identity/idempotency deliberately not fully resolved here.** `provider_event_id` is the natural uniqueness key once a real provider payload confirms one exists and is stable — no uniqueness constraint is added in this reservation, since a premature one risks either rejecting legitimate re-captures (if the provider's own id isn't as stable as assumed) or silently deduplicating genuinely distinct events (if it collides across periods/games). Revisit once real data answers this, per the same "don't invent a constraint ahead of evidence" discipline as the threshold deferrals throughout Volume 4.
+
+### 4.4 News History (v4.25, proposed schema — ARCHITECTURE RESERVATION ONLY, NOT YET IMPLEMENTED, 2026-09-04)
+
+**Status: nothing described in this subsection exists in the database today.** `daily_game_intelligence.news` (§4.1) remains the only place News currently lives — a single overwritten jsonb column with no history, re-confirmed by both the Phase 7 Milestone 7.0 audit and the Phase 8 Milestone 8.0 audit. This subsection proposes the minimum append-only capture needed to preserve *when* a material news item (an injury, an inactive designation, a suspension, a lineup change, a trade) first became known — a real prerequisite for the News → contextual-intelligence connection Volume 4 §8.6 anticipates, and for News to ever be citable as market-movement evidence per Volume 4 §8.5's own existing finding.
+
+```sql
+create table news_article_history (
+  id uuid primary key default gen_random_uuid(),
+  provider_name text not null,              -- provenance: 'newsapi' | 'gnews' | future providers
+  provider_article_id text,                 -- provider's own article id, where one exists (GNews supplies one; NewsAPI's adapter does not use one today)
+  article_url text not null,                -- stable identity where available — confirmed stable within the sample tested in the 2026-09-03 GNews validation
+  published_at timestamptz,                 -- the article's own claimed publication time, per the provider — nullable, since not every provider/article reliably supplies one
+  ingested_at timestamptz not null default now(),  -- MANSA's own first-seen capture clock — THE fact this table exists to preserve; nothing today records this at all
+  headline text,
+  summary text,                             -- description/summary only by default — see the licensing caution below on full article content
+  source_name text,
+  related_team_ids jsonb,                   -- nullable array of team_id — team attribution, same resolution discipline `news_worker.py` already applies
+  related_player_ids jsonb,                 -- nullable array of player_id — NEW relative to today's `NewsArticle` model, which has no player-level field at all; injury/inactive/trade news is fundamentally player-scoped, not only team-scoped
+  raw_payload jsonb,                        -- permitted metadata only by default (see licensing caution) — nullable, since not every capture needs to retain the full response
+  created_at timestamptz not null default now()
+);
+create unique index idx_news_article_history_identity on news_article_history(provider_name, article_url);
+create index idx_news_article_history_ingested on news_article_history(ingested_at desc);
+```
+
+**Insert-once-per-`(provider_name, article_url)`, not "every poll is a new row."** Unlike `odds_snapshots` (where every poll capturing a *changed* value is a meaningful new row), a news article's own content is typically immutable once published — capturing the same still-unchanged article on every 15-minute News Worker cycle would produce pure duplicate rows, not history. The unique index on `(provider_name, article_url)` enforces "insert only the first time this article is seen," so `ingested_at` reliably answers "when did MANSA first learn this" — the actual fact this table exists to preserve. (Considered and rejected: mirroring `odds_snapshots`' "every poll is a new row" convention verbatim — correct for a value that genuinely changes over time, wrong for a publication that doesn't.)
+
+**Licensing/redistribution caution — explicitly NOT resolved here.** Whether MANSA may store more than headline/summary/description-level metadata (i.e. full article body text) depends on each provider's own commercial-use and redistribution terms, which have not been independently confirmed for either NewsAPI Business or GNews Essential as part of this reservation (the GNews commercial-suitability question is explicitly still open per `docs/ops/news-provider-validation-gnews-2026-09-03.md`, criterion 11). **Default posture: `raw_payload` and `summary` carry metadata-level content only, never full article body text, until this is confirmed** — this is a real open compliance question for whoever eventually implements this table, not something this reservation decides.
+
+**Append-only**, reusing `block_snapshot_updates()`.
+
+**Relationship to `daily_game_intelligence.news` (unchanged by this section):** this table is new, additive history — it does not replace, migrate, or alter `daily_game_intelligence.news`'s existing current-state-only behavior. A future News Worker change to also write here (in addition to its existing upsert) is implementation work, not decided or scheduled by this reservation.
 
 ---
 
