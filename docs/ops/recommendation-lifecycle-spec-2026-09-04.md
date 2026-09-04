@@ -1,5 +1,20 @@
 # MANSA Recommendation Lifecycle — Spec (2026-09-04)
 
+**HQ DECISION LOCK (2026-09-04, same day as the original spec).** HQ reviewed the report below and issued a locked decision on all nine open items. The original spec (§1-9) is preserved below unedited for the record; this block is the authoritative resolution and takes precedence wherever the two differ.
+
+1. **Vocabulary approved as proposed:** `STRENGTHENED`/`WEAKENED`/`NO_LONGER_QUALIFIES`/`REPLACED`. `recommendation_products.status` stays binary `active`/`withdrawn` — no new status value.
+2. **`REPLACED` always creates a NEW `recommendation_products` row AND a NEW `recommendation_activation_snapshots` row.** Never mutates the original recommendation or its original snapshot.
+3. **Grading policy ratified as mandatory:** once activated, a recommendation remains independently gradeable on its ORIGINAL frozen terms even if later weakened, withdrawn, no longer qualifies, or replaced. A replacement/reversal that is itself activated is a separate, independently gradeable MANSA decision. This is HQ's own named mandatory protection against survivorship bias — not merely a recommended policy.
+4. **`user_recommendation_placements` approved.** Records USER-REPORTED placement/exposure, not sportsbook-verified execution. Placed status changes communication context only — never grading — and must never imply MANSA can cancel/cash-out/hedge the wager.
+5. **Do not implement or extend `market_monitoring_events` solely for lifecycle now.** Phase 7 remains solely responsible for Market Integrity signals and that table. This lifecycle capability's own `trigger_type` column borrows the same value-strings but is a separate, own-table CHECK constraint — no dependency on Phase 7 code to exist before this schema can be built.
+6. **Milestone 5.6 approved as a mandatory pre-Beta milestone — phased.** Basic lifecycle mechanics (schema, vocabulary, `user_recommendation_placements`) may be implemented earlier, ahead of Phase 7/Phase 8. Milestone 5.6 cannot be considered COMPLETE, however, until real Phase 7/Phase 8 signals can actually feed `trigger_type` — a build with no real signal behind anything but `model_refresh` does not satisfy this milestone's purpose.
+7. **Dashboard behavior locked at the principle level:** a materially changed recommendation must never silently disappear or overwrite its previous state, on any surface. Exact visual treatment remains a future implementation/design decision, not decided here.
+
+**Recorded into:** Volume 3 §5G (v4.28, "HQ Decision Lock" subsection), Volume 4 §9.7 (v5.13), Engineering Roadmap Milestone 5.6 (v4.9), `CHANGELOG.md`, `PROGRESS.md` — all same date. **No implementation, migration, or code change was made to record this lock** — every file touched is under `docs/`; grading logic, recommendation logic, UI, Telegram, workers, and staging/production remain untouched.
+
+---
+
+
 **PLANNING / SPEC ONLY. Nothing in this document is implemented.** No code, migration, grading logic, recommendation logic, UI, or Telegram integration was changed to produce this report. Staging and production were not touched. This document answers HQ's 2026-09-04 directive: formally define what happens when MANSA changes its view after a recommendation has already been activated and potentially acted on by a user.
 
 Companion changes made alongside this report (docs only): `docs/blueprint/volume-3-database-architecture.md` new §5G (v4.27), `docs/blueprint/volume-4-ai-intelligence.md` new §9.7 (v5.12), `docs/blueprint/engineering-roadmap-build-order.md` new proposed Phase 5 Milestone 5.6 (v4.8), `CHANGELOG.md`, `PROGRESS.md`.
