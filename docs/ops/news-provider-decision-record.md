@@ -13,10 +13,39 @@ Source reports, in order:
 2. `docs/ops/news-provider-validation-gnews-2026-09-03.md` — the
    controlled GNews Essential diagnostic against HQ's 11 named
    evaluation criteria.
+3. `docs/ops/news-cadence-architecture-audit-2026-09-04.md` — a
+   redesigned, centralized/adaptive News Worker cadence and a
+   recalculation of GNews Essential's request-volume fit against it.
 
 ---
 
-## Current status (2026-09-03): NOT DECIDED, two concrete blockers
+## UPDATE (2026-09-04): the volume blocker is resolved; the freshness
+blocker is NOT
+
+The 2026-09-03 validation's second blocker — GNews Essential's 1,000
+req/day quota being ~3x short of MANSA's actual cadence — was correctly
+derived from the *current* News Worker design (32 independent team
+queries every 15 minutes, no stop-at-kickoff), which HQ has since
+confirmed is not an accepted production requirement, only the design
+this project happened to build first. Under a redesigned, centralized/
+adaptive cadence (broad category queries instead of 32 team queries,
+entity/team classification after ingestion, adaptive/game-aware
+cadence reusing the existing `app.workers.windows` discipline, targeted
+team refresh only when justified — full detail in the linked audit),
+recalculated volume lands one to two orders of magnitude under
+Essential's quota even under deliberately generous assumptions.
+
+**This does not change the "NOT DECIDED" status below.** The real-time-
+entitlement and `expand=content` blockers are completely independent of
+request volume and remain exactly as open as they were on 2026-09-03 —
+resolving the volume question removed one reason to hesitate on GNews,
+it did not supply a reason to select it. No News Worker code has
+changed; this redesign remains a documented direction, not an
+implementation.
+
+---
+
+## Current status (2026-09-03, volume blocker superseded 2026-09-04): NOT DECIDED, two concrete blockers
 
 **GNews Essential is not recommended for production adoption yet — not
 because it's unproven on content quality (four of six named categories
@@ -31,13 +60,18 @@ open and materially affect whether it can do the job at all:**
    Whether this is a real Essential-tier limitation (real-time requires
    a higher tier) or a provisioning lag needs a direct answer from
    GNews support — not assumed either way.
-2. **Request-volume headroom is short.** MANSA's own News Worker
-   (`app/workers/news_worker.py`, Volume 2 §8) runs a flat 15-minute
-   cadence with no ramp tiers and no stop-at-kickoff, across up to 32
-   teams. That implies up to ~3,072 calls/day at typical in-season
-   volume — roughly 3x GNews Essential's confirmed 1,000 req/day quota.
-   This is a hard capacity ceiling, independent of the price comparison
-   the News Provider Validation Gate exists to run.
+2. ~~Request-volume headroom is short.~~ **SUPERSEDED 2026-09-04 — no
+   longer a blocker.** This was correctly derived from the *current*
+   News Worker design (32 independent team queries/15-min flat cadence,
+   ~3,072 calls/day at typical in-season volume, ~3x Essential's 1,000
+   req/day quota) — but HQ has since confirmed that design is not an
+   accepted production requirement. `docs/ops/news-cadence-architecture-audit-2026-09-04.md`
+   recalculates volume under a redesigned, centralized/adaptive cadence
+   (broad category queries + post-ingestion classification + adaptive
+   windows + justified-only targeted refresh) at one to two orders of
+   magnitude under quota. **The remaining live blocker is #1 above
+   only** — real-time entitlement/freshness, completely independent of
+   volume.
 
 **Reasoning for holding the decision open, not defaulting to either
 provider:**
@@ -70,17 +104,19 @@ provider:**
    despite a documented 10 req/sec ceiling; Run 2 was clean only at 5s
    spacing. A short sustained-load check (not a full 10-day trial)
    would confirm whether 5s-per-call is the real practical ceiling.
-3. **A capacity decision, independent of price**: can GNews (at
-   whatever tier turns out to be the real comparison) actually cover
-   MANSA's own News Worker's ~3,072 calls/day typical in-season volume?
-   If not, either the News Worker's flat 15-minute/no-ramp cadence
-   would need to change (a real product/architecture decision, not
-   assumed here) or GNews is not viable regardless of price.
-4. **Only after 1-3**, run the News Provider Validation Gate's original
-   recommendation: a GNews 10-day trial (at whichever tier answers
-   items 1-2 satisfactorily) focused on the criteria this pass could
-   not fully resolve — sustained freshness during a real live-game
-   window, and request-volume behavior under closer-to-production load.
+3. ~~A capacity decision, independent of price.~~ **RESOLVED 2026-09-04
+   — not a blocker under a properly designed architecture** (see the
+   UPDATE section at the top of this record). Still requires HQ to
+   actually authorize the News Worker redesign itself before any of
+   this is real — the recalculation is a planning result, not a built
+   capability.
+4. **Once 1-2 (freshness/rate-limit) are answered**, run the News
+   Provider Validation Gate's original recommendation: a GNews 10-day
+   trial (at whichever tier answers them satisfactorily) focused on the
+   criteria this pass could not fully resolve — sustained freshness
+   during a real live-game window, and request-volume behavior under
+   closer-to-production load, now informed by the redesigned cadence
+   rather than the original 32-team design.
 
 ## Do NOT, at any point before this record is updated to CLEARED:
 - Cancel, downgrade, or change the NewsAPI Business subscription.
@@ -105,9 +141,10 @@ recommendation Mac can act on.
 
 ---
 
-## Provider-role summary as of 2026-09-03
+## Provider-role summary as of 2026-09-04
 
 | Role | Current provider | Confidence |
 |---|---|---|
 | Production news (all categories) | NewsAPI Business ($449/mo) | Current, unswapped, real-time entitlement not independently re-verified this pass |
-| Candidate replacement | GNews Essential (≈$54/mo) | Content quality GREEN on 4/6 categories; real-time and request-volume-headroom both UNRESOLVED — see blockers above |
+| Candidate replacement | GNews Essential (≈$54/mo) | Content quality GREEN on 4/6 categories; request-volume headroom RESOLVED (not a blocker under a redesigned cadence, 2026-09-04); real-time entitlement/freshness UNRESOLVED — see blockers above |
+| News Worker cadence | 32 teams/15-min flat (current, live) | Confirmed not an accepted production requirement (2026-09-04); redesign direction proposed, NOT implemented — `docs/ops/news-cadence-architecture-audit-2026-09-04.md` |
