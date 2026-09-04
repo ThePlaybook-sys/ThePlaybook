@@ -1,9 +1,10 @@
 # The Playbook — Volume 3
 ## Database Architecture: Tables, Relationships, Indexes, Triggers, Migrations, RLS
 
-**Version:** v4.26
+**Version:** v4.27
 **Last updated:** 2026-09-04
 
+**v4.27 note (MINOR, HQ directive, planning only):** New §5G, Recommendation Lifecycle & Change Events — architecture reservation only, nothing built. HQ directed formally defining what happens when MANSA changes its view after a recommendation has already been activated (`docs/ops/recommendation-lifecycle-spec-2026-09-04.md`). Proposes a four-value extension to `recommendation_product_lifecycle_events.event_type` (`STRENGTHENED`/`WEAKENED`/`NO_LONGER_QUALIFIES`/`REPLACED`), reusing `market_monitoring_events.event_type` almost verbatim for a new `trigger_type` column plus two genuinely new trigger categories (`contextual_intelligence_change`/`model_refresh`), a `related_recommendation_product_id` linkage for reversals, and a new standalone `user_recommendation_placements` table for user-asserted "I placed this" tracking (deliberately not an extension of `user_recommendation_selections`, whose materiality-suppression trigger has different semantics). Also makes explicit, as a proposed ratified policy rather than a code change, a real finding from direct code inspection this pass: no query in the grading pipeline (`apps/ai-orchestrator/app/{persistence,orchestration}/postgame_grading.py`) filters by `recommendation_products.status` today — a withdrawn product's legs are already graded on their frozen activation-time terms, by omission rather than documented policy. See `CHANGELOG.md`'s 2026-09-04 entry for full reasoning.
 **v4.26 note (MINOR, HQ decision):** §4.3 (`game_events`) and §4.4 (`news_article_history`) — proposed in v4.25 the same day — are now IMPLEMENTED IN DEV: both migrations applied and live-verified (append-only triggers proven by real rejected `UPDATE`s; `news_article_history`'s insert-once dedup proven by a real rollback-wrapped insert-twice test). `app.workers.news_worker` now writes to `news_article_history` alongside its existing `daily_game_intelligence.news` upsert. `game_events` normalization, real provider wiring, and any live invocation remain explicitly deferred to after the 2026-09-09/10 MySportsFeeds live-game validation — this entry adds the raw-capture persistence path only, per `docs/ops/2026-data-preservation-readiness-plan-2026-09-04.md`'s own pre-9/9 minimum scope. Staging and production untouched. See `CHANGELOG.md`'s 2026-09-04 entry for full reasoning.
 **v4.25 note (MINOR, HQ decision):** New §4.3 (Game Events / Play-by-Play) and §4.4 (News History) — both architecture reservations only, mirroring Volume 4 §8.5/§8.6's identical "nothing described exists yet" treatment, prepared ahead of the 2026-09-09 NFL regular-season opener per the 2026 Data Preservation Readiness Plan (`docs/ops/2026-data-preservation-readiness-plan-2026-09-04.md`). §4.3 proposes a provider-neutral `game_events` table (raw provider payload as the load-bearing column, typed fields as best-effort normalization only) deliberately without locking any MySportsFeeds-specific field names ahead of that provider's still-pending live-game validation. §4.4 proposes an append-only `news_article_history` table (insert-once-per-article, not per-poll) closing the News-has-no-history gap both the Phase 7 and Phase 8 audits already found. Neither table is created by this entry — no migration applied. See `CHANGELOG.md`'s 2026-09-04 entry for full reasoning.
 **v4.24 note (PATCH):** §10's named list of tables following the `auth.uid() = user_id` RLS pattern extended to explicitly include `subscriptions` and `user_recommendation_selections` — both already carry that exact live policy, but the list omitted them (a self-acknowledged gap flagged in the `20260825120000_recommendation_products_schema.sql` migration's own comment for `subscriptions` at the time it was written, never corrected here until now). Found during Phase 6 Product/UX planning (Pass 3 §14 backend research). No schema or policy change. See `CHANGELOG.md` v4.24 entry for full reasoning.
@@ -1066,6 +1067,92 @@ Normalized evidence rows, never opaque JSON — one row per graded leg that actu
 **Decision:** no new trigger is added here, and the schema is left unchanged. Volume 5/Phase 6 has no stated requirement for physically deleting a recommendation, product, leg, grade, review, or weighting proposal — every "remove" concept already has a soft-delete mechanism (`recommendation_products.deleted_at`/`.status='withdrawn'`, `recommendation_product_lifecycle_events.event_type='SOFT_DELETED'`, Volume 3 §5A/§5C). Phase 6 is expected to remain soft-delete-only for all of the tables below; this section makes that expectation explicit and binding rather than assumed. If a future phase's API genuinely requires physical deletion of any of these tables, the correct sequence is: STOP, return a specific DB-level preservation proposal (e.g. an explicit `block_*_deletes()` trigger mirroring the existing `block_*_updates()` pattern, or converting the one `ON DELETE CASCADE` above to `NO ACTION`), and get it approved before that API is built — never add the capability first and reconcile the schema after.
 
 **Tables this prohibition covers:** `recommendation_products`, `recommendation_legs`, `recommendation_product_explanations`, `recommendation_leg_explanations`, `recommendation_activation_snapshots`, `recommendation_activation_snapshot_legs`, `recommendation_activation_snapshot_source_products`, `recommendation_product_lifecycle_events`, `recommendation_leg_grade_events`, `recommendation_product_grade_events`, `recommendation_product_postgame_reviews`, `adaptive_weight_proposals`, `adaptive_weight_proposal_observations`, and the pre-existing `consensus_snapshots`/`recommendation_agent_outputs`. (`user_recommendation_selections` is deliberately excluded from this list — its `ON DELETE CASCADE` from `auth.users` is an intentional, already-approved account-deletion behavior, Volume 3 §5A, a different category of concern than committee/grading/weighting evidentiary history.)
+
+---
+
+## 5G. Recommendation Lifecycle & Change Events (v4.27, ARCHITECTURE RESERVATION ONLY, proposed 2026-09-04 — nothing described in this section exists in code today)
+
+**HQ directive (2026-09-04): formally define what happens when MANSA changes its view after a recommendation has already been activated.** Full report: `docs/ops/recommendation-lifecycle-spec-2026-09-04.md`. This section proposes the minimum additive schema such a policy needs; none of it is authorized to build yet — **PLANNING ONLY**, same discipline as §4.3/§4.4 before their own later implementation entries.
+
+**Core principle carried over verbatim from HQ's directive:** once a `recommendation_products` row is activated, MANSA must never rewrite or erase what it originally recommended. `recommendation_legs` already guarantees this at the leg-data level (100% immutable, zero UPDATE path anywhere in this codebase — confirmed by direct inspection during this pass). This section closes the one remaining gap: there is today no vocabulary for recording **that something changed and why**, short of an outright `WITHDRAWN`.
+
+**Three axes already exist in this Blueprint and must not be collapsed into one during this design — confirmed still valid, restated for this section's own scope:**
+- **STRATEGY** (§5A above; Volume 4 §9) — does the candidate still qualify at all? Binary, `recommendation_products.status`.
+- **EXECUTION TIMING** (Volume 4 §9.5, future, unimplemented) — is the *current price* right to act on *now*? (`BET NOW`/`WAIT`/`PASS`/`LINE LOST`.)
+- **ANALYTICAL VALIDITY / CHANGE COMMUNICATION** (this section, new) — has new information made the ORIGINAL activated call stronger, weaker, or obsolete — independent of whether the user has already acted on it? This is the axis HQ's directive actually asks for: it answers "should a user who saw this at 10:00 AM know something changed by 11:30 AM," not "is the price still good" (§9.5) and not "did we already flip the switch" (§5A's `status` alone).
+
+**No speculative reservation of §9.5's own execution states is made here** — exactly the same discipline `recommendation_product_lifecycle_events`'s original v4.21 note already applied to itself (Decision AZ/BE: "explicitly NOT the future `BET NOW`/`WAIT`/`PASS`/`LINE LOST` execution states... no speculative event values are reserved ahead of that capability's own future implementation"). This section's new vocabulary is additive to that same table, not a redesign of it, and stays strictly on the analytical-validity axis.
+
+### `recommendation_product_lifecycle_events` — proposed `event_type` extension
+
+Current (live, Milestone 5.3): `check (event_type in ('ACTIVATED', 'WITHDRAWN', 'SOFT_DELETED'))`.
+
+**Proposed addition, four new values, none built:**
+```sql
+-- proposed, NOT applied:
+check (event_type in (
+  'ACTIVATED', 'WITHDRAWN', 'SOFT_DELETED',           -- unchanged, live since v4.21
+  'STRENGTHENED', 'WEAKENED', 'NO_LONGER_QUALIFIES', 'REPLACED'   -- proposed
+))
+```
+- **`STRENGTHENED`** — new evidence increased confidence in the original call; the product remains `active`; no status change.
+- **`WEAKENED`** — new evidence reduced confidence in the original call, but the product has not (yet) failed Strategy's qualification bar; remains `active`. The HQ example's 11:30 AM moment (WR1 ruled out, before a formal withdrawal decision is made) is a `WEAKENED` event, not yet a `WITHDRAWN` one.
+- **`NO_LONGER_QUALIFIES`** — a re-check against Volume 4 §9's own frozen qualification rule (`final_aggregate_confidence >= 0.55` AND `ev_per_dollar > 0`) found the candidate would not qualify under current information. This event explains WHY a `WITHDRAWN` event is about to fire (or, per HQ's own example, already has) — it is the reason, not a replacement for the existing `WITHDRAWN` event, which still fires separately and still flips `recommendation_products.status`.
+- **`REPLACED`** — this product has been superseded by a NEW, separately-activated `recommendation_products` row for the same market (e.g. Team A -3 → Team B +3, or → `no_bet`). Fires on the OLD product, alongside its own `WITHDRAWN` event, and carries the new proposed `related_recommendation_product_id` column (below) pointing at the NEW product. **A `REPLACED` event never represents a same-row state change — it always means a second, independent activation occurred.** This preserves `recommendation_products`' existing "one row = one immutable decision, ever" invariant untouched; MANSA's "later updated decision" is always a new row, never a mutation of the old one.
+
+### Proposed new columns on `recommendation_product_lifecycle_events`
+
+```sql
+-- proposed, NOT applied:
+alter table recommendation_product_lifecycle_events
+  add column trigger_type text check (trigger_type in
+    ('line_movement','injury_update','weather_change','lineup_change','breaking_news',
+     'contextual_intelligence_change','model_refresh')),
+  add column trigger_event_data jsonb,
+  add column related_recommendation_product_id uuid references recommendation_products(id);
+```
+- **`trigger_type`** reuses `market_monitoring_events.event_type` (§7 below) **verbatim** for its first five values — per HQ's own explicit "do not invent terminology if current schema already implies better names" instruction, this is the closest existing controlled vocabulary and it already anticipates exactly this use. Two values are new, because HQ's directive names two trigger categories `market_monitoring_events` was never designed to cover: `contextual_intelligence_change` (Volume 4 §8.6, Phase 8, not yet built) and `model_refresh` (a routine Strategy/consensus recompute — e.g. an Elite second-pass reconciliation, §4.3 — surfacing a materially different result on the same evidence). Nullable — an `ACTIVATED` event has no trigger; only `STRENGTHENED`/`WEAKENED`/`NO_LONGER_QUALIFIES`/`WITHDRAWN`/`REPLACED` are expected to populate it.
+- **`trigger_event_data`** is the qualitative, factual "what changed" payload (e.g. `{"player": "WR1 name", "status": "OUT", "previously": "QUESTIONABLE"}` or `{"line_from": -3, "line_to": -5.5, "sportsbook": "..."}`) — same discipline as `market_monitoring_events.event_data` and `recommendation_leg_explanations`'s existing frozen-fact-not-invented-number principle. **This column must never carry a new `ev_per_dollar`/`final_aggregate_confidence` number** — no re-evaluation numeric engine exists yet (Volume 4 §9.5's automatic re-evaluation loop is explicitly future/unscheduled), and inventing one here would be exactly the kind of fabricated intelligence this Blueprint has repeatedly refused elsewhere (`would_change_mind_if`, `narrative_summary`, CLV). If a genuine re-evaluation numeric engine is ever built, it produces a NEW `recommendation_product`/`recommendation_legs` row (an `ACTIVATED` + `REPLACED` pair), never a retrofit number on the old one.
+- **`related_recommendation_product_id`** is nullable, populated only for `REPLACED` (pointing forward to the new product) and optionally back-referenced from the new product's own `ACTIVATED` event (pointing backward to the old one) — a normalized FK, not the array/JSON linkage pattern already rejected elsewhere in this schema (Decision AO).
+
+**Still append-only, no other change.** `recommendation_products.status`/`.withdrawn_at`/`.withdrawal_reason` remain the only mutable columns anywhere in the product/leg layer; every event above is a new INSERT into an already-append-only table, never an UPDATE.
+
+### Grading/Track Record policy — made explicit, not newly invented
+
+**Direct code inspection during this pass (`apps/ai-orchestrator/app/persistence/postgame_grading.py`, `apps/ai-orchestrator/app/orchestration/postgame_grading.py`) confirms: no query in the grading pipeline filters by `recommendation_products.status` today.** `read_recommendation_legs_by_game`/`read_recommendation_legs_by_product`/`read_no_bet_products_by_game`/`grade_game`/`_maybe_rollup_product` all read by `game_id`/`recommendation_product_id`/`recommendation_type` only. **A withdrawn product's legs are graded exactly like an active product's, on their frozen activation-time terms.** This is currently true by omission, not by a documented, tested policy — **proposed as an explicit, ratified policy**, not a code change:
+
+> **Policy (proposed): grading is status-blind by design.** `recommendation_products.status` governs only whether a recommendation is currently presented as actionable — it has no bearing on whether its legs get graded. A `WITHDRAWN` (or `REPLACED`) product's legs are graded on the exact frozen `recommendation_legs` row from `recommendation_activation_snapshots` — never a later re-evaluation, never omitted from Track Record. This is the specific mechanism that prevents MANSA from improving its record by withdrawing recommendations after activation: withdrawal changes what a user is told to do next; it never changes what MANSA is scored on for what it already said at 10:00 AM.
+
+Consequences of this policy, made explicit:
+- **Does an activated recommendation remain gradeable even if later withdrawn? Yes, always** — enforced today only by the read-layer's own omission of a status filter; **a regression test asserting this (grade a `WITHDRAWN` product's legs, confirm a real grade event is written) does not exist yet and is a missing piece**, not a passing test being newly reported here.
+- **Which snapshot/price does grading use?** Always `recommendation_legs`' own frozen `american_odds`/`point`/`ev_per_dollar`/`final_aggregate_confidence` — identical to today, unaffected by any `STRENGTHENED`/`WEAKENED`/`NO_LONGER_QUALIFIES`/`REPLACED` event, which are informational-only per the `trigger_event_data` restriction above.
+- **How is MANSA's original decision distinguished from its later updated one?** The ORIGINAL decision is `recommendation_activation_snapshots` + `recommendation_legs` for the ORIGINAL product — untouched. The LATER decision, if one exists, is always a SEPARATE `recommendation_products` row (never a mutation), linked back via `REPLACED`/`related_recommendation_product_id`. Track Record (Volume 5 §5) counts BOTH products independently in its `sampleSize`/`record` denominators when both are graded — a reversal is two graded observations, never collapsed into one.
+- **The existing 72-hour finality gate (`RECONCILIATION_WINDOW_HOURS = 72`, Volume 4 §9.6) is unchanged and orthogonal** — lifecycle/withdrawal events never affect grading-eligibility timing, which remains purely a function of `games.finalized_at`.
+
+### Placed-status tracking — proposed new table, not an extension of `user_recommendation_selections`
+
+**Confirmed gap:** `user_recommendation_selections` (§5A above) has no boolean or timestamp representing "the user told MANSA they placed this wager." Extending that table directly would conflict with its existing materiality-suppression trigger (`enforce_urs_materiality` compares only against the user's own latest row for the same key — a `placed` flag toggling would need its own, different suppression semantics). Proposed instead, additive and separate:
+
+```sql
+-- proposed, NOT applied:
+create table user_recommendation_placements (
+  id uuid primary key default uuid_generate_v7(),
+  recommendation_product_id uuid not null references recommendation_products(id) on delete cascade,
+  recommendation_leg_id uuid references recommendation_legs(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  placed_at timestamptz not null default now(),
+  created_at timestamptz not null default now(),
+  unique (recommendation_product_id, recommendation_leg_id, user_id)
+);
+```
+One row per user/product(/leg) — the user's own assertion that they placed the wager, nothing more. **MANSA cannot infer this from anything else it observes** (no sportsbook integration exists or is planned to confirm placement) — this table only ever reflects a user's own self-report. Once a row exists here, downstream lifecycle-change communication (dashboard/Time Machine/future Telegram, `docs/ops/recommendation-lifecycle-spec-2026-09-04.md` §4) must shift from actionable framing ("we no longer recommend this") to informational-only framing, and must never imply MANSA can cancel, hedge, or cash out a sportsbook wager on the user's behalf — MANSA has no such capability and none is proposed here.
+
+### What this section does NOT do
+
+- Does not alter `recommendation_products`/`recommendation_legs`' existing immutability rules — no new mutable column on either.
+- Does not build a re-evaluation numeric engine — no new `ev_per_dollar`/confidence is ever computed by anything in this section.
+- Does not wire `market_monitoring_events`/`worker-market-monitor` (still zero rows, zero code, per Phase 7 Milestone 7.0's own audit) or Volume 4 §9.5's execution states.
+- Does not create any migration — every table/column above is a proposal pending HQ authorization as a future milestone (see roadmap update, same date).
 
 ---
 
