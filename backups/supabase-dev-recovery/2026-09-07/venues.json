@@ -1,0 +1,5 @@
+[{"id":"ebe8bbcc-23b4-453e-98d9-8b7eee1e0dc3","name":"Lumen Field","city":"Seattle","state":"WA","lat":47.595097,"long":-122.332245,"venue_type":"outdoor","created_at":"2026-09-07T20:09:17.846249+00:00"},
+{"id":"4851f594-12ac-4574-9b75-b5f709656425","name":"Allegiant Stadium","city":"Las Vegas","state":"NV","lat":36.090794,"long":-115.183952,"venue_type":"dome","created_at":"2026-09-07T20:09:17.846249+00:00"},
+{"id":"02b923c1-24a2-4f82-a720-54194bfe773f","name":"U.S. Bank Stadium","city":"Minneapolis","state":"MN","lat":44.973774,"long":-93.258736,"venue_type":"dome","created_at":"2026-09-07T20:09:17.846249+00:00"},
+{"id":"fc08a648-7dcd-4ce0-83b8-5616e73bfeca","name":"Lincoln Financial Field","city":"Philadelphia","state":"PA","lat":39.900898,"long":-75.168098,"venue_type":"outdoor","created_at":"2026-09-07T20:09:17.846249+00:00"},
+{"id":"0583835d-1b35-472f-a88b-a1f013cd8243","name":"SoFi Stadium","city":"Inglewood","state":"CA","lat":33.953587,"long":-118.33963,"venue_type":null,"created_at":"2026-09-07T20:09:17.846249+00:00"}]
