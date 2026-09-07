@@ -28,6 +28,13 @@ _SPORTSDATAIO_BASE_URL = "https://api.sportsdata.io"
 #: the_odds_api`'s own documented v4 REST contract.
 _THE_ODDS_API_BASE_URL = "https://api.the-odds-api.com"
 
+#: The real, production BALLDONTLIE base URL -- confirmed from the
+#: official `balldontlie` PyPI package's own `client.py` source
+#: (`BalldontlieAPI.__init__`'s default), the same provenance discipline
+#: used for the 2026-09-03 NFL provider bake-off (this sandbox's egress
+#: policy blocks balldontlie.io directly, same as every other vendor).
+_BALLDONTLIE_BASE_URL = "https://api.balldontlie.io"
+
 
 class MissingCredentialError(Exception):
     """Raised when a required provider credential is absent from this
@@ -77,3 +84,22 @@ def build_real_odds_worker_clients() -> tuple[httpx.AsyncClient, httpx.AsyncClie
     supabase_client = httpx.AsyncClient(base_url=os.environ["SUPABASE_URL"], timeout=60.0)
     the_odds_api_client = httpx.AsyncClient(base_url=_THE_ODDS_API_BASE_URL, timeout=60.0)
     return supabase_client, the_odds_api_client, api_key
+
+
+def build_real_balldontlie_client() -> tuple[httpx.AsyncClient, str]:
+    """Returns `(balldontlie_client, balldontlie_api_key)` -- Phase 7 Real
+    Sunday Cluster Discovery (2026-09-07 follow-up), HQ's directive to use
+    BALLDONTLIE (on its paid GOAT-tier DEV credential) as the authoritative
+    schedule-discovery source. Same isolation discipline as every other
+    credential reader in this module: `BALLDONTLIE_API_KEY` is read here
+    only, never by `app.main`'s own source
+    (`tests/test_environment_safety.py::
+    test_main_module_reads_no_provider_or_service_role_credential_by_name`
+    reserves the name), and `MissingCredentialError` -- not a raw
+    `KeyError` -- is raised if it isn't configured. The caller owns
+    closing the returned client (e.g. via `async with`)."""
+    api_key = os.environ.get("BALLDONTLIE_API_KEY")
+    if not api_key:
+        raise MissingCredentialError("BALLDONTLIE_API_KEY is not configured.")
+    balldontlie_client = httpx.AsyncClient(base_url=_BALLDONTLIE_BASE_URL, timeout=60.0)
+    return balldontlie_client, api_key

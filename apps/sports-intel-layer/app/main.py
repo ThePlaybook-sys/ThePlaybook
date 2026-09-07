@@ -36,6 +36,22 @@ sentry_sdk.init(
 
 app = FastAPI(title="The Playbook — Sports Intelligence Layer")
 
+# Temporary, dev-only diagnostic probe -- Phase 7, Current-Week Real Game
+# Discovery (2026-09-07). RUN_BALLDONTLIE_SCHEDULE_DISCOVERY=1 gates a
+# startup call to BALLDONTLIE's real schedule endpoint (see
+# app.diagnostics.balldontlie_schedule_discovery's own docstring).
+# Reverted after use, same discipline as every prior temporary diagnostic
+# pass.
+if os.environ.get("RUN_BALLDONTLIE_SCHEDULE_DISCOVERY") == "1":
+
+    @app.on_event("startup")
+    async def _run_balldontlie_schedule_discovery() -> None:
+        from app.diagnostics.balldontlie_schedule_discovery import (
+            run_balldontlie_schedule_discovery,
+        )
+
+        await run_balldontlie_schedule_discovery()
+
 
 @app.get("/health")
 def health() -> dict:

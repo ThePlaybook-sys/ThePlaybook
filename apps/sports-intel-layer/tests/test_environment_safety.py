@@ -72,6 +72,7 @@ def test_main_module_reads_no_provider_or_service_role_credential_by_name():
         "SPORTSDATAIO_API_KEY",
         "SPORTSDATAIO_DIAGNOSTIC_TOKEN",
         "THE_ODDS_API_KEY",
+        "BALLDONTLIE_API_KEY",
         "WEATHERAPI_API_KEY",
         "NEWSAPI_API_KEY",
         "GNEWS_API_KEY",
