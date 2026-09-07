@@ -41,19 +41,6 @@ sentry_sdk.init(
 
 app = FastAPI(title="The Playbook — Sports Intelligence Layer")
 
-# Temporary, dev-only diagnostic probe -- Phase 8.0.5 Data Activation
-# Pass 1 (2026-09-07). RUN_DATA_ACTIVATION_PASS1_PROOF=1 gates a startup
-# call to the two real, permanent worker functions this pass built (see
-# app.diagnostics.data_activation_pass1_proof's own docstring). Reverted
-# after use, same discipline as every prior temporary diagnostic pass.
-if os.environ.get("RUN_DATA_ACTIVATION_PASS1_PROOF") == "1":
-
-    @app.on_event("startup")
-    async def _run_data_activation_pass1_proof() -> None:
-        from app.diagnostics.data_activation_pass1_proof import run_data_activation_pass1_proof
-
-        await run_data_activation_pass1_proof()
-
 
 @app.get("/health")
 def health() -> dict:
