@@ -147,6 +147,7 @@ not done.
 """
 from __future__ import annotations
 
+import asyncio
 import os
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
@@ -246,6 +247,7 @@ async def run_news_worker(
     now: datetime | None = None,
     last_polled_at: dict[str, datetime] | None = None,
     news_adapter: NewsAdapter | None = None,
+    inter_call_delay_seconds: float = 0.0,
 ) -> NewsWorkerResult:
     """Runs one News Worker cycle. Always returns a `NewsWorkerResult`,
     never raises -- same finite-job shape as every other specialized
@@ -255,7 +257,21 @@ async def run_news_worker(
     `news_adapter` (dependency-injection seam, not Demo-specific): when
     supplied, used instead of constructing `NewsAPINewsAdapter`. `None`
     (the default) preserves today's real-provider construction and
-    behavior unchanged."""
+    behavior unchanged.
+
+    `inter_call_delay_seconds` (Phase 8.0.5 Data Activation Pass 2,
+    2026-09-07): a real, disclosed pacing gap this worker's own
+    sequential per-team loop never had -- fine for NewsAPI's own limits,
+    but Pass 1's live GNews pull hit real rate limiting on 8 of 10 teams
+    with zero spacing between calls, the same behavior the 2026-09-03
+    GNews validation already found and fixed by widening its own probe's
+    call spacing to 5s. Default `0.0` preserves every existing caller's
+    exact behavior unchanged (including every existing test); a caller
+    injecting a rate-limited adapter (e.g. GNews) passes a real,
+    evidence-based value instead. Provider-neutral by design -- this is
+    a generic pacing knob the worker applies regardless of which adapter
+    is injected, never a GNews-specific code path smeared into a shared
+    loop."""
     headers = _auth_headers()
     cache_backend = cache_backend or InMemoryCacheBackend()
     now = now or datetime.now(timezone.utc)
@@ -313,7 +329,9 @@ async def run_news_worker(
     articles_dropped_unresolved = 0
     history_rows_written = 0
 
-    for team_id in due_team_ids:
+    for index, team_id in enumerate(due_team_ids):
+        if index > 0 and inter_call_delay_seconds > 0:
+            await asyncio.sleep(inter_call_delay_seconds)
         team_name = team_id_to_name[team_id]
         try:
             response: AdapterResponse[list[NewsArticle]] = await caching.call(

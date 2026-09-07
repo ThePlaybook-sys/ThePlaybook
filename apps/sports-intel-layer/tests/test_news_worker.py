@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json as _json
 from datetime import datetime, timedelta, timezone
+from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
@@ -637,4 +638,59 @@ async def test_worker_signature_has_no_sportsdataio_or_weatherapi_client(monkeyp
         "now",
         "last_polled_at",
         "news_adapter",
+        "inter_call_delay_seconds",
     }
+
+
+# ============================================================================
+# Inter-call pacing (Phase 8.0.5 Data Activation Pass 2, 2026-09-07)
+# ============================================================================
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_default_pacing_is_zero_no_sleep_between_calls(monkeypatch):
+    """Backward compatibility: every existing caller (no explicit
+    inter_call_delay_seconds) keeps today's exact zero-delay behavior."""
+    _headers_env(monkeypatch)
+    _standard_setup()
+    _mock_dgi_upsert()
+    _news_route().mock(
+        side_effect=_by_team_response(
+            {NAME_KC: {"articles": []}, NAME_BAL: {"articles": []}}
+        )
+    )
+    with patch("app.workers.news_worker.asyncio.sleep", new=AsyncMock()) as sleep_mock:
+        await _run(now=NOW)
+    sleep_mock.assert_not_called()
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_explicit_pacing_sleeps_between_calls_not_before_the_first(monkeypatch):
+    _headers_env(monkeypatch)
+    _standard_setup()
+    _mock_dgi_upsert()
+    _news_route().mock(
+        side_effect=_by_team_response(
+            {NAME_KC: {"articles": []}, NAME_BAL: {"articles": []}}
+        )
+    )
+    _mock_news_article_history_insert()
+    async with httpx.AsyncClient(base_url=SUPABASE_URL) as supabase_client, httpx.AsyncClient(
+        base_url=NEWSAPI_URL
+    ) as newsapi_client:
+        with patch("app.workers.news_worker.asyncio.sleep", new=AsyncMock()) as sleep_mock:
+            result = await run_news_worker(
+                supabase_client=supabase_client,
+                newsapi_client=newsapi_client,
+                newsapi_key="test-key",
+                now=NOW,
+                cache_backend=InMemoryCacheBackend(),
+                inter_call_delay_seconds=5.0,
+            )
+    # 2 due teams -> exactly 1 sleep (between the two calls, never before
+    # the first and never a trailing sleep after the last).
+    assert sleep_mock.await_count == 1
+    sleep_mock.assert_awaited_with(5.0)
+    assert result.teams_fetched == 2

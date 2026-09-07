@@ -66,6 +66,17 @@ from app.adapters.models import AdapterResponse, InjuryReport
 
 _logger = logging.getLogger("sports-intel-layer.adapters.balldontlie")
 
+#: Multi-sport readiness (Phase 8.0.5 Data Activation Pass 2, 2026-09-07,
+#: HQ's locked sport-agnostic architecture rule): named, not inlined, so
+#: the one NFL-specific choice this adapter makes is a single visible
+#: edit point, matching `app.adapters.providers.the_odds_api._SPORT_KEY`'s
+#: own existing precedent. BALLDONTLIE's own URL structure ties sport
+#: into the path itself (`nfl/v1/...` vs. a hypothetical `nba/v1/...`) --
+#: real per-sport support would need this adapter to accept a sport
+#: parameter and thread it through the caller, which is real NBA-support
+#: work, explicitly not authorized or begun this pass.
+_SPORT_PATH = "nfl"
+
 
 class BallDontLieInjuryAdapter(InjuryAdapter):
     provider_name = "balldontlie"
@@ -92,7 +103,7 @@ class BallDontLieInjuryAdapter(InjuryAdapter):
         team-per-call contract)."""
         try:
             response = await self._client.get(
-                "/nfl/v1/player_injuries",
+                f"/{_SPORT_PATH}/v1/player_injuries",
                 params={"team_ids[]": [str(team_id) for team_id in self._team_ids], "per_page": "100"},
                 headers={"Authorization": self._api_key},
             )

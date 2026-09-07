@@ -50,6 +50,16 @@ from app.adapters.errors import (
 )
 from app.adapters.models import AdapterResponse, NewsArticle
 
+#: Multi-sport readiness (Phase 8.0.5 Data Activation Pass 2, 2026-09-07,
+#: HQ's locked sport-agnostic architecture rule): named, not inlined, so
+#: this adapter's one NFL-specific choice is a single visible edit point
+#: -- matching `app.adapters.providers.the_odds_api._SPORT_KEY`'s own
+#: precedent. Real per-sport query qualification would need this adapter
+#: (and `NewsAPINewsAdapter`, unchanged this pass) to accept a sport
+#: parameter threaded from the caller -- real NBA-support work, not
+#: authorized or begun this pass.
+_SPORT_QUALIFIER = "NFL"
+
 
 class GNewsNewsAdapter(NewsAdapter):
     provider_name = "gnews"
@@ -60,9 +70,9 @@ class GNewsNewsAdapter(NewsAdapter):
 
     async def fetch_news(self, team: str | None = None) -> AdapterResponse[list[NewsArticle]]:
         #: Same query-construction convention as NewsAPINewsAdapter (ASSUMED --
-        #: Volume 2 §8 doesn't specify how a query narrows to a team; NFL-
+        #: Volume 2 §8 doesn't specify how a query narrows to a team; sport-
         #: qualifying a bare team name keeps it from pulling unrelated news).
-        query = f"{team} NFL" if team else "NFL"
+        query = f"{team} {_SPORT_QUALIFIER}" if team else _SPORT_QUALIFIER
 
         try:
             response = await self._client.get(

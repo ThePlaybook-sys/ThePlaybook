@@ -41,6 +41,19 @@ sentry_sdk.init(
 
 app = FastAPI(title="The Playbook — Sports Intelligence Layer")
 
+# Temporary, dev-only diagnostic probe -- Phase 8.0.5 Data Activation
+# Pass 2 (2026-09-07). RUN_NEWS_PACING_PROOF=1 gates a startup call to
+# verify the new inter-call pacing fix against a real GNews pull (see
+# app.diagnostics.news_pacing_proof's own docstring). Reverted after
+# use, same discipline as every prior temporary diagnostic pass.
+if os.environ.get("RUN_NEWS_PACING_PROOF") == "1":
+
+    @app.on_event("startup")
+    async def _run_news_pacing_proof() -> None:
+        from app.diagnostics.news_pacing_proof import run_news_pacing_proof
+
+        await run_news_pacing_proof()
+
 
 @app.get("/health")
 def health() -> dict:
@@ -354,6 +367,13 @@ async def internal_run_news_worker() -> RunNewsWorkerResponse:
             newsapi_client=gnews_client,
             newsapi_key=gnews_api_key,
             news_adapter=GNewsNewsAdapter(client=gnews_client, api_key=gnews_api_key),
+            # Phase 8.0.5 Data Activation Pass 2 (2026-09-07): Pass 1's live
+            # pull hit real GNews rate limiting on 8/10 teams with zero
+            # inter-call spacing. 5s matches the 2026-09-03 GNews
+            # validation's own confirmed-safe spacing (0/9 calls rate
+            # limited at that pace, vs. 4/9 at 1.5s) -- a real, evidence-
+            # based value, not invented.
+            inter_call_delay_seconds=5.0,
         )
 
     return RunNewsWorkerResponse(
