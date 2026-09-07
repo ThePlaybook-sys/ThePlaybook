@@ -37,10 +37,28 @@ the same vendor-ToS/commercial-storage-terms question the original
 Milestone F deferral was about. Remains available future work, gated on
 the same provider decision above.
 
-**Cadence -- CONFIRMED FROM VOLUME 2 §8: "Every 15 minutes." No ramp
-tiers** (`_POLL_INTERVAL_SECONDS = 900`, matching
-`app.adapters.cache.CATEGORY_TTL_SECONDS["news"]` exactly, verified before
-reuse -- same discipline as `weather_worker.py`).
+**Cadence -- REVISED, Phase 8.0.5 Pass 2.2 (2026-09-07), superseding the
+original "every 15 minutes" reading of Volume 2 §8.** Pass 2.1's safety
+check found the real call site (`main.py`'s `internal_run_news_worker`)
+never passed a real `last_polled_at`, so every team read as due on every
+single cron tick regardless of `_POLL_INTERVAL_SECONDS` -- combined with
+GNews's real 100-requests/day free-tier quota, a `*/15` cadence produces
+~960 real calls/day, ~9.6x over budget. `_POLL_INTERVAL_SECONDS` is now
+`14400` (4 hours), HQ's own explicit "collection cadence target," and
+`persist_state=True` (see below) makes this interval real for the first
+time by reading/writing a genuine per-team last-poll timestamp instead of
+treating every team as permanently never-polled.
+
+**Quota safety is a SEPARATE mechanism from cadence, not the same
+knob.** Per HQ's own explicit instruction ("do not rely on cron cadence
+alone for quota safety"), `persist_state=True` also activates a real,
+durable, concurrency-safe daily request-quota guard
+(`app.persistence.news_provider_quota`) checked before every real
+provider call and incremented after every real one (success or provider
+error alike -- a failed call still spent a real quota unit). A correct
+cadence and a correct quota guard are both required; neither alone is
+sufficient (see `docs/ops/phase-8.0.5-pass2.1-safety-check-2026-09-07.md`
+for the full reasoning).
 
 **A deliberate DEPARTURE from Weather's stop-at-kickoff convention, not a
 missed reuse.** Weather/Odds/Player Props all stop polling a specific game
@@ -148,6 +166,7 @@ not done.
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
@@ -163,8 +182,12 @@ from app.persistence.daily_game_intelligence import DailyGameIntelligenceError, 
 from app.persistence.games import GamesQueryError, list_games_in_window
 from app.persistence.news_article_history import PersistenceError as NewsHistoryPersistenceError
 from app.persistence.news_article_history import write_news_article_history
+from app.persistence.news_provider_quota import NewsQuotaError, increment_daily_quota, read_daily_quota
+from app.persistence.news_worker_poll_state import PollStateError, read_last_polled_at, record_polled
 from app.persistence.team_identity import TeamIdentityError, resolve_team_ids
 from app.persistence.teams import TeamsQueryError, list_teams_by_id
+
+_logger = logging.getLogger("sports-intel-layer.workers.news")
 
 #: Same candidate-window convention as every other specialized worker --
 #: the only boundary reused from existing convention (see module
@@ -172,11 +195,26 @@ from app.persistence.teams import TeamsQueryError, list_teams_by_id
 #: NOT also reused).
 _CANDIDATE_WINDOW_DAYS = 7
 
-#: CONFIRMED FROM VOLUME 2 §8 -- flat 15-minute cadence. Matches
-#: CATEGORY_TTL_SECONDS["news"] exactly (verified, not assumed).
-_POLL_INTERVAL_SECONDS = 900
+#: REVISED, Phase 8.0.5 Pass 2.2 (2026-09-07) -- was 900 (15 min). See
+#: module docstring's "Cadence -- REVISED" section: the original value
+#: was never actually enforced (main.py never passed a real
+#: last_polled_at) and, even once enforced, 15 min is too tight against
+#: GNews's 100/day quota for 10 tracked teams. 14400s = 4 hours, HQ's own
+#: explicit collection-cadence target.
+_POLL_INTERVAL_SECONDS = 14400
 
 _PROVIDER_NAME = "sportsdataio"  # games.home_team/.away_team's own namespace
+
+#: Phase 8.0.5 Pass 2.2 (2026-09-07). Real, always-on default (unlike
+#: `odds_worker._check_credit_guard`'s deliberate fail-OPEN-when-unset
+#: design for a dollar-denominated monthly budget Mac must explicitly
+#: configure) -- HQ gave this exact number directly for GNews's real
+#: 100/day DEV free-tier quota, so a safe default ships enforcing from the
+#: first deploy, not only once someone remembers to set an env var.
+#: Overridable via env var if the real quota or safety margin ever
+#: changes.
+_GNEWS_DAILY_CEILING_ENV_VAR = "GNEWS_DAILY_REQUEST_CEILING"
+_DEFAULT_GNEWS_DAILY_CEILING = 80
 
 
 @dataclass
@@ -192,6 +230,8 @@ class NewsWorkerResult:
     games_updated: int = 0
     games_skipped_no_data: int = 0
     history_rows_written: int = 0
+    teams_skipped_quota_guard: int = 0
+    provider_requests_used_today: int | None = None
     failures: list[str] = field(default_factory=list)
     error: str | None = None
 
@@ -206,8 +246,8 @@ def _auth_headers() -> dict:
 
 
 def _should_poll(*, now: datetime, last_polled_at: datetime | None) -> bool:
-    """Flat 15-minute interval, no kickoff/window dependency at all -- see
-    module docstring's "deliberate DEPARTURE" section."""
+    """Flat interval, no kickoff/window dependency at all -- see module
+    docstring's "deliberate DEPARTURE" section."""
     if last_polled_at is None:
         return True
     elapsed = now.astimezone(timezone.utc) - last_polled_at.astimezone(timezone.utc)
@@ -238,6 +278,58 @@ def _dedupe_by_url(articles: list[NewsArticle]) -> list[NewsArticle]:
     return result
 
 
+async def _check_quota_guard(
+    client: httpx.AsyncClient, headers: dict, *, provider_name: str, quota_date: date
+) -> tuple[bool, int, int]:
+    """Returns `(allowed, used_today, ceiling)`. Unlike Odds Worker's
+    credit guard (fails OPEN when unconfigured -- a deliberate choice for
+    a dollar-budget Mac must explicitly set), this ceiling always
+    enforces: `_DEFAULT_GNEWS_DAILY_CEILING` ships a real, safe default so
+    the guard protects from the first deploy, not only once an env var is
+    remembered. `used_today` is read fresh from the durable ledger on
+    every call (not cached across iterations) so a 10-team cycle correctly
+    stops mid-cycle the moment the real ceiling is reached, never just
+    checked once up front."""
+    ceiling = int(os.environ.get(_GNEWS_DAILY_CEILING_ENV_VAR, str(_DEFAULT_GNEWS_DAILY_CEILING)))
+    used = await read_daily_quota(client, headers, provider_name=provider_name, quota_date=quota_date)
+    return used < ceiling, used, ceiling
+
+
+async def _record_real_attempt(
+    client: httpx.AsyncClient,
+    headers: dict,
+    *,
+    provider_name: str,
+    quota_date: date,
+    team_id: str,
+    polled_at: datetime,
+    failures: list[str],
+) -> int | None:
+    """Records that one real, quota-consuming call was just attempted for
+    `team_id` -- both halves (ledger increment, poll-state write) are
+    genuinely independent durable facts, so one failing does not block
+    the other. Returns the new quota total when the increment succeeded,
+    `None` otherwise (the caller already had a value from the guard check
+    moments earlier and simply keeps it, so a transient ledger-write
+    failure here never erases an otherwise-accurate `used_today` figure
+    the result reports)."""
+    new_total: int | None = None
+    try:
+        new_total = await increment_daily_quota(client, headers, provider_name=provider_name, quota_date=quota_date)
+        _logger.info(
+            "real %s call recorded for team_id=%s; requests_used_today=%s", provider_name, team_id, new_total
+        )
+    except NewsQuotaError as exc:
+        failures.append(f"quota ledger increment failed: {exc}")
+        _logger.warning("quota ledger increment failed for team_id=%s: %s", team_id, exc)
+    try:
+        await record_polled(client, headers, team_id=team_id, polled_at=polled_at)
+    except PollStateError as exc:
+        failures.append(f"{team_id}: poll-state write failed: {exc}")
+        _logger.warning("poll-state write failed for team_id=%s: %s", team_id, exc)
+    return new_total
+
+
 async def run_news_worker(
     *,
     supabase_client: httpx.AsyncClient,
@@ -248,6 +340,7 @@ async def run_news_worker(
     last_polled_at: dict[str, datetime] | None = None,
     news_adapter: NewsAdapter | None = None,
     inter_call_delay_seconds: float = 0.0,
+    persist_state: bool = False,
 ) -> NewsWorkerResult:
     """Runs one News Worker cycle. Always returns a `NewsWorkerResult`,
     never raises -- same finite-job shape as every other specialized
@@ -271,11 +364,26 @@ async def run_news_worker(
     evidence-based value instead. Provider-neutral by design -- this is
     a generic pacing knob the worker applies regardless of which adapter
     is injected, never a GNews-specific code path smeared into a shared
-    loop."""
+    loop.
+
+    `persist_state` (Phase 8.0.5 Pass 2.2, 2026-09-07): the real
+    production-safety switch. `False` (the default) preserves every
+    existing caller's exact behavior unchanged -- `last_polled_at` is
+    used exactly as passed (or treated as empty, "everyone due," if not
+    given), and no quota guard runs at all, identical to every test in
+    this file today. `True` (set by `main.py`'s real
+    `internal_run_news_worker` call site, and by nothing else) makes both
+    mechanisms real: `last_polled_at` is ignored in favor of a genuine
+    read from `app.persistence.news_worker_poll_state` keyed by this
+    cycle's actual resolvable teams, and a durable, concurrency-safe daily
+    quota guard (`app.persistence.news_provider_quota`) is checked before
+    every real per-team call and incremented after every real one. This
+    single flag is the one call-site change needed to fix the exact bug
+    Pass 2.1 diagnosed -- no other caller's behavior changes at all."""
     headers = _auth_headers()
     cache_backend = cache_backend or InMemoryCacheBackend()
     now = now or datetime.now(timezone.utc)
-    last_polled_at = last_polled_at or {}
+    quota_date = now.astimezone(timezone.utc).date()
 
     today: date = now.date()
     try:
@@ -312,6 +420,18 @@ async def run_news_worker(
         team_id for team_id in abbrev_to_team_id.values() if team_id in team_id_to_name
     }
 
+    if persist_state:
+        try:
+            last_polled_at = await read_last_polled_at(
+                supabase_client, headers, team_ids=sorted(resolvable_team_ids)
+            )
+        except PollStateError as exc:
+            return NewsWorkerResult(
+                status="failed", games_considered=len(games), error=f"failed to read news poll state: {exc}"
+            )
+    else:
+        last_polled_at = last_polled_at or {}
+
     due_team_ids: list[str] = []
     skipped_not_due = 0
     for team_id in sorted(resolvable_team_ids):
@@ -321,6 +441,7 @@ async def run_news_worker(
             skipped_not_due += 1
 
     news_adapter = news_adapter or NewsAPINewsAdapter(client=newsapi_client, api_key=newsapi_key)
+    provider_name = news_adapter.provider_name
     caching = CachingAdapter(news_adapter, cache_backend, ttl_seconds=_POLL_INTERVAL_SECONDS)
 
     team_articles: dict[str, list[NewsArticle]] = {}
@@ -328,10 +449,36 @@ async def run_news_worker(
     failures: list[str] = []
     articles_dropped_unresolved = 0
     history_rows_written = 0
+    teams_skipped_quota_guard = 0
+    provider_requests_used_today: int | None = None
 
     for index, team_id in enumerate(due_team_ids):
         if index > 0 and inter_call_delay_seconds > 0:
             await asyncio.sleep(inter_call_delay_seconds)
+
+        if persist_state:
+            # Checked before EVERY real call, not just once up front -- a
+            # multi-team cycle can exhaust the daily ceiling mid-cycle,
+            # and HQ's own instruction is explicit: quota safety must not
+            # depend on cron cadence alone.
+            try:
+                guard_allowed, used_today, ceiling = await _check_quota_guard(
+                    supabase_client, headers, provider_name=provider_name, quota_date=quota_date
+                )
+            except NewsQuotaError as exc:
+                failures.append(f"quota guard read failed: {exc}")
+                teams_skipped_quota_guard += len(due_team_ids) - index
+                _logger.warning("news quota guard read failed, stopping cycle early: %s", exc)
+                break
+            provider_requests_used_today = used_today
+            if not guard_allowed:
+                teams_skipped_quota_guard += len(due_team_ids) - index
+                _logger.warning(
+                    "news quota guard engaged for provider=%s: %s/%s used today (%s), stopping cycle at %s/%s teams",
+                    provider_name, used_today, ceiling, quota_date, index, len(due_team_ids),
+                )
+                break
+
         team_name = team_id_to_name[team_id]
         try:
             response: AdapterResponse[list[NewsArticle]] = await caching.call(
@@ -339,8 +486,25 @@ async def run_news_worker(
             )
         except ProviderError as exc:
             failures.append(f"{team_name}: news fetch failed: {exc}")
+            if persist_state:
+                # A real network round-trip happened even though it
+                # failed -- GNews still counts it against quota, and this
+                # team must not be re-attempted next tick at no cost.
+                recorded_total = await _record_real_attempt(
+                    supabase_client, headers, provider_name=provider_name, quota_date=quota_date,
+                    team_id=team_id, polled_at=now, failures=failures,
+                )
+                if recorded_total is not None:
+                    provider_requests_used_today = recorded_total
             continue
         provider_source = response.source
+        if persist_state and not response.from_cache:
+            recorded_total = await _record_real_attempt(
+                supabase_client, headers, provider_name=provider_name, quota_date=quota_date,
+                team_id=team_id, polled_at=now, failures=failures,
+            )
+            if recorded_total is not None:
+                provider_requests_used_today = recorded_total
         validated, dropped = _validate_articles(team_name, response.value)
         articles_dropped_unresolved += dropped
         team_articles[team_id] = validated
@@ -403,5 +567,7 @@ async def run_news_worker(
         games_updated=games_updated,
         games_skipped_no_data=games_skipped_no_data,
         history_rows_written=history_rows_written,
+        teams_skipped_quota_guard=teams_skipped_quota_guard,
+        provider_requests_used_today=provider_requests_used_today,
         failures=failures,
     )

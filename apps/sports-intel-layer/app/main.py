@@ -298,6 +298,8 @@ class RunNewsWorkerResponse(BaseModel):
     games_updated: int
     games_skipped_no_data: int
     history_rows_written: int
+    teams_skipped_quota_guard: int
+    provider_requests_used_today: int | None
     failures: list[str]
     error: str | None
 
@@ -361,6 +363,15 @@ async def internal_run_news_worker() -> RunNewsWorkerResponse:
             # limited at that pace, vs. 4/9 at 1.5s) -- a real, evidence-
             # based value, not invented.
             inter_call_delay_seconds=5.0,
+            # Phase 8.0.5 Pass 2.2 (2026-09-07): THE fix for the real bug
+            # Pass 2.1 diagnosed -- this call site never passed a real
+            # last_polled_at at all, so every team read as due on every
+            # single cron tick regardless of _POLL_INTERVAL_SECONDS.
+            # persist_state=True makes both last_polled_at and a durable
+            # daily quota guard real (app.persistence.news_worker_poll_state
+            # / app.persistence.news_provider_quota) -- see news_worker.py's
+            # own docstring for the full mechanism.
+            persist_state=True,
         )
 
     return RunNewsWorkerResponse(
@@ -375,6 +386,8 @@ async def internal_run_news_worker() -> RunNewsWorkerResponse:
         games_updated=result.games_updated,
         games_skipped_no_data=result.games_skipped_no_data,
         history_rows_written=result.history_rows_written,
+        teams_skipped_quota_guard=result.teams_skipped_quota_guard,
+        provider_requests_used_today=result.provider_requests_used_today,
         failures=result.failures,
         error=result.error,
     )
