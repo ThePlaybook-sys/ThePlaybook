@@ -21,9 +21,14 @@ import httpx
 from app.adapters.models import AdapterResponse, InjuryReport
 from app.persistence.game_identity import resolve_game_ids
 
-#: The only provider this module ever persists injuries for -- not derived
-#: from AdapterResponse.source, same defensive convention as
-#: odds_snapshots.py's identical constant.
+#: The default provider this module persists injuries for when the caller
+#: doesn't say otherwise -- not derived from AdapterResponse.source, same
+#: defensive convention as odds_snapshots.py's identical constant.
+#: Phase 8.0.5 (2026-09-07): widened to an explicit `provider_name`
+#: parameter (default unchanged) so a second real injury source
+#: (BALLDONTLIE) can persist through this same, already-tested function
+#: without duplicating it -- every existing caller passing no argument
+#: keeps today's exact behavior.
 _PROVIDER_NAME = "sportsdataio"
 
 
@@ -42,12 +47,21 @@ def _auth_headers() -> dict:
     }
 
 
-async def persist_injury_reports(response: AdapterResponse[list[InjuryReport]]) -> int:
+async def persist_injury_reports(
+    response: AdapterResponse[list[InjuryReport]], *, provider_name: str = _PROVIDER_NAME
+) -> int:
     """Writes every InjuryReport in `response` as a new injury_reports row.
     A report whose game_external_id has no matching games row is skipped,
     not silently dropped from the return value -- callers get back the
     count actually written, same partial-write detectability as
     `persist_odds_lines`.
+
+    `provider_name` (Phase 8.0.5): which `game_provider_ids` namespace
+    `report.game_external_id` resolves against -- defaults to
+    `"sportsdataio"`, this module's original and only provider until this
+    parameter existed. Every `InjuryReport` in one call must share the
+    same provider, matching `game_provider_ids`' own one-id-per-provider
+    shape.
     """
     reports = response.value
     if not reports:
@@ -60,7 +74,7 @@ async def persist_injury_reports(response: AdapterResponse[list[InjuryReport]]) 
         game_ids = await resolve_game_ids(
             client,
             headers,
-            provider_name=_PROVIDER_NAME,
+            provider_name=provider_name,
             provider_game_ids=sorted({report.game_external_id for report in reports}),
         )
         rows = [

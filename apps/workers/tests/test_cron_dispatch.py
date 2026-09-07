@@ -95,6 +95,65 @@ async def test_dispatch_odds_worker_posts_to_correct_path():
 
 
 @pytest.mark.asyncio
+@respx.mock
+async def test_dispatch_balldontlie_injury_worker_posts_to_correct_path():
+    """Phase 8.0.5 Data Activation Pass 1 (2026-09-07) -- same
+    `sports-intel-layer`-hosted shape as `odds-worker` above."""
+    route = respx.post(f"{BASE_URL}/v1/internal/balldontlie-injury-worker/run").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "status": "success",
+                "games_considered": 0,
+                "games_linked": 0,
+                "teams_resolved": 0,
+                "reports_fetched": 0,
+                "reports_persisted": 0,
+                "failures": [],
+                "error": None,
+            },
+        )
+    )
+    async with httpx.AsyncClient() as client:
+        result = await dispatch(
+            target="balldontlie-injury-worker", base_url=BASE_URL, internal_token="secret", client=client
+        )
+    assert result["status"] == "success"
+    assert route.calls.last.request.headers["X-Internal-Token"] == "secret"
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_dispatch_news_worker_posts_to_correct_path():
+    """Phase 8.0.5 Data Activation Pass 1 (2026-09-07) -- same
+    `sports-intel-layer`-hosted shape as `odds-worker` above."""
+    route = respx.post(f"{BASE_URL}/v1/internal/news-worker/run").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "status": "success",
+                "games_considered": 0,
+                "teams_considered": 0,
+                "teams_due": 0,
+                "teams_skipped_not_due": 0,
+                "teams_unresolved": [],
+                "teams_fetched": 0,
+                "articles_dropped_unresolved": 0,
+                "games_updated": 0,
+                "games_skipped_no_data": 0,
+                "history_rows_written": 0,
+                "failures": [],
+                "error": None,
+            },
+        )
+    )
+    async with httpx.AsyncClient() as client:
+        result = await dispatch(target="news-worker", base_url=BASE_URL, internal_token="secret", client=client)
+    assert result["status"] == "success"
+    assert route.calls.last.request.headers["X-Internal-Token"] == "secret"
+
+
+@pytest.mark.asyncio
 async def test_dispatch_rejects_unknown_target():
     async with httpx.AsyncClient() as client:
         with pytest.raises(CronDispatchError):

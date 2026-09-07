@@ -8,11 +8,16 @@ from app.environment_safety import assert_demo_isolation
 from app.internal_auth import require_internal_token
 from app.master_refresh.production_clients import (
     MissingCredentialError,
+    build_real_balldontlie_injury_worker_clients,
     build_real_master_refresh_clients,
+    build_real_news_worker_clients,
     build_real_odds_worker_clients,
 )
 from app.master_refresh.run import run_master_refresh
 from app.persistence.odds_snapshots import read_last_polled_at
+from app.adapters.providers.gnews import GNewsNewsAdapter
+from app.workers.balldontlie_injury_worker import run_balldontlie_injury_worker
+from app.workers.news_worker import run_news_worker
 from app.workers.odds_worker import run_odds_worker
 
 # DEMO-1 (2026-08-19): hard-fail startup before anything else runs if a demo deployment's
@@ -210,6 +215,159 @@ async def internal_run_odds_worker() -> RunOddsWorkerResponse:
         lines_persisted=result.lines_persisted,
         newly_linked=result.newly_linked,
         unresolved_events=result.unresolved_events,
+        failures=result.failures,
+        error=result.error,
+    )
+
+
+class RunBallDontLieInjuryWorkerResponse(BaseModel):
+    status: str
+    games_considered: int
+    games_linked: int
+    teams_resolved: int
+    reports_fetched: int
+    reports_persisted: int
+    failures: list[str]
+    error: str | None
+
+
+@app.post(
+    "/v1/internal/balldontlie-injury-worker/run",
+    dependencies=[Depends(require_internal_token)],
+    response_model=RunBallDontLieInjuryWorkerResponse,
+)
+async def internal_run_balldontlie_injury_worker() -> RunBallDontLieInjuryWorkerResponse:
+    """Phase 8.0.5 Data Activation Pass 1 (2026-09-07): the BALLDONTLIE
+    Injury Worker's runtime invocation path, same minimal shape as
+    `internal_run_odds_worker` above -- a thin HTTP-to-function adapter
+    only, never a second implementation of `run_balldontlie_injury_worker`
+    (`app.workers.balldontlie_injury_worker`).
+
+    **Does not touch the reserved SportsDataIO trial call, by
+    construction, not just by convention** -- this endpoint never
+    constructs `build_real_master_refresh_clients`/`SportsDataIOInjuryAdapter`;
+    it exclusively uses `build_real_balldontlie_injury_worker_clients`,
+    a completely separate credential/provider path from SportsDataIO's
+    own untouched `injury_worker.py`.
+
+    Same safe missing-credential failure as every other internal endpoint:
+    `MissingCredentialError` -- never a raw `KeyError` -- returns a clean
+    `status="failed"` result. Reachable only via `INTERNAL_SERVICE_TOKEN`."""
+    try:
+        supabase_client, balldontlie_client, balldontlie_api_key = build_real_balldontlie_injury_worker_clients()
+    except MissingCredentialError as exc:
+        return RunBallDontLieInjuryWorkerResponse(
+            status="failed",
+            games_considered=0,
+            games_linked=0,
+            teams_resolved=0,
+            reports_fetched=0,
+            reports_persisted=0,
+            failures=[],
+            error=str(exc),
+        )
+
+    async with supabase_client, balldontlie_client:
+        result = await run_balldontlie_injury_worker(
+            supabase_client=supabase_client,
+            balldontlie_client=balldontlie_client,
+            balldontlie_api_key=balldontlie_api_key,
+        )
+
+    return RunBallDontLieInjuryWorkerResponse(
+        status=result.status,
+        games_considered=result.games_considered,
+        games_linked=result.games_linked,
+        teams_resolved=result.teams_resolved,
+        reports_fetched=result.reports_fetched,
+        reports_persisted=result.reports_persisted,
+        failures=result.failures,
+        error=result.error,
+    )
+
+
+class RunNewsWorkerResponse(BaseModel):
+    status: str
+    games_considered: int
+    teams_considered: int
+    teams_due: int
+    teams_skipped_not_due: int
+    teams_unresolved: list[str]
+    teams_fetched: int
+    articles_dropped_unresolved: int
+    games_updated: int
+    games_skipped_no_data: int
+    history_rows_written: int
+    failures: list[str]
+    error: str | None
+
+
+@app.post(
+    "/v1/internal/news-worker/run",
+    dependencies=[Depends(require_internal_token)],
+    response_model=RunNewsWorkerResponse,
+)
+async def internal_run_news_worker() -> RunNewsWorkerResponse:
+    """Phase 8.0.5 Data Activation Pass 1 (2026-09-07): News Worker's
+    runtime invocation path, same minimal shape as `internal_run_odds_worker`
+    above. Reuses the EXISTING `run_news_worker` (`app.workers.news_worker`)
+    completely unchanged.
+
+    **Uses GNews, not NewsAPI, for this specific call site only --
+    HQ's explicit instruction, not a change to `news_worker.py`'s own
+    default.** `run_news_worker`'s own hardcoded default
+    (`NewsAPINewsAdapter`, whose own credential is confirmed absent
+    from this environment) is left completely untouched; this endpoint
+    instead explicitly constructs and injects `GNewsNewsAdapter` via
+    `run_news_worker`'s own pre-existing `news_adapter` dependency-
+    injection seam -- the same seam every worker test in this project
+    already uses to swap adapters, not a new mechanism. Volume 2 §8's
+    NewsAPI-vs-GNews vendor decision remains exactly as undecided as it
+    was before this endpoint existed.
+
+    Same safe missing-credential failure as every other internal endpoint:
+    `MissingCredentialError` (credential unset) -- never a raw
+    `KeyError` -- returns a clean `status="failed"` result. Reachable
+    only via `INTERNAL_SERVICE_TOKEN`."""
+    try:
+        supabase_client, gnews_client, gnews_api_key = build_real_news_worker_clients()
+    except MissingCredentialError as exc:
+        return RunNewsWorkerResponse(
+            status="failed",
+            games_considered=0,
+            teams_considered=0,
+            teams_due=0,
+            teams_skipped_not_due=0,
+            teams_unresolved=[],
+            teams_fetched=0,
+            articles_dropped_unresolved=0,
+            games_updated=0,
+            games_skipped_no_data=0,
+            history_rows_written=0,
+            failures=[],
+            error=str(exc),
+        )
+
+    async with supabase_client, gnews_client:
+        result = await run_news_worker(
+            supabase_client=supabase_client,
+            newsapi_client=gnews_client,
+            newsapi_key=gnews_api_key,
+            news_adapter=GNewsNewsAdapter(client=gnews_client, api_key=gnews_api_key),
+        )
+
+    return RunNewsWorkerResponse(
+        status=result.status,
+        games_considered=result.games_considered,
+        teams_considered=result.teams_considered,
+        teams_due=result.teams_due,
+        teams_skipped_not_due=result.teams_skipped_not_due,
+        teams_unresolved=result.teams_unresolved,
+        teams_fetched=result.teams_fetched,
+        articles_dropped_unresolved=result.articles_dropped_unresolved,
+        games_updated=result.games_updated,
+        games_skipped_no_data=result.games_skipped_no_data,
+        history_rows_written=result.history_rows_written,
         failures=result.failures,
         error=result.error,
     )

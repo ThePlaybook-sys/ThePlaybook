@@ -35,6 +35,12 @@ _THE_ODDS_API_BASE_URL = "https://api.the-odds-api.com"
 #: policy blocks balldontlie.io directly, same as every other vendor).
 _BALLDONTLIE_BASE_URL = "https://api.balldontlie.io"
 
+#: The real, production GNews base URL -- confirmed from the official
+#: `gnews-io/gnews-io-js` client's own documented base, carried forward
+#: from the 2026-09-03 News Provider Validation's own (reverted)
+#: diagnostic, which used this exact value against the real API.
+_GNEWS_BASE_URL = "https://gnews.io"
+
 
 class MissingCredentialError(Exception):
     """Raised when a required provider credential is absent from this
@@ -103,3 +109,39 @@ def build_real_balldontlie_client() -> tuple[httpx.AsyncClient, str]:
         raise MissingCredentialError("BALLDONTLIE_API_KEY is not configured.")
     balldontlie_client = httpx.AsyncClient(base_url=_BALLDONTLIE_BASE_URL, timeout=60.0)
     return balldontlie_client, api_key
+
+
+def build_real_balldontlie_injury_worker_clients() -> tuple[httpx.AsyncClient, httpx.AsyncClient, str]:
+    """Returns `(supabase_client, balldontlie_client, balldontlie_api_key)`
+    -- Phase 8.0.5 Data Activation Pass 1 (2026-09-07), the three
+    positional inputs `run_balldontlie_injury_worker` needs. Same
+    `BALLDONTLIE_API_KEY` credential as `build_real_balldontlie_client`
+    above -- a separate function only because this caller also needs a
+    bound `supabase_client`, matching the exact three-tuple shape every
+    other `build_real_*_worker_clients` function in this module already
+    returns. Raises `MissingCredentialError` if the key isn't configured.
+    The caller owns closing both clients."""
+    api_key = os.environ.get("BALLDONTLIE_API_KEY")
+    if not api_key:
+        raise MissingCredentialError("BALLDONTLIE_API_KEY is not configured.")
+    supabase_client = httpx.AsyncClient(base_url=os.environ["SUPABASE_URL"], timeout=60.0)
+    balldontlie_client = httpx.AsyncClient(base_url=_BALLDONTLIE_BASE_URL, timeout=60.0)
+    return supabase_client, balldontlie_client, api_key
+
+
+def build_real_news_worker_clients() -> tuple[httpx.AsyncClient, httpx.AsyncClient, str]:
+    """Returns `(supabase_client, gnews_client, gnews_api_key)` -- Phase
+    8.0.5 Data Activation Pass 1 (2026-09-07), HQ's explicit instruction
+    to use the existing GNews DEV credential (`GNEWS_API_KEY`) for this
+    activation, not `NEWSAPI_API_KEY` (confirmed absent from this
+    environment by a live check this same session). Same isolation
+    discipline as every other credential reader in this module --
+    `GNEWS_API_KEY` is read here only, `MissingCredentialError` (not a
+    raw `KeyError`) if it isn't configured. The caller owns closing both
+    clients."""
+    api_key = os.environ.get("GNEWS_API_KEY")
+    if not api_key:
+        raise MissingCredentialError("GNEWS_API_KEY is not configured.")
+    supabase_client = httpx.AsyncClient(base_url=os.environ["SUPABASE_URL"], timeout=60.0)
+    gnews_client = httpx.AsyncClient(base_url=_GNEWS_BASE_URL, timeout=60.0)
+    return supabase_client, gnews_client, api_key

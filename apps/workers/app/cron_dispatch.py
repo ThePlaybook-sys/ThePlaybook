@@ -65,12 +65,27 @@ _TARGET_PATHS = {
     "master-refresh": "/v1/internal/master-refresh/run",
     #: Phase 7 Milestone 7.0B (2026-09-02): the first Phase 3E specialized
     #: worker to gain a real invocation path -- lives on `sports-intel-layer`,
-    #: same as `master-refresh`, not `worker-scheduled`. Only Odds Worker is
-    #: activated this milestone (HQ's explicit scope); the other six
-    #: specialized workers (Player Props/Injury/Weather/News/Pregame/
-    #: Postgame Ingestion) remain unwired -- see the Phase 3E specialized
-    #: worker runtime invocation debt item recorded in PROGRESS.md.
+    #: same as `master-refresh`, not `worker-scheduled`. Only Odds Worker was
+    #: activated that milestone; see the two entries directly below for the
+    #: first real activation of a second/third specialized worker.
     "odds-worker": "/v1/internal/odds-worker/run",
+    #: Phase 8.0.5 Data Activation Pass 1 (2026-09-07): the BALLDONTLIE
+    #: Injury Worker's real invocation path -- lives on `sports-intel-layer`,
+    #: same as `odds-worker`. Target mapping added now so recurring
+    #: activation (once separately authorized) is a config-only change, no
+    #: further code -- no Railway Cron Job service targets this yet; HQ
+    #: authorized only a one-time controlled proof pull this pass, not
+    #: recurring polling (`docs/ops/phase-8.0.5-data-activation-pass-1-2026-09-07.md`).
+    "balldontlie-injury-worker": "/v1/internal/balldontlie-injury-worker/run",
+    #: Phase 8.0.5 Data Activation Pass 1 (2026-09-07): News Worker's real
+    #: invocation path (GNews-backed for this call site only -- see
+    #: `app.main.internal_run_news_worker`'s own docstring; `news_worker.py`'s
+    #: own NewsAPI default is unchanged). Same "target mapped, no cron
+    #: service created yet" status as the entry above.
+    "news-worker": "/v1/internal/news-worker/run",
+    #: Remaining unwired specialized workers: Player Props/Weather/Pregame/
+    #: Postgame Ingestion -- see the Phase 3E specialized worker runtime
+    #: invocation debt item recorded in PROGRESS.md.
 }
 
 
