@@ -146,6 +146,30 @@ async def test_outdoor_game_due_fetches_and_persists_weather(monkeypatch):
 
 @pytest.mark.asyncio
 @respx.mock
+async def test_persisted_row_carries_provider_source_and_observed_at(monkeypatch):
+    """Phase 8.0.5 Weather Activation (2026-09-07): a real, disclosed gap
+    closed -- `AdapterResponse.source`/`.provider_reported_at` were always
+    computed by the adapter but silently dropped before persistence. Both
+    must now be genuinely readable from the persisted row, not just from
+    transient in-process logs."""
+    _headers_env(monkeypatch)
+    _mock_games([_game_row(game_id=DB_GAME_OUTDOOR, scheduled_start="2026-09-14T17:00:00Z")])
+    insert_route = _mock_weather_snapshots_insert()
+    _forecast_route().mock(return_value=httpx.Response(200, json=load("forecast_normal.json")))
+
+    now = datetime(2026, 9, 10, 12, 0, tzinfo=timezone.utc)
+    await _run(now=now)
+
+    rows = [row for call in insert_route.calls for row in _json.loads(call.request.content)]
+    assert rows[0]["weather_data"]["source"] == "weatherapi"
+    # Closest forecast hour to the 17:00 kickoff among {11:00,12:00,13:00}
+    # is 13:00 -- the real vendor-reported forecast-validity timestamp,
+    # distinct from captured_at (our own poll time).
+    assert rows[0]["weather_data"]["observed_at"] == "2026-09-14T13:00:00+00:00"
+
+
+@pytest.mark.asyncio
+@respx.mock
 async def test_multiple_games_all_persisted(monkeypatch):
     _headers_env(monkeypatch)
     games = [

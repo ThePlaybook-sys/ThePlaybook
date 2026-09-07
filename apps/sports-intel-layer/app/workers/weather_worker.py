@@ -265,6 +265,7 @@ async def run_weather_worker(
     )
 
     all_conditions: list[WeatherConditions] = []
+    observed_at_by_game: dict[str, datetime | None] = {}
     provider_source = "weatherapi"
     failures: list[str] = []
 
@@ -285,12 +286,17 @@ async def run_weather_worker(
         # filtered out above, before ever reaching the adapter).
         known_is_dome = venue_is_dome(game.get("venue_type"))
         all_conditions.append(response.value.model_copy(update={"is_dome": known_is_dome}))
+        # Captured here, not discarded -- see persist_weather_snapshots's
+        # own module docstring ("Provider provenance/observation
+        # timestamp") for why this would otherwise be silently dropped.
+        observed_at_by_game[game["id"]] = response.provider_reported_at
 
     persisted = 0
     if all_conditions:
         try:
             persisted = await persist_weather_snapshots(
-                AdapterResponse(value=all_conditions, source=provider_source)
+                AdapterResponse(value=all_conditions, source=provider_source),
+                observed_at_by_game=observed_at_by_game,
             )
         except PersistenceError as exc:
             failures.append(f"persistence failed: {exc}")

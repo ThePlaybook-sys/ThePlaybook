@@ -12,13 +12,16 @@ from app.master_refresh.production_clients import (
     build_real_master_refresh_clients,
     build_real_news_worker_clients,
     build_real_odds_worker_clients,
+    build_real_weather_worker_clients,
 )
 from app.master_refresh.run import run_master_refresh
 from app.persistence.odds_snapshots import read_last_polled_at
+from app.persistence.weather_snapshots import read_last_polled_at as read_weather_last_polled_at
 from app.adapters.providers.gnews import GNewsNewsAdapter
 from app.workers.balldontlie_injury_worker import run_balldontlie_injury_worker
 from app.workers.news_worker import run_news_worker
 from app.workers.odds_worker import run_odds_worker
+from app.workers.weather_worker import run_weather_worker
 
 # DEMO-1 (2026-08-19): hard-fail startup before anything else runs if a demo deployment's
 # environment tag and database target disagree. Deliberately checked before sentry_sdk.init
@@ -388,6 +391,86 @@ async def internal_run_news_worker() -> RunNewsWorkerResponse:
         history_rows_written=result.history_rows_written,
         teams_skipped_quota_guard=result.teams_skipped_quota_guard,
         provider_requests_used_today=result.provider_requests_used_today,
+        failures=result.failures,
+        error=result.error,
+    )
+
+
+class RunWeatherWorkerResponse(BaseModel):
+    status: str
+    games_considered: int
+    games_due: int
+    games_in_game: list[str]
+    games_skipped_not_due: int
+    games_skipped_dome: list[str]
+    games_skipped_unresolved_location: list[str]
+    snapshots_persisted: int
+    failures: list[str]
+    error: str | None
+
+
+@app.post(
+    "/v1/internal/weather-worker/run",
+    dependencies=[Depends(require_internal_token)],
+    response_model=RunWeatherWorkerResponse,
+)
+async def internal_run_weather_worker() -> RunWeatherWorkerResponse:
+    """Phase 8.0.5 Weather Activation (2026-09-07): Weather Worker's real
+    invocation path, same minimal shape as `internal_run_odds_worker`
+    above. Reuses the EXISTING `run_weather_worker`
+    (`app.workers.weather_worker`) completely unchanged in its own
+    signature -- this endpoint is a thin HTTP-to-function adapter only.
+
+    **Real `last_polled_at`, from day one -- learned from Pass 2.1's News
+    incident, not repeated here.** `run_weather_worker`'s own
+    `last_polled_at=None` default safely means "treat every candidate as
+    never-polled" for a single call, but would defeat its own cadence gate
+    for a repeatedly invoked cron caller. Exactly like
+    `internal_run_odds_worker` above, this endpoint calls
+    `app.persistence.weather_snapshots.read_last_polled_at()` -- which
+    derives real per-game state from already-persisted
+    `weather_snapshots.captured_at` history, no new state storage needed
+    (unlike News, whose own history table couldn't serve this role) --
+    before invoking the worker.
+
+    Same safe missing-credential failure as every other internal endpoint:
+    `MissingCredentialError` (credential unset) -- never a raw
+    `KeyError` -- returns a clean `status="failed"` result. Reachable
+    only via `INTERNAL_SERVICE_TOKEN`."""
+    try:
+        supabase_client, weatherapi_client, weatherapi_api_key = build_real_weather_worker_clients()
+    except MissingCredentialError as exc:
+        return RunWeatherWorkerResponse(
+            status="failed",
+            games_considered=0,
+            games_due=0,
+            games_in_game=[],
+            games_skipped_not_due=0,
+            games_skipped_dome=[],
+            games_skipped_unresolved_location=[],
+            snapshots_persisted=0,
+            failures=[],
+            error=str(exc),
+        )
+
+    async with supabase_client, weatherapi_client:
+        last_polled_at = await read_weather_last_polled_at()
+        result = await run_weather_worker(
+            supabase_client=supabase_client,
+            weatherapi_client=weatherapi_client,
+            weatherapi_key=weatherapi_api_key,
+            last_polled_at=last_polled_at,
+        )
+
+    return RunWeatherWorkerResponse(
+        status=result.status,
+        games_considered=result.games_considered,
+        games_due=result.games_due,
+        games_in_game=result.games_in_game,
+        games_skipped_not_due=result.games_skipped_not_due,
+        games_skipped_dome=result.games_skipped_dome,
+        games_skipped_unresolved_location=result.games_skipped_unresolved_location,
+        snapshots_persisted=result.snapshots_persisted,
         failures=result.failures,
         error=result.error,
     )

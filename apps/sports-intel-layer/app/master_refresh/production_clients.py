@@ -41,6 +41,12 @@ _BALLDONTLIE_BASE_URL = "https://api.balldontlie.io"
 #: diagnostic, which used this exact value against the real API.
 _GNEWS_BASE_URL = "https://gnews.io"
 
+#: The real, production WeatherAPI.com base URL -- matches
+#: `app.adapters.providers.weatherapi.WeatherAPIWeatherAdapter`'s own
+#: `/v1/forecast.json` path and every existing WeatherAPI adapter test
+#: fixture's respx mock target.
+_WEATHERAPI_BASE_URL = "https://api.weatherapi.com"
+
 
 class MissingCredentialError(Exception):
     """Raised when a required provider credential is absent from this
@@ -145,3 +151,20 @@ def build_real_news_worker_clients() -> tuple[httpx.AsyncClient, httpx.AsyncClie
     supabase_client = httpx.AsyncClient(base_url=os.environ["SUPABASE_URL"], timeout=60.0)
     gnews_client = httpx.AsyncClient(base_url=_GNEWS_BASE_URL, timeout=60.0)
     return supabase_client, gnews_client, api_key
+
+
+def build_real_weather_worker_clients() -> tuple[httpx.AsyncClient, httpx.AsyncClient, str]:
+    """Returns `(supabase_client, weatherapi_client, weatherapi_api_key)` --
+    Phase 8.0.5 Weather Activation (2026-09-07), now that
+    `WEATHERAPI_API_KEY` is configured in Railway DEV. Same isolation
+    discipline as every other credential reader in this module --
+    `WEATHERAPI_API_KEY` is read here only (already reserved in
+    `tests/test_environment_safety.py`'s forbidden-names list ahead of
+    this moment), `MissingCredentialError` (not a raw `KeyError`) if it
+    isn't configured. The caller owns closing both clients."""
+    api_key = os.environ.get("WEATHERAPI_API_KEY")
+    if not api_key:
+        raise MissingCredentialError("WEATHERAPI_API_KEY is not configured.")
+    supabase_client = httpx.AsyncClient(base_url=os.environ["SUPABASE_URL"], timeout=60.0)
+    weatherapi_client = httpx.AsyncClient(base_url=_WEATHERAPI_BASE_URL, timeout=60.0)
+    return supabase_client, weatherapi_client, api_key

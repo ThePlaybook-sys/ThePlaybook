@@ -83,7 +83,13 @@ _TARGET_PATHS = {
     #: own NewsAPI default is unchanged). Same "target mapped, no cron
     #: service created yet" status as the entry above.
     "news-worker": "/v1/internal/news-worker/run",
-    #: Remaining unwired specialized workers: Player Props/Weather/Pregame/
+    #: Phase 8.0.5 Weather Activation (2026-09-07): Weather Worker's real
+    #: invocation path -- lives on `sports-intel-layer`, same as
+    #: `odds-worker`/`news-worker`. Uses a real, persisted
+    #: `last_polled_at` (derived from `weather_snapshots.captured_at`)
+    #: from its very first cron tick, per Pass 2.1's News incident.
+    "weather-worker": "/v1/internal/weather-worker/run",
+    #: Remaining unwired specialized workers: Player Props/Pregame/
     #: Postgame Ingestion -- see the Phase 3E specialized worker runtime
     #: invocation debt item recorded in PROGRESS.md.
 }
