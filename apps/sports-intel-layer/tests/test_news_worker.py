@@ -434,7 +434,7 @@ async def test_no_games_in_candidate_window_skips_everything(monkeypatch):
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_not_due_yet_before_15_minute_interval(monkeypatch):
+async def test_not_due_yet_before_4_hour_interval(monkeypatch):
     _headers_env(monkeypatch)
     _standard_setup()
     news_route = _news_route().mock(return_value=httpx.Response(200, json=load("articles_empty.json")))
@@ -449,13 +449,15 @@ async def test_not_due_yet_before_15_minute_interval(monkeypatch):
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_due_once_15_minute_interval_has_elapsed(monkeypatch):
+async def test_due_once_4_hour_interval_has_elapsed(monkeypatch):
+    """Phase 8.0.5 Pass 2.2 (2026-09-07): interval widened 15min -> 4h --
+    see module docstring's "Cadence -- REVISED" section."""
     _headers_env(monkeypatch)
     _standard_setup()
     _mock_dgi_upsert()
     news_route = _news_route().mock(return_value=httpx.Response(200, json=load("articles_empty.json")))
 
-    last_polled_at = {TEAM_KC: NOW - timedelta(minutes=16), TEAM_BAL: NOW - timedelta(minutes=16)}
+    last_polled_at = {TEAM_KC: NOW - timedelta(hours=4, minutes=1), TEAM_BAL: NOW - timedelta(hours=4, minutes=1)}
     result = await _run(now=NOW, last_polled_at=last_polled_at)
 
     assert result.teams_due == 2
@@ -639,6 +641,7 @@ async def test_worker_signature_has_no_sportsdataio_or_weatherapi_client(monkeyp
         "last_polled_at",
         "news_adapter",
         "inter_call_delay_seconds",
+        "persist_state",
     }
 
 
@@ -694,3 +697,256 @@ async def test_explicit_pacing_sleeps_between_calls_not_before_the_first(monkeyp
     assert sleep_mock.await_count == 1
     sleep_mock.assert_awaited_with(5.0)
     assert result.teams_fetched == 2
+
+
+# ============================================================================
+# Durable quota guard + persisted last_polled_at (Phase 8.0.5 Pass 2.2, 2026-09-07)
+# ============================================================================
+
+POLL_STATE_URL = f"{SUPABASE_URL}/rest/v1/news_worker_poll_state"
+QUOTA_URL = f"{SUPABASE_URL}/rest/v1/news_provider_daily_quota"
+QUOTA_RPC_URL = f"{SUPABASE_URL}/rest/v1/rpc/increment_news_provider_quota"
+
+
+def _mock_poll_state_read(rows: list[dict] | None = None):
+    return respx.get(POLL_STATE_URL).mock(return_value=httpx.Response(200, json=rows or []))
+
+
+def _mock_poll_state_write():
+    return respx.post(POLL_STATE_URL).mock(return_value=httpx.Response(201, json=[]))
+
+
+def _mock_quota_stateful(initial_used: int = 0):
+    """One shared mutable counter backs both routes, mirroring the real
+    ledger: a GET reflects whatever's actually been incremented so far in
+    THIS test, rather than a fixed canned value -- the guard's
+    check-before-every-call design (see `_check_quota_guard`) only means
+    anything if the mock's read side actually advances as increments
+    happen."""
+    state = {"used": initial_used}
+
+    def _read(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=[{"requests_used": state["used"]}] if state["used"] else [])
+
+    def _increment(request: httpx.Request) -> httpx.Response:
+        state["used"] += 1
+        return httpx.Response(200, json=state["used"])
+
+    read_route = respx.get(QUOTA_URL).mock(side_effect=_read)
+    increment_route = respx.post(QUOTA_RPC_URL).mock(side_effect=_increment)
+    return read_route, increment_route
+
+
+async def _run_persisted(*, now, poll_state_rows=None, quota_used=0, articles=None):
+    _mock_news_article_history_insert()
+    _mock_poll_state_read(poll_state_rows)
+    poll_write_route = _mock_poll_state_write()
+    _, increment_route = _mock_quota_stateful(quota_used)
+    news_route = _news_route().mock(
+        return_value=httpx.Response(200, json=articles or load("articles_empty.json"))
+    )
+    async with httpx.AsyncClient(base_url=SUPABASE_URL) as supabase_client, httpx.AsyncClient(
+        base_url=NEWSAPI_URL
+    ) as newsapi_client:
+        result = await run_news_worker(
+            supabase_client=supabase_client,
+            newsapi_client=newsapi_client,
+            newsapi_key="test-key",
+            now=now,
+            cache_backend=InMemoryCacheBackend(),
+            persist_state=True,
+        )
+    return result, news_route, increment_route, poll_write_route
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_persist_state_reads_real_poll_state_never_never_polled(monkeypatch):
+    """The exact Pass 2.1 bug, fixed: with persist_state=True and a real
+    persisted row showing KC was polled 1 minute ago (well inside the
+    4-hour interval), KC must NOT be treated as due -- unlike the old
+    always-None behavior this replaces for the real production call
+    site."""
+    _headers_env(monkeypatch)
+    _standard_setup()
+    _mock_dgi_upsert()
+    poll_rows = [
+        {"team_id": TEAM_KC, "last_polled_at": (NOW - timedelta(minutes=1)).isoformat()},
+        {"team_id": TEAM_BAL, "last_polled_at": (NOW - timedelta(hours=5)).isoformat()},
+    ]
+    result, news_route, increment_route, poll_write_route = await _run_persisted(now=NOW, poll_state_rows=poll_rows)
+
+    assert result.teams_skipped_not_due == 1  # KC, polled 1 min ago
+    assert result.teams_due == 1  # BAL, polled 5h ago (> 4h interval)
+    assert news_route.call_count == 1
+    assert increment_route.call_count == 1
+    assert poll_write_route.call_count == 1
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_persist_state_first_run_with_no_persisted_rows_is_due(monkeypatch):
+    _headers_env(monkeypatch)
+    _standard_setup()
+    _mock_dgi_upsert()
+    result, news_route, increment_route, poll_write_route = await _run_persisted(now=NOW, poll_state_rows=[])
+
+    assert result.teams_due == 2
+    assert news_route.call_count == 2
+    assert increment_route.call_count == 2
+    assert poll_write_route.call_count == 2
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_immediate_repeat_does_not_refetch_every_team(monkeypatch):
+    """The controlled-live-proof requirement, verified as a unit test:
+    running the worker a second time immediately after, with the second
+    run's persisted-state read reflecting the first run's real writes,
+    must NOT refetch teams the first run already covered. Uses one
+    stateful poll-state double (not two separate route registrations,
+    which respx would match in first-registered order, masking the
+    second run's real data) so run 2 actually observes what run 1 wrote."""
+    _headers_env(monkeypatch)
+    _standard_setup()
+    _mock_dgi_upsert()
+    box = {"rows": []}
+
+    def _read_poll_state(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=box["rows"])
+
+    def _write_poll_state(request: httpx.Request) -> httpx.Response:
+        row = _json.loads(request.content)
+        box["rows"] = [r for r in box["rows"] if r["team_id"] != row["team_id"]] + [row]
+        return httpx.Response(201, json=[row])
+
+    respx.get(POLL_STATE_URL).mock(side_effect=_read_poll_state)
+    poll_write_route = respx.post(POLL_STATE_URL).mock(side_effect=_write_poll_state)
+    _mock_quota_stateful(0)
+    _mock_news_article_history_insert()
+    news_route = _news_route().mock(return_value=httpx.Response(200, json=load("articles_empty.json")))
+
+    async def _run_once(now):
+        async with httpx.AsyncClient(base_url=SUPABASE_URL) as supabase_client, httpx.AsyncClient(
+            base_url=NEWSAPI_URL
+        ) as newsapi_client:
+            return await run_news_worker(
+                supabase_client=supabase_client,
+                newsapi_client=newsapi_client,
+                newsapi_key="test-key",
+                now=now,
+                cache_backend=InMemoryCacheBackend(),
+                persist_state=True,
+            )
+
+    result1 = await _run_once(NOW)
+    assert result1.teams_due == 2
+    assert news_route.call_count == 2
+    assert poll_write_route.call_count == 2  # run 1 really wrote both teams' real attempt
+
+    # Second run, 30s later: persisted state now genuinely reflects both
+    # teams as just-polled -- what run 1's real writes actually produced.
+    result2 = await _run_once(NOW + timedelta(seconds=30))
+
+    assert result2.teams_due == 0
+    assert result2.teams_skipped_not_due == 2
+    assert news_route.call_count == 2  # unchanged -- zero new calls on the repeat
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_quota_guard_blocks_once_ceiling_reached(monkeypatch):
+    _headers_env(monkeypatch)
+    monkeypatch.setenv("GNEWS_DAILY_REQUEST_CEILING", "1")
+    _mock_games(
+        [
+            _game_row(game_id="game-1", home_team="KC", away_team="BAL", scheduled_start="2026-09-14T17:00:00Z"),
+            _game_row(game_id="game-2", home_team="SEA", away_team="KC", scheduled_start="2026-09-14T17:00:00Z"),
+        ]
+    )
+    _mock_team_provider_ids({"KC": TEAM_KC, "BAL": TEAM_BAL, "SEA": TEAM_SEA})
+    _mock_teams({TEAM_KC: NAME_KC, TEAM_BAL: NAME_BAL, TEAM_SEA: NAME_SEA})
+    _mock_dgi_upsert()
+
+    # Ceiling of 1, already at 0 used -- exactly one real call is allowed
+    # before the guard engages for the remaining due teams.
+    result, news_route, increment_route, _ = await _run_persisted(now=NOW, poll_state_rows=[], quota_used=0)
+
+    assert result.teams_due == 3
+    assert news_route.call_count == 1  # guard blocked the other 2 before any real call
+    assert increment_route.call_count == 1
+    assert result.teams_skipped_quota_guard == 2
+    assert result.provider_requests_used_today == 1
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_quota_guard_already_at_ceiling_blocks_every_team(monkeypatch):
+    _headers_env(monkeypatch)
+    monkeypatch.setenv("GNEWS_DAILY_REQUEST_CEILING", "80")
+    _standard_setup()
+    _mock_dgi_upsert()
+
+    result, news_route, increment_route, _ = await _run_persisted(now=NOW, poll_state_rows=[], quota_used=80)
+
+    assert result.teams_due == 2
+    assert news_route.call_count == 0
+    assert increment_route.call_count == 0
+    assert result.teams_skipped_quota_guard == 2
+    assert result.provider_requests_used_today == 80
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_quota_ledger_read_uses_utc_quota_date(monkeypatch):
+    """UTC day rollover is structural (a new date is simply a new,
+    unwritten row -- see the migration's own module docstring), verified
+    here by asserting the exact quota_date query param sent for a
+    now-timestamp near UTC midnight."""
+    _headers_env(monkeypatch)
+    _standard_setup()
+    _mock_dgi_upsert()
+
+    quota_route, _ = _mock_quota_stateful(0)
+    _mock_poll_state_read([])
+    _mock_poll_state_write()
+    _mock_news_article_history_insert()
+    _news_route().mock(return_value=httpx.Response(200, json=load("articles_empty.json")))
+
+    near_midnight = datetime(2026, 9, 11, 0, 30, tzinfo=timezone.utc)
+    async with httpx.AsyncClient(base_url=SUPABASE_URL) as supabase_client, httpx.AsyncClient(
+        base_url=NEWSAPI_URL
+    ) as newsapi_client:
+        await run_news_worker(
+            supabase_client=supabase_client,
+            newsapi_client=newsapi_client,
+            newsapi_key="test-key",
+            now=near_midnight,
+            cache_backend=InMemoryCacheBackend(),
+            persist_state=True,
+        )
+
+    assert quota_route.calls[0].request.url.params.get("quota_date") == "eq.2026-09-11"
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_default_persist_state_false_matches_every_existing_caller(monkeypatch):
+    """Structural guarantee: persist_state defaults to False, so every
+    caller in this file that predates Pass 2.2 (none of which pass this
+    new kwarg) gets byte-identical behavior -- no poll-state or quota
+    routes are ever hit."""
+    _headers_env(monkeypatch)
+    _standard_setup()
+    _mock_dgi_upsert()
+    poll_read_route = respx.get(POLL_STATE_URL).mock(return_value=httpx.Response(200, json=[]))
+    quota_read_route = respx.get(QUOTA_URL).mock(return_value=httpx.Response(200, json=[]))
+    _news_route().mock(return_value=httpx.Response(200, json=load("articles_empty.json")))
+
+    result = await _run(now=NOW, last_polled_at=None)
+
+    assert result.teams_due == 2
+    assert poll_read_route.call_count == 0
+    assert quota_read_route.call_count == 0
+    assert result.teams_skipped_quota_guard == 0
+    assert result.provider_requests_used_today is None
