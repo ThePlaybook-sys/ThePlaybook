@@ -1,7 +1,10 @@
 """Pre-Phase-6 Operational Readiness Gate, Decision 3 (2026-08-27; target
 table widened for Decision 6, same date). Widened again for Phase 7
 Milestone 7.0B (2026-09-02, `odds-worker` target) -- same generic
-dispatcher, no new mechanism.
+dispatcher, no new mechanism. Comment-only touch 2026-09-07 (Phase 7
+Controlled Real Odds Activation) to force a real rebuild for
+`cron-odds-worker`, whose own `apps/workers` build root had no other
+changed file to trigger one -- no behavior change.
 
 The finite Railway Cron Job entry point for this project's schedulable
 internal cycles. Deliberately NOT a FastAPI route --
