@@ -36,19 +36,6 @@ sentry_sdk.init(
 
 app = FastAPI(title="The Playbook — Sports Intelligence Layer")
 
-# Temporary, dev-only diagnostic probe -- Phase 7 Controlled Real Odds
-# Activation (2026-09-07). RUN_ODDS_EVENTS_DISCOVERY=1 gates a startup
-# call to the free /events discovery endpoint (see
-# app.diagnostics.odds_events_discovery's own docstring). Reverted after
-# use, same discipline as every prior temporary diagnostic pass.
-if os.environ.get("RUN_ODDS_EVENTS_DISCOVERY") == "1":
-
-    @app.on_event("startup")
-    async def _run_odds_events_discovery() -> None:
-        from app.diagnostics.odds_events_discovery import run_odds_events_discovery
-
-        await run_odds_events_discovery()
-
 
 @app.get("/health")
 def health() -> dict:
