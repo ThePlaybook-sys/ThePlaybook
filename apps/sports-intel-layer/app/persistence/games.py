@@ -74,7 +74,8 @@ async def list_games_in_window(
             "scheduled_start": [f"gte.{start.isoformat()}", f"lt.{end.isoformat()}"],
             "select": (
                 "id,external_provider_id,home_team,away_team,scheduled_start,stadium,status,"
-                "season_type,week,venue_lat,venue_long,venue_type,finalized_at,final_score"
+                "season_type,week,venue_lat,venue_long,venue_type,finalized_at,final_score,"
+                "manual_seed,unresolved_poll_attempts"
             ),
             "order": "scheduled_start.asc",
         },
@@ -127,4 +128,25 @@ async def update_final_score(
     if response.status_code not in (200, 204):
         raise GamesQueryError(
             f"failed to update final_score for game {game_id}: {response.status_code} {response.text}"
+        )
+
+
+async def set_unresolved_poll_attempts(
+    client: httpx.AsyncClient, headers: dict, *, game_id: str, attempts: int
+) -> None:
+    """Writes `games.unresolved_poll_attempts` (Phase 7 Controlled Real
+    Odds Activation safety fix, 2026-09-07) to an explicit new value --
+    the caller (`app.workers.odds_worker`) already has the current value
+    from the same `list_games_in_window` read this run used, so this is
+    a plain set, not a server-side increment (no read-then-write race:
+    exactly one cron process reads and writes this once per cycle)."""
+    response = await client.patch(
+        "/rest/v1/games",
+        params={"id": f"eq.{game_id}"},
+        json={"unresolved_poll_attempts": attempts},
+        headers=headers,
+    )
+    if response.status_code not in (200, 204):
+        raise GamesQueryError(
+            f"failed to set unresolved_poll_attempts for game {game_id}: {response.status_code} {response.text}"
         )

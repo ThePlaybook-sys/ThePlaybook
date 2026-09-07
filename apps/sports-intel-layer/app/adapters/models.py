@@ -112,6 +112,27 @@ class OddsLine(BaseModel):
     line_data: dict
 
 
+class DiscoveredEvent(BaseModel):
+    """One real, currently-scheduled event from a provider's free
+    events-listing endpoint (e.g. The Odds API's `/events`, CONFIRMED
+    zero-cost -- 2026-08-10 credit-usage projection) -- id/home_team/
+    away_team/commence_time only, no odds/markets data at all, since the
+    free endpoint returns none. Phase 7 Controlled Real Odds Activation
+    (2026-09-07): HQ's own locked rule after a real incident (three
+    manually-seeded games that never corresponded to any real matchup
+    triggered a paid call on every single cron tick, forever, since they
+    could never accrue a `last_polled_at` history) -- "never create a
+    canonical real-world game from an assumed or invented matchup; real
+    game seeds require authoritative provider/source evidence." This
+    model IS that evidence: every field here is a verbatim provider fact,
+    never inferred or guessed."""
+
+    provider_event_id: str
+    home_team: str
+    away_team: str
+    commence_time: datetime
+
+
 class PlayerProp(BaseModel):
     game_external_id: str
     #: See OddsLine.home_team/away_team/commence_time -- same game-identity

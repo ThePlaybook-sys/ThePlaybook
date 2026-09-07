@@ -45,7 +45,7 @@ from app.adapters.errors import (
     ProviderRateLimitError,
     ProviderUnavailableError,
 )
-from app.adapters.models import AdapterResponse, OddsLine, PlayerProp
+from app.adapters.models import AdapterResponse, DiscoveredEvent, OddsLine, PlayerProp
 
 #: ASSUMED: NFL's sport key on this provider.
 _SPORT_KEY = "americanfootball_nfl"
@@ -263,6 +263,47 @@ class TheOddsApiOddsAdapter(OddsAdapter):
             source=self.provider_name,
             provider_reported_at=_parse_timestamp(latest_update),
         )
+
+    async def fetch_events(self) -> AdapterResponse[list[DiscoveredEvent]]:
+        """Free `/events` discovery endpoint (CONFIRMED zero-cost from the
+        vendor's own docs, 2026-08-10 credit-usage projection) -- every
+        real, currently-scheduled event's id/home_team/away_team/
+        commence_time, with no odds/markets data at all (this endpoint
+        never returns any). This is the safe way to discover real
+        matchups/kickoff times BEFORE seeding a `games` row -- HQ's own
+        locked rule (2026-09-07, Phase 7 Controlled Real Odds Activation):
+        never construct a canonical game from an assumed or invented
+        matchup; a real game seed requires authoritative provider
+        evidence, and this method's return value IS that evidence, never
+        a guess.
+
+        Row isolation, same discipline as `fetch_odds`: one malformed
+        event is logged and skipped, never taking down the rest of a
+        real response."""
+        response = await _get(
+            self._client,
+            f"/v4/sports/{_SPORT_KEY}/events",
+            params={"apiKey": self._api_key},
+            provider_name=self.provider_name,
+        )
+        raw_events = _parse_json_array(response, provider_name=self.provider_name)
+
+        events: list[DiscoveredEvent] = []
+        for event in raw_events:
+            try:
+                events.append(
+                    DiscoveredEvent(
+                        provider_event_id=event["id"],
+                        home_team=event["home_team"],
+                        away_team=event["away_team"],
+                        commence_time=_parse_timestamp(event["commence_time"]),
+                    )
+                )
+            except (KeyError, TypeError, ValueError) as exc:
+                _logger.warning("skipping malformed discovered event (id=%r): %s", event.get("id"), exc)
+                continue
+
+        return AdapterResponse(value=events, source=self.provider_name)
 
 
 class TheOddsApiPlayerPropsAdapter(PlayerPropsAdapter):

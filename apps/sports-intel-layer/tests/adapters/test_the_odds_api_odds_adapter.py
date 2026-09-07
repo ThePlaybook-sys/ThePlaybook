@@ -24,7 +24,7 @@ from app.adapters.errors import (
     ProviderRateLimitError,
     ProviderUnavailableError,
 )
-from app.adapters.models import AdapterResponse, OddsLine
+from app.adapters.models import AdapterResponse, DiscoveredEvent, OddsLine
 from app.adapters.providers.the_odds_api import (
     TheOddsApiOddsAdapter,
     TheOddsApiPlayerPropsAdapter,
@@ -581,3 +581,100 @@ async def test_missing_quota_headers_logs_nothing_and_does_not_fail():
     response = await adapter.fetch_odds([GAME_CHIEFS_RAVENS])
 
     assert isinstance(response, AdapterResponse)
+
+
+# --- fetch_events (free discovery endpoint, Phase 7 Controlled Real Odds Activation, 2026-09-07) ---
+
+EVENTS_URL = f"{BASE_URL}/v4/sports/americanfootball_nfl/events"
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_fetch_events_returns_discovered_events():
+    respx.get(EVENTS_URL).mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                {
+                    "id": "8c94552d022acec4a0458d70c19d3da9",
+                    "home_team": "Seattle Seahawks",
+                    "away_team": "New England Patriots",
+                    "commence_time": "2026-09-10T00:20:00Z",
+                },
+                {
+                    "id": "b2f1a0c3d4e5f60718293a4b5c6d7e8f",
+                    "home_team": "Kansas City Chiefs",
+                    "away_team": "Baltimore Ravens",
+                    "commence_time": "2026-09-13T17:00:00Z",
+                },
+            ],
+        )
+    )
+    adapter = _odds_adapter()
+
+    response = await adapter.fetch_events()
+
+    assert isinstance(response, AdapterResponse)
+    assert len(response.value) == 2
+    first = response.value[0]
+    assert isinstance(first, DiscoveredEvent)
+    assert first.provider_event_id == "8c94552d022acec4a0458d70c19d3da9"
+    assert first.home_team == "Seattle Seahawks"
+    assert first.away_team == "New England Patriots"
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_fetch_events_no_api_key_leaks_query_param_but_no_markets_regions_sent():
+    """The free endpoint takes no markets/regions params at all -- this
+    pins that the request never asks for anything but the apiKey, so a
+    future change can't accidentally reintroduce a credit-costing param
+    on this supposedly-free call."""
+    route = respx.get(EVENTS_URL).mock(return_value=httpx.Response(200, json=[]))
+    adapter = _odds_adapter()
+
+    await adapter.fetch_events()
+
+    sent_params = dict(route.calls[0].request.url.params)
+    assert set(sent_params) == {"apiKey"}
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_fetch_events_malformed_event_is_skipped_not_fatal():
+    respx.get(EVENTS_URL).mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                {"id": "good-1", "home_team": "Buffalo Bills", "away_team": "Miami Dolphins", "commence_time": "2026-09-13T17:00:00Z"},
+                {"id": "bad-1"},  # missing home_team/away_team/commence_time
+            ],
+        )
+    )
+    adapter = _odds_adapter()
+
+    response = await adapter.fetch_events()
+
+    assert len(response.value) == 1
+    assert response.value[0].provider_event_id == "good-1"
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_fetch_events_empty_response_returns_empty_list():
+    respx.get(EVENTS_URL).mock(return_value=httpx.Response(200, json=[]))
+    adapter = _odds_adapter()
+
+    response = await adapter.fetch_events()
+
+    assert response.value == []
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_fetch_events_auth_error_raises_same_as_fetch_odds():
+    respx.get(EVENTS_URL).mock(return_value=httpx.Response(401))
+    adapter = _odds_adapter()
+
+    with pytest.raises(ProviderAuthError):
+        await adapter.fetch_events()

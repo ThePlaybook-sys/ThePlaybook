@@ -55,7 +55,7 @@ from app.adapters.errors import ProviderError
 from app.adapters.models import AdapterResponse, OddsLine
 from app.adapters.providers.the_odds_api import TheOddsApiOddsAdapter
 from app.persistence.game_identity import GameIdentityError, resolve_game_ids
-from app.persistence.games import GamesQueryError, list_games_in_window
+from app.persistence.games import GamesQueryError, list_games_in_window, set_unresolved_poll_attempts
 from app.persistence.odds_api_credit_ledger import CREDITS_PER_CALL, CreditLedgerError, read_credit_ledger, record_call
 from app.persistence.odds_game_linking import ProviderEventIdentity, resolve_and_link_odds_events
 from app.persistence.odds_snapshots import PersistenceError, persist_odds_lines
@@ -71,6 +71,22 @@ _PROVIDER_NAME = "the_odds_api"
 #: `_check_credit_guard`'s own docstring).
 _CREDIT_BUDGET_ENV_VAR = "THE_ODDS_API_MONTHLY_CREDIT_BUDGET"
 _CREDIT_FLOOR_ENV_VAR = "THE_ODDS_API_MIN_REMAINING_CREDITS"
+
+#: Phase 7 Controlled Real Odds Activation safety fix (2026-09-07), after
+#: a real incident: 3 manually-seeded games that never linked to a real
+#: event triggered a paid call on every single cron tick, indefinitely,
+#: since a game that can never accrue odds_snapshots history always reads
+#: as "never polled." A `games.manual_seed=true` row is now excluded from
+#: `due_games` once its own `unresolved_poll_attempts` reaches this cap --
+#: a disclosed, conservative policy default (3 attempts = up to 45
+#: minutes of retries at the standard */15 cadence, enough to survive one
+#: transient hiccup, never unbounded), same "explicit, disclosed, not
+#: empirically derived" discipline as every other policy default this
+#: project has introduced (ADAPTIVE_WEIGHT_LEARNING_RATE, THRESHOLD_
+#: VERSION). Never applied to a normal Schedule/Master-Refresh-sourced
+#: game (manual_seed defaults false) -- those correctly keep retrying a
+#: real, temporarily-unresolved team mapping forever, unaffected by this.
+MANUAL_SEED_MAX_ATTEMPTS = 3
 
 #: How many days out this worker considers a game a polling candidate at
 #: all -- an independent, worker-level scoping decision, NOT a
@@ -205,6 +221,14 @@ async def run_odds_worker(
         window = classify_window(now=now, kickoff=kickoff)
         if window is Window.STOPPED:
             continue  # already kicked off -- this worker generation never polls post-kickoff
+        if game.get("manual_seed") and (game.get("unresolved_poll_attempts") or 0) >= MANUAL_SEED_MAX_ATTEMPTS:
+            # Safety fix (2026-09-07): a manually-seeded game that has
+            # never linked to a real event after MANUAL_SEED_MAX_ATTEMPTS
+            # tries is excluded going forward -- never an unbounded paid-
+            # call loop for a bad manual seed. Normal Schedule-sourced
+            # games (manual_seed=false) are never affected by this check.
+            skipped += 1
+            continue
         if should_poll(now=now, kickoff=kickoff, last_polled_at=last_polled_at.get(game["id"])):
             due_games.append(game)
         else:
@@ -304,8 +328,30 @@ async def run_odds_worker(
     due_game_ids = {g["id"] for g in due_games}
     lines_to_persist = [line for line in response.value if already_linked.get(line.game_external_id) in due_game_ids]
 
+    # Safety fix (2026-09-07): track consecutive due-but-uncaptured
+    # attempts for manual-seed games only -- see MANUAL_SEED_MAX_ATTEMPTS.
+    # A capture this round (present in lines_to_persist) resets the
+    # counter to 0 (the game has proven it links; ordinary cadence takes
+    # over from here). A due manual-seed game with no capture this round
+    # has its counter incremented by exactly one attempt.
+    captured_game_ids = {already_linked.get(line.game_external_id) for line in lines_to_persist}
+    attempt_failures: list[str] = []
+    for game in due_games:
+        if not game.get("manual_seed"):
+            continue
+        current_attempts = game.get("unresolved_poll_attempts") or 0
+        if game["id"] in captured_game_ids:
+            new_attempts = 0
+        else:
+            new_attempts = current_attempts + 1
+        if new_attempts != current_attempts:
+            try:
+                await set_unresolved_poll_attempts(supabase_client, headers, game_id=game["id"], attempts=new_attempts)
+            except GamesQueryError as exc:
+                attempt_failures.append(f"unresolved_poll_attempts update failed for {game['id']}: {exc}")
+
     persisted = 0
-    failures: list[str] = list(ledger_failures)
+    failures: list[str] = list(ledger_failures) + attempt_failures
     if lines_to_persist:
         try:
             persisted = await persist_odds_lines(AdapterResponse(value=lines_to_persist, source=response.source))
