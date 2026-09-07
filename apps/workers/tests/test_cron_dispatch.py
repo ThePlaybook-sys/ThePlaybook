@@ -154,6 +154,34 @@ async def test_dispatch_news_worker_posts_to_correct_path():
 
 
 @pytest.mark.asyncio
+@respx.mock
+async def test_dispatch_weather_worker_posts_to_correct_path():
+    """Phase 8.0.5 Weather Activation (2026-09-07) -- same
+    `sports-intel-layer`-hosted shape as `odds-worker`/`news-worker` above."""
+    route = respx.post(f"{BASE_URL}/v1/internal/weather-worker/run").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "status": "success",
+                "games_considered": 0,
+                "games_due": 0,
+                "games_in_game": [],
+                "games_skipped_not_due": 0,
+                "games_skipped_dome": [],
+                "games_skipped_unresolved_location": [],
+                "snapshots_persisted": 0,
+                "failures": [],
+                "error": None,
+            },
+        )
+    )
+    async with httpx.AsyncClient() as client:
+        result = await dispatch(target="weather-worker", base_url=BASE_URL, internal_token="secret", client=client)
+    assert result["status"] == "success"
+    assert route.calls.last.request.headers["X-Internal-Token"] == "secret"
+
+
+@pytest.mark.asyncio
 async def test_dispatch_rejects_unknown_target():
     async with httpx.AsyncClient() as client:
         with pytest.raises(CronDispatchError):
