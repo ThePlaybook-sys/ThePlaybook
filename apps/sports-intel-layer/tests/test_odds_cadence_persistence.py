@@ -46,6 +46,7 @@ from tests.test_odds_worker import (
     GAME_COWBOYS_EAGLES,
     GAME_49ERS_BILLS,
     _game_row,
+    _mock_credit_ledger,
     _mock_game_provider_ids,
     _mock_team_provider_ids,
     _odds_response,
@@ -98,6 +99,7 @@ def _mock_odds_snapshots_stateful(clock: dict):
 
     respx.get(f"{SUPABASE_URL}/rest/v1/odds_snapshots").mock(side_effect=_get_respond)
     post_route = respx.post(f"{SUPABASE_URL}/rest/v1/odds_snapshots").mock(side_effect=_post_respond)
+    _mock_credit_ledger()
     return post_route, rows
 
 

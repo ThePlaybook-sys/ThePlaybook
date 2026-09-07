@@ -65,6 +65,10 @@ def _mock_all_boundaries(*, injuries_status: int = 200, forecast_status: int = 2
     )
     respx.get(f"{SUPABASE_URL}/rest/v1/odds_snapshots").mock(return_value=httpx.Response(200, json=[]))
     respx.post(f"{SUPABASE_URL}/rest/v1/odds_snapshots").mock(return_value=httpx.Response(201))
+    respx.get(f"{SUPABASE_URL}/rest/v1/odds_api_credit_ledger").mock(return_value=httpx.Response(200, json=[]))
+    respx.post(f"{SUPABASE_URL}/rest/v1/odds_api_credit_ledger").mock(
+        return_value=httpx.Response(201, json=[{"credits_used_this_period": 3}])
+    )
     respx.get(f"{SUPABASE_URL}/rest/v1/injury_reports").mock(return_value=httpx.Response(200, json=[]))
     respx.post(f"{SUPABASE_URL}/rest/v1/injury_reports").mock(return_value=httpx.Response(201))
     respx.get(f"{SUPABASE_URL}/rest/v1/weather_snapshots").mock(return_value=httpx.Response(200, json=[]))

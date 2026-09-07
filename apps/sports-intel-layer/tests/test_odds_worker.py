@@ -123,7 +123,23 @@ def _mock_game_provider_ids(existing: dict | None = None):
 
 
 def _mock_odds_snapshots_insert():
+    _mock_credit_ledger()
     return respx.post(f"{SUPABASE_URL}/rest/v1/odds_snapshots").mock(return_value=httpx.Response(201))
+
+
+def _mock_credit_ledger():
+    """Phase 7 Controlled Real Odds Activation (2026-09-07): a real
+    (non-cached) fetch always records usage via `app.persistence.
+    odds_api_credit_ledger.record_call`, regardless of whether the guard
+    itself is configured (env vars unset in every test here, so the guard
+    check itself never reaches Supabase -- only `record_call`'s own
+    internal `read_credit_ledger` does). Bundled into
+    `_mock_odds_snapshots_insert` since both only matter on the same
+    "real fetch succeeded" path."""
+    respx.get(f"{SUPABASE_URL}/rest/v1/odds_api_credit_ledger").mock(return_value=httpx.Response(200, json=[]))
+    respx.post(f"{SUPABASE_URL}/rest/v1/odds_api_credit_ledger").mock(
+        return_value=httpx.Response(201, json=[{"credits_used_this_period": 3}])
+    )
 
 
 def _odds_response():

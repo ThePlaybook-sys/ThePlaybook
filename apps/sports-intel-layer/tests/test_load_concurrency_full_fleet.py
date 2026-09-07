@@ -119,6 +119,10 @@ async def test_odds_worker_full_slate_one_bulk_call_not_thirteen(monkeypatch):
         return_value=httpx.Response(200, json=load_odds("bulk_odds_multi_game.json"))
     )
     respx.post(f"{SUPABASE_URL}/rest/v1/odds_snapshots").mock(return_value=httpx.Response(201))
+    respx.get(f"{SUPABASE_URL}/rest/v1/odds_api_credit_ledger").mock(return_value=httpx.Response(200, json=[]))
+    respx.post(f"{SUPABASE_URL}/rest/v1/odds_api_credit_ledger").mock(
+        return_value=httpx.Response(201, json=[{"credits_used_this_period": 3}])
+    )
 
     cache = InMemoryCacheBackend()
     async with httpx.AsyncClient(base_url=SUPABASE_URL) as sb, httpx.AsyncClient(base_url=ODDS_API_URL) as odds:
@@ -171,6 +175,10 @@ async def test_player_props_worker_full_slate_bounded_calls_and_isolation(monkey
     respx.get(f"{SUPABASE_URL}/rest/v1/game_provider_ids").mock(side_effect=_game_provider_respond)
     respx.post(f"{SUPABASE_URL}/rest/v1/game_provider_ids").mock(return_value=httpx.Response(201))
     respx.post(f"{SUPABASE_URL}/rest/v1/odds_snapshots").mock(return_value=httpx.Response(201))
+    respx.get(f"{SUPABASE_URL}/rest/v1/odds_api_credit_ledger").mock(return_value=httpx.Response(200, json=[]))
+    respx.post(f"{SUPABASE_URL}/rest/v1/odds_api_credit_ledger").mock(
+        return_value=httpx.Response(201, json=[{"credits_used_this_period": 3}])
+    )
 
     call_count = {"n": 0}
     bad_game = game_ids[3]
@@ -577,6 +585,10 @@ async def test_pregame_worker_multiple_simultaneous_triggers_stay_bounded(monkey
     )
     respx.get(f"{SUPABASE_URL}/rest/v1/odds_snapshots").mock(return_value=httpx.Response(200, json=[]))
     respx.post(f"{SUPABASE_URL}/rest/v1/odds_snapshots").mock(return_value=httpx.Response(201))
+    respx.get(f"{SUPABASE_URL}/rest/v1/odds_api_credit_ledger").mock(return_value=httpx.Response(200, json=[]))
+    respx.post(f"{SUPABASE_URL}/rest/v1/odds_api_credit_ledger").mock(
+        return_value=httpx.Response(201, json=[{"credits_used_this_period": 3}])
+    )
     respx.get(f"{SUPABASE_URL}/rest/v1/injury_reports").mock(return_value=httpx.Response(200, json=[]))
     respx.post(f"{SUPABASE_URL}/rest/v1/injury_reports").mock(return_value=httpx.Response(201))
     respx.get(f"{SUPABASE_URL}/rest/v1/weather_snapshots").mock(return_value=httpx.Response(200, json=[]))

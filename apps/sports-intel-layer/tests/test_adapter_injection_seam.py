@@ -68,6 +68,10 @@ def _mock_games(games=None):
 
 
 def _mock_odds_snapshots_insert():
+    respx.get(f"{SUPABASE_URL}/rest/v1/odds_api_credit_ledger").mock(return_value=httpx.Response(200, json=[]))
+    respx.post(f"{SUPABASE_URL}/rest/v1/odds_api_credit_ledger").mock(
+        return_value=httpx.Response(201, json=[{"credits_used_this_period": 3}])
+    )
     return respx.post(f"{SUPABASE_URL}/rest/v1/odds_snapshots").mock(return_value=httpx.Response(201))
 
 
@@ -276,6 +280,10 @@ async def test_pregame_worker_passes_injected_adapters_through_to_delegated_work
     )
     respx.get(f"{SUPABASE_URL}/rest/v1/odds_snapshots").mock(return_value=httpx.Response(200, json=[]))
     respx.post(f"{SUPABASE_URL}/rest/v1/odds_snapshots").mock(return_value=httpx.Response(201))
+    respx.get(f"{SUPABASE_URL}/rest/v1/odds_api_credit_ledger").mock(return_value=httpx.Response(200, json=[]))
+    respx.post(f"{SUPABASE_URL}/rest/v1/odds_api_credit_ledger").mock(
+        return_value=httpx.Response(201, json=[{"credits_used_this_period": 3}])
+    )
     respx.get(f"{SUPABASE_URL}/rest/v1/injury_reports").mock(return_value=httpx.Response(200, json=[]))
     respx.post(f"{SUPABASE_URL}/rest/v1/injury_reports").mock(return_value=httpx.Response(201))
     respx.get(f"{SUPABASE_URL}/rest/v1/weather_snapshots").mock(return_value=httpx.Response(200, json=[]))

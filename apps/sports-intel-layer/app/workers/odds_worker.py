@@ -56,11 +56,21 @@ from app.adapters.models import AdapterResponse, OddsLine
 from app.adapters.providers.the_odds_api import TheOddsApiOddsAdapter
 from app.persistence.game_identity import GameIdentityError, resolve_game_ids
 from app.persistence.games import GamesQueryError, list_games_in_window
+from app.persistence.odds_api_credit_ledger import CREDITS_PER_CALL, CreditLedgerError, read_credit_ledger, record_call
 from app.persistence.odds_game_linking import ProviderEventIdentity, resolve_and_link_odds_events
 from app.persistence.odds_snapshots import PersistenceError, persist_odds_lines
 from app.workers.windows import Window, classify_window, should_poll, ttl_seconds
 
 _PROVIDER_NAME = "the_odds_api"
+
+#: Phase 7 Controlled Real Odds Activation (2026-09-07). Both env vars
+#: must be set for the guard to activate at all -- an unset budget/floor
+#: is never defaulted to an invented number (Mac's explicit instruction);
+#: absence means "guard not configured," not "no limit," but this worker
+#: makes that an explicit, disclosed no-op rather than a silent one (see
+#: `_check_credit_guard`'s own docstring).
+_CREDIT_BUDGET_ENV_VAR = "THE_ODDS_API_MONTHLY_CREDIT_BUDGET"
+_CREDIT_FLOOR_ENV_VAR = "THE_ODDS_API_MIN_REMAINING_CREDITS"
 
 #: How many days out this worker considers a game a polling candidate at
 #: all -- an independent, worker-level scoping decision, NOT a
@@ -77,7 +87,7 @@ _CANDIDATE_WINDOW_DAYS = 7
 
 @dataclass
 class OddsWorkerResult:
-    status: str  # "success" | "partial" | "failed"
+    status: str  # "success" | "partial" | "failed" | "skipped_credit_guard"
     games_considered: int = 0
     games_due: int = 0
     games_skipped_not_due: int = 0
@@ -86,6 +96,29 @@ class OddsWorkerResult:
     unresolved_events: list[str] = field(default_factory=list)
     failures: list[str] = field(default_factory=list)
     error: str | None = None
+    credits_used_this_period: int | None = None
+
+
+async def _check_credit_guard(supabase_client: httpx.AsyncClient, headers: dict) -> tuple[bool, int | None]:
+    """Returns `(allowed, credits_used_this_period)`. Fails OPEN (allowed
+    the call) only when the guard itself isn't configured -- both
+    `THE_ODDS_API_MONTHLY_CREDIT_BUDGET` and `THE_ODDS_API_MIN_REMAINING_
+    CREDITS` must be set, or nothing is enforced; neither is ever
+    defaulted to an invented number. Once both are configured, fails
+    CLOSED (blocks the call) the moment `budget - credits_used <= floor`
+    -- computed from this worker's own deterministic call-counting
+    ledger (`app.persistence.odds_api_credit_ledger`), never from a
+    parsed, ASSUMED vendor header."""
+    budget_raw = os.environ.get(_CREDIT_BUDGET_ENV_VAR)
+    floor_raw = os.environ.get(_CREDIT_FLOOR_ENV_VAR)
+    if budget_raw is None or floor_raw is None:
+        return True, None
+    budget = int(budget_raw)
+    floor = int(floor_raw)
+    ledger = await read_credit_ledger(supabase_client, headers, provider_name=_PROVIDER_NAME)
+    used = ledger["credits_used_this_period"] if ledger else 0
+    remaining = budget - used
+    return remaining > floor, used
 
 
 def _auth_headers() -> dict:
@@ -180,6 +213,24 @@ async def run_odds_worker(
     if not due_games:
         return OddsWorkerResult(status="success", games_considered=len(games), games_skipped_not_due=skipped)
 
+    # Phase 7 Controlled Real Odds Activation (2026-09-07): checked AFTER
+    # deciding something is due (a guard-skip is a real, named outcome
+    # distinct from "nothing was due"), BEFORE the real provider call.
+    try:
+        guard_allowed, credits_used = await _check_credit_guard(supabase_client, headers)
+    except CreditLedgerError as exc:
+        return OddsWorkerResult(
+            status="failed", games_considered=len(games), games_due=len(due_games), error=f"credit guard read failed: {exc}"
+        )
+    if not guard_allowed:
+        return OddsWorkerResult(
+            status="skipped_credit_guard",
+            games_considered=len(games),
+            games_due=len(due_games),
+            games_skipped_not_due=skipped,
+            credits_used_this_period=credits_used,
+        )
+
     # Dynamic TTL (Phase 3E-4F): the shortest (most urgent) TTL among this
     # run's due games -- one bulk response can span games in different
     # windows, and the cache must never treat a soon-kickoff game's data
@@ -197,6 +248,19 @@ async def run_odds_worker(
         return OddsWorkerResult(
             status="failed", games_considered=len(games), games_due=len(due_games), error=f"Odds fetch failed: {exc}"
         )
+
+    # Record real credit usage -- ONLY for a genuine provider round-trip,
+    # never a cache hit (no credits are spent serving one). A ledger-write
+    # failure is collected, not raised -- it must never block persisting
+    # odds data a real, already-succeeded fetch already returned, matching
+    # this worker's own established per-step failure isolation.
+    credits_used_this_period = credits_used
+    ledger_failures: list[str] = []
+    if not response.from_cache:
+        try:
+            credits_used_this_period = await record_call(supabase_client, headers, provider_name=_PROVIDER_NAME, credits=CREDITS_PER_CALL)
+        except CreditLedgerError as exc:
+            ledger_failures.append(f"credit ledger write failed: {exc}")
 
     events_by_provider_id: dict[str, OddsLine] = {}
     for line in response.value:
@@ -241,7 +305,7 @@ async def run_odds_worker(
     lines_to_persist = [line for line in response.value if already_linked.get(line.game_external_id) in due_game_ids]
 
     persisted = 0
-    failures: list[str] = []
+    failures: list[str] = list(ledger_failures)
     if lines_to_persist:
         try:
             persisted = await persist_odds_lines(AdapterResponse(value=lines_to_persist, source=response.source))
@@ -257,6 +321,7 @@ async def run_odds_worker(
         games_skipped_not_due=skipped,
         lines_persisted=persisted,
         newly_linked=newly_linked,
+        credits_used_this_period=credits_used_this_period,
         unresolved_events=unresolved,
         failures=failures,
     )

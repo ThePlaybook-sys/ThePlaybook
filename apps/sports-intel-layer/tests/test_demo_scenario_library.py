@@ -278,6 +278,7 @@ async def test_deterministic_replay(monkeypatch, scenario_name):
 
     _NON_DETERMINISTIC_FIELDS = {
         "id", "game_id", "player_id", "team_id", "captured_at", "created_at", "observed_at", "last_updated",
+        "updated_at",  # Phase 7 Controlled Real Odds Activation (2026-09-07): odds_api_credit_ledger's own wall-clock stamp
     }
 
     def _normalize(value):
