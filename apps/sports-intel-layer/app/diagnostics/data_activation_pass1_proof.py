@@ -47,6 +47,23 @@ async def _run_balldontlie_injury_proof() -> None:
             balldontlie_api_key=balldontlie_api_key,
         )
         _logger.warning("data_activation_pass1_proof balldontlie_injury result=%s", result)
+
+        # Diagnostic-only comparison call (2026-09-07, same-day follow-up):
+        # the injuries call above returned a real 401 despite the exact
+        # same api_key/header shape this session's own earlier schedule-
+        # discovery probe used successfully against /nfl/v1/games -- this
+        # single extra call disambiguates "the key itself is broken" from
+        # "this endpoint specifically is inaccessible on the current plan",
+        # never re-run once that answer is known.
+        games_response = await balldontlie_client.get(
+            "/nfl/v1/games",
+            params={"seasons[]": "2026", "weeks[]": "1", "per_page": "1"},
+            headers={"Authorization": balldontlie_api_key},
+        )
+        _logger.warning(
+            "data_activation_pass1_proof balldontlie_games_comparison_call http_status=%s",
+            games_response.status_code,
+        )
     except Exception as exc:  # noqa: BLE001 -- a diagnostic probe must never crash startup
         _logger.warning("data_activation_pass1_proof balldontlie_injury failed: %s", exc)
     finally:
