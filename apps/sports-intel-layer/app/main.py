@@ -41,19 +41,6 @@ sentry_sdk.init(
 
 app = FastAPI(title="The Playbook — Sports Intelligence Layer")
 
-# Temporary, dev-only diagnostic probe -- Phase 8.0.5 Data Activation
-# Pass 2 (2026-09-07). RUN_NEWS_PACING_PROOF=1 gates a startup call to
-# verify the new inter-call pacing fix against a real GNews pull (see
-# app.diagnostics.news_pacing_proof's own docstring). Reverted after
-# use, same discipline as every prior temporary diagnostic pass.
-if os.environ.get("RUN_NEWS_PACING_PROOF") == "1":
-
-    @app.on_event("startup")
-    async def _run_news_pacing_proof() -> None:
-        from app.diagnostics.news_pacing_proof import run_news_pacing_proof
-
-        await run_news_pacing_proof()
-
 
 @app.get("/health")
 def health() -> dict:
