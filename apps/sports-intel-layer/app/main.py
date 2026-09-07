@@ -41,19 +41,6 @@ sentry_sdk.init(
 
 app = FastAPI(title="The Playbook — Sports Intelligence Layer")
 
-# Temporary, dev-only diagnostic probe -- Phase 8.0.5 Pass 2.2 (2026-09-07).
-# RUN_NEWS_PASS2_2_PROOF=1 gates a startup call to the real, permanent
-# run_news_worker(persist_state=True) code path this pass built (see
-# app.diagnostics.news_pass2_2_proof's own docstring). Reverted after use,
-# same discipline as every prior temporary diagnostic pass.
-if os.environ.get("RUN_NEWS_PASS2_2_PROOF") == "1":
-
-    @app.on_event("startup")
-    async def _run_news_pass2_2_proof() -> None:
-        from app.diagnostics.news_pass2_2_proof import run_news_pass2_2_proof
-
-        await run_news_pass2_2_proof()
-
 
 @app.get("/health")
 def health() -> dict:
