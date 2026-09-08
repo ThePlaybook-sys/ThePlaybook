@@ -8,6 +8,7 @@ from app.environment_safety import assert_demo_isolation
 from app.internal_auth import require_internal_token
 from app.master_refresh.production_clients import (
     MissingCredentialError,
+    build_msf_players_diagnostic_client,
     build_real_balldontlie_injury_worker_clients,
     build_real_master_refresh_clients,
     build_real_news_worker_clients,
@@ -492,3 +493,70 @@ if os.environ.get("RAILWAY_ENVIRONMENT_NAME", "dev") == "dev":
     @app.get("/sentry-debug")
     async def trigger_error():
         division_by_zero = 1 / 0
+
+    if os.environ.get("RUN_MSF_PLAYERS_DIAGNOSTIC_2") == "1":
+        import json
+        import logging
+
+        _msf_players_logger = logging.getLogger("sports-intel-layer.diagnostics.msf_players")
+
+        @app.on_event("startup")
+        async def _run_msf_players_diagnostic_2_once() -> None:
+            """TEMPORARY, one-shot diagnostic hook for MANSA Phase 8.2's
+            HQ-authorized MySportsFeeds Players Identity Diagnostic #2
+            (2026-09-08, see `app.diagnostics.msf_players_diagnostic`'s
+            own module docstring). Dev-only mount, gated behind
+            `RUN_MSF_PLAYERS_DIAGNOSTIC_2 == "1"` -- a distinct flag name
+            from pass #1's own (spent, left at "0") `RUN_MSF_
+            PLAYERS_DIAGNOSTIC`, so there is no ambiguity about which
+            pass a given deploy could fire. Makes exactly ONE real
+            MySportsFeeds call with a 120s timeout, per HQ's explicit
+            "exactly ONE MySportsFeeds request... no automatic retry"
+            instruction. `MYSPORTSFEEDS_API_KEY` is never referenced by
+            name anywhere in this module; it is read exactly once, by
+            `build_msf_players_diagnostic_client()` in
+            `app.master_refresh.production_clients`."""
+            client_and_key = build_msf_players_diagnostic_client()
+            if client_and_key is None:
+                _msf_players_logger.warning("MSF_PLAYERS_DIAGNOSTIC_2_SKIPPED_NO_CREDENTIAL")
+                return
+
+            from app.diagnostics.msf_players_diagnostic import run_msf_players_diagnostic
+
+            client, api_key = client_and_key
+            try:
+                result = await run_msf_players_diagnostic(client, api_key)
+            finally:
+                await client.aclose()
+
+            _msf_players_logger.warning("MSF_PLAYERS_DIAGNOSTIC_2_START")
+            _msf_players_logger.warning(
+                "MSF_PLAYERS_DIAGNOSTIC_2_META %s",
+                json.dumps(
+                    {
+                        "path": result.get("path"),
+                        "http_status": result.get("http_status"),
+                        "latency_ms": result.get("latency_ms"),
+                        "error": result.get("error"),
+                        "response_headers": result.get("response_headers"),
+                        "content_length_bytes": result.get("content_length_bytes"),
+                        "top_level_keys": result.get("top_level_keys"),
+                        "player_lists_found": result.get("player_lists_found"),
+                        "id_cross_check_summary": result.get("id_cross_check_summary"),
+                    },
+                    default=str,
+                ),
+            )
+            _msf_players_logger.warning(
+                "MSF_PLAYERS_DIAGNOSTIC_2_SAMPLE %s",
+                json.dumps(result.get("player_lists_sample"), default=str),
+            )
+            _msf_players_logger.warning(
+                "MSF_PLAYERS_DIAGNOSTIC_2_ID_CROSS_CHECK %s",
+                json.dumps(result.get("id_cross_check"), default=str),
+            )
+            _msf_players_logger.warning(
+                "MSF_PLAYERS_DIAGNOSTIC_2_ANOMALY_FINDINGS %s",
+                json.dumps(result.get("anomaly_findings"), default=str),
+            )
+            _msf_players_logger.warning("MSF_PLAYERS_DIAGNOSTIC_2_DONE")
