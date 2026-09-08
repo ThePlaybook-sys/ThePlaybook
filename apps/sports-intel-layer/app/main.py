@@ -492,3 +492,35 @@ if os.environ.get("RAILWAY_ENVIRONMENT_NAME", "dev") == "dev":
     @app.get("/sentry-debug")
     async def trigger_error():
         division_by_zero = 1 / 0
+
+    if os.environ.get("RUN_MSF_PLAYER_STATS_DIAGNOSTIC") == "1":
+        import json
+        import logging
+
+        _msf_player_stats_diag_logger = logging.getLogger(
+            "sports-intel-layer.diagnostics.msf_player_stats_diagnostic"
+        )
+
+        @app.on_event("startup")
+        async def _run_msf_player_stats_diagnostic_once() -> None:
+            """TEMPORARY, one-shot diagnostic hook for MANSA Phase 8.3B's
+            HQ-authorized single-call player season-stats diagnostic
+            (2026-09-08, see `app.diagnostics.
+            msf_player_stats_diagnostic`'s own module docstring). Exactly
+            ONE real MySportsFeeds call, guarded by Phase 8.3A's own
+            `activation_run_markers` (a dedicated run_key, not a second
+            idempotency mechanism). Diagnostic only -- captures and logs
+            the raw response, persists nothing to `team_stats`/
+            `player_stats`. Dev-only mount, gated behind
+            `RUN_MSF_PLAYER_STATS_DIAGNOSTIC == "1"`."""
+            from app.diagnostics.msf_player_stats_diagnostic import (
+                run_msf_player_stats_diagnostic,
+            )
+
+            result = await run_msf_player_stats_diagnostic()
+
+            _msf_player_stats_diag_logger.warning("MSF_PLAYER_STATS_DIAGNOSTIC_START")
+            _msf_player_stats_diag_logger.warning(
+                "MSF_PLAYER_STATS_DIAGNOSTIC_RESULT %s", json.dumps(result, default=str)
+            )
+            _msf_player_stats_diag_logger.warning("MSF_PLAYER_STATS_DIAGNOSTIC_DONE")
