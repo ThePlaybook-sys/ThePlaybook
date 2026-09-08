@@ -280,3 +280,68 @@ async def test_depth_chart_write_failure_raises(monkeypatch):
 async def test_empty_roster_is_a_pure_noop():
     result = await persist_roster(AdapterResponse(value=[], source="sportsdataio"))
     assert result == type(result)()
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_provider_name_is_threaded_through_to_identity_resolution(monkeypatch):
+    """Phase 8.2: provider_name is a real, explicit parameter now, not a
+    module-level constant -- proven by asserting the actual outbound
+    query params carry the non-default provider, not just that the call
+    succeeds."""
+    _headers_env(monkeypatch)
+    team_route = respx.get(f"{SUPABASE_URL}/rest/v1/team_provider_ids").mock(
+        return_value=httpx.Response(200, json=[{"team_id": "team-ne", "provider_team_id": "NE"}])
+    )
+    player_route = respx.get(f"{SUPABASE_URL}/rest/v1/player_provider_ids").mock(
+        return_value=httpx.Response(200, json=[])
+    )
+    respx.post(f"{SUPABASE_URL}/rest/v1/player_provider_ids").mock(return_value=httpx.Response(201))
+    respx.post(f"{SUPABASE_URL}/rest/v1/players").mock(
+        return_value=httpx.Response(201, json=[{"id": "player-msf-1"}])
+    )
+    respx.get(f"{SUPABASE_URL}/rest/v1/roster_memberships").mock(return_value=httpx.Response(200, json=[]))
+    respx.post(f"{SUPABASE_URL}/rest/v1/roster_memberships").mock(return_value=httpx.Response(201))
+    respx.patch(f"{SUPABASE_URL}/rest/v1/players").mock(return_value=httpx.Response(204))
+    respx.post(f"{SUPABASE_URL}/rest/v1/depth_chart_snapshots").mock(return_value=httpx.Response(201))
+
+    entries = [RosterEntry(team="NE", player_external_id="9999", player_name="Hunter Henry", position="TE")]
+    result = await persist_roster(
+        AdapterResponse(value=entries, source="mysportsfeeds"), provider_name="mysportsfeeds"
+    )
+
+    assert result.players_created == 1
+    assert team_route.calls.last.request.url.params.get("provider_name") == "eq.mysportsfeeds"
+    assert player_route.calls.last.request.url.params.get("provider_name") == "eq.mysportsfeeds"
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_write_depth_chart_snapshot_false_skips_the_write_entirely(monkeypatch):
+    """A provider whose RosterEntry list carries no real depth data
+    (depth_chart_rank always None) must not have that absence written as
+    a depth_chart_snapshots row -- roster membership and depth/lineup
+    role stay separate concepts, never conflated."""
+    _headers_env(monkeypatch)
+    _mock_team_resolved("NE", "team-ne")
+    respx.get(f"{SUPABASE_URL}/rest/v1/player_provider_ids").mock(
+        return_value=httpx.Response(200, json=[{"player_id": "player-1", "provider_player_id": "9999"}])
+    )
+    respx.get(f"{SUPABASE_URL}/rest/v1/roster_memberships").mock(
+        return_value=httpx.Response(200, json=[{"team_id": "team-ne"}])
+    )
+    depth_route = respx.post(f"{SUPABASE_URL}/rest/v1/depth_chart_snapshots")
+
+    entries = [RosterEntry(team="NE", player_external_id="9999", player_name="Hunter Henry", position="TE")]
+    result = await persist_roster(
+        AdapterResponse(value=entries, source="mysportsfeeds"),
+        provider_name="mysportsfeeds",
+        write_depth_chart_snapshot=False,
+    )
+
+    assert result.depth_chart_written is False
+    assert not depth_route.called
+    # Players/roster_memberships resolution still ran normally -- only the
+    # depth-chart write is skipped, nothing else about the call changes.
+    assert result.players_confirmed == 1
+    assert result.memberships_unchanged == 1

@@ -492,3 +492,34 @@ if os.environ.get("RAILWAY_ENVIRONMENT_NAME", "dev") == "dev":
     @app.get("/sentry-debug")
     async def trigger_error():
         division_by_zero = 1 / 0
+
+    if os.environ.get("RUN_MSF_ROSTER_ACTIVATION") == "1":
+        import json
+        import logging
+
+        _msf_roster_activation_logger = logging.getLogger("sports-intel-layer.diagnostics.msf_roster_activation")
+
+        @app.on_event("startup")
+        async def _run_msf_roster_activation_once() -> None:
+            """TEMPORARY, one-shot activation hook for MANSA Phase 8.2's
+            HQ-authorized controlled DEV player/roster identity
+            activation (2026-09-08, see `app.diagnostics.
+            msf_roster_activation`'s own module docstring). Dev-only
+            mount, gated behind `RUN_MSF_ROSTER_ACTIVATION == "1"` so it
+            never fires on an ordinary dev deploy. Unlike the two prior
+            Phase 8.2 diagnostic hooks (both fully reverted, including
+            their captured data, since they wrote nothing), this hook
+            performs a REAL, durable write via the REAL
+            `persist_roster()` path -- reverting this file afterward
+            removes only the temporary wiring, never the resulting rows."""
+            from app.diagnostics.msf_roster_activation import run_msf_roster_activation
+
+            results = await run_msf_roster_activation()
+
+            _msf_roster_activation_logger.warning("MSF_ROSTER_ACTIVATION_START")
+            for team, result in results.items():
+                _msf_roster_activation_logger.warning(
+                    "MSF_ROSTER_ACTIVATION_TEAM_RESULT %s",
+                    json.dumps({"team": team, "result": result.__dict__}, default=str),
+                )
+            _msf_roster_activation_logger.warning("MSF_ROSTER_ACTIVATION_DONE")
