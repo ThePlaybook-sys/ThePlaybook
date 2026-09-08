@@ -1,9 +1,10 @@
 # The Playbook — Volume 4
 ## AI Intelligence Architecture: Agents, Orchestration, Consensus, Explainability, Learning
 
-**Version:** v5.14.1
+**Version:** v5.15
 **Last updated:** 2026-09-08
 
+**v5.15 note (MINOR, HQ directive, planning only):** §8.6 gains a mandatory pre-validation artifact — the **Context Assembly Proof** — that Contextual Performance Intelligence must demonstrate before it can be considered validated: 2-3 real historical Hunter Henry game observations, every dimension (game identity, opponent, home/away, venue, performance, usage/snaps, lineup/depth, injuries/availability, weather, news, odds) classified JOINED/PARTIAL/UNAVAILABLE with source/join-key/timestamp recorded, never substituting current context for historical or inferring missing facts. A new **Context Readiness Matrix** records current evidence (player identity/odds/news READY, venue/weather/lineup-depth PARTIAL, historical game listings/injuries/player-performance/usage BLOCKED). The **Game-Level Source Strategy** (BALLDONTLIE historical backbone / MySportsFeeds current-season boxscore-PBP-lineup enrichment / Odds API / GNews / weather provider / MANSA's canonical layer) is recorded explicitly as a hypothesis pending live validation, not a provider lock — with **Gate A** (BALLDONTLIE, blocked on billing, one reconfirmation call once restored) and **Gate B** (MySportsFeeds `game_boxscore`, waiting on a completed real game, one authorized call) defined but not executed. A new **Phase 8.1 Gate** makes explicit that substantive scoring/modeling may not begin until real per-game substrate exists and the proof is meaningfully executable — schema/interface prep may be separately authorized, but fixtures must never masquerade as validation. Zero provider calls, zero code, this entry is planning/documentation only. See `CHANGELOG.md`'s 2026-09-08 entry for full reasoning.
 **v5.14.1 note (PATCH, cross-reference correction):** §9.7's own "Beta dependency" paragraph updated its "Phase 12 (Beta)" references to "Phase 13" following the Engineering Roadmap's v4.11 insertion of a new Phase 12 (Growth & Acquisition Intelligence) ahead of Beta — wording/cross-reference only, no architectural meaning changed. See `CHANGELOG.md`'s 2026-09-08 entry for full reasoning.
 **v5.14 note (MINOR, HQ authorization, real code):** §8.5's detection half is now built — Milestone 7.1 (Deterministic Unexplained-Movement Detection Engine), authorized and completed the same day. Full detail in §8.5's own updated status line and the Engineering Roadmap's Milestone 7.1 entry. See `CHANGELOG.md`'s 2026-09-04 entry for full reasoning.
 **v5.13 note (MINOR, HQ Decision Lock, planning only):** §9.7's proposed design is now LOCKED by HQ, all seven items approved in one pass the same day — see the section's own restated seven-item recap and Volume 3 §5G's matching "HQ Decision Lock" subsection for the full text. Highlights: grading's status-blind policy is now mandatory, ratified policy (not a proposal); `market_monitoring_events` explicitly confirmed untouched, Phase 7's alone; Milestone 5.6 approved as a mandatory pre-Beta milestone with a phased authorization — basic mechanics may build ahead of Phase 7/8, but closure requires real Phase 7/8 signals; the dashboard "never silently disappear or overwrite" principle locked, exact visual treatment left open. Zero code/migration/UI/Telegram/grading/worker change from this entry — approving a design is not authorizing its build. See `CHANGELOG.md`'s 2026-09-04 entry for full reasoning.
@@ -447,6 +448,66 @@ Raw data
 **Connection to News (per HQ's explicit instruction, 2026-09-04): future architecture must allow material news — an injury, an inactive designation, a suspension, a lineup change, a trade — to update player/team context and ultimately affect applicable moneyline/spread/total/prop probabilities.** Today, News Worker's own output (`daily_game_intelligence.news`) is a current-state jsonb blob with no history and no structured event type — it cannot today feed a deterministic contextual-impact computation the way `injury_reports`/`depth_chart_snapshots` can, since there's no stable record of *when* a given news item first became true. Closing this gap (a structured, timestamped, categorized News event history) is a real prerequisite for the News → context connection this section anticipates, not something this entry builds or schedules — see the separate News cadence audit (`docs/ops/news-cadence-architecture-audit-2026-09-04.md`) for the adjacent News-provider-architecture work this connects to.
 
 **No genuine architecture conflict was found** — this capability composes with real, already-append-only evidence (injuries, weather pregame, depth charts, roster history) for several of its named context factors, and cleanly identifies exactly which factors (in-game conditions, game state/script, news history, playing surface) have no data to compose with at all today, which is precisely what the Data Preservation Requirement below exists to close before it becomes unrecoverable.
+
+### Context Assembly Proof (mandatory pre-validation artifact, added v5.15, 2026-09-08, HQ directive)
+
+**Before Contextual Performance Intelligence can be considered validated, MANSA must demonstrate a real Context Assembly Proof.** This is a hard gate, not a nice-to-have: no Milestone 8.1+ work is authorized to begin substantive scoring/modeling until this proof exists and can be executed meaningfully (see the Phase 8.1 Gate below).
+
+**Purpose.** The proof exists to validate the **data substrate and joins** — not the contextual scoring/modeling itself, which this entry explicitly does not authorize. It must answer one question honestly: *can MANSA reconstruct enough of the real context surrounding a player's historical performance to make defensible comparisons to an upcoming game?* If the substrate can't be assembled for a handful of real historical games, no amount of modeling sophistication built on top of it can be trusted — this is the same "prove the plumbing before trusting the analysis" discipline Phase 7 applied to `market_monitoring_events` and Milestone 5.6 applied to `trigger_type` real-signal-feeding.
+
+**Initial proof target: Hunter Henry** — the single most cross-verified real player identity in this project (MySportsFeeds provider id `9999`, independently confirmed across `players.json`, `lineup.json`, and `player_stats_totals.json` in Phase 8.2/8.3C). Use 2-3 real historical game observations **when the required substrate exists** — this proof must never be faked with fixture data standing in for a real game, and must never be forced to a fixed count if fewer real, joinable games exist.
+
+**Per-game dimension assembly.** For each historical game, attempt to join: canonical game identity, date/week, opponent, home/away, venue, player performance (targets/receptions/yards/TD), snaps/participation/usage, lineup/depth role, injuries + teammate availability, weather, relevant news, and odds/market context. **Every dimension must be classified:**
+
+- **JOINED** — real data found and successfully linked by a real identity key. Record: source/provider, the exact identity/join key used, and the observation's timestamp/effective time where relevant.
+- **PARTIAL** — some real data exists but the join is incomplete or lower-confidence (e.g. a team-scoped depth-chart row standing in for a game-scoped one). Record the same three fields as JOINED, plus what specifically is incomplete.
+- **UNAVAILABLE** — record the exact reason and the specific missing substrate (schema, capture pipeline, or provider access) that would unlock it.
+
+**Two absolute rules, never relaxed for the sake of completing the proof:** never substitute current/present-day context for historical context (a bug this project has explicitly guarded against since Phase 8.4's own Hunter Henry context-preview requirement); never infer a missing historical fact — an UNAVAILABLE dimension stays UNAVAILABLE, it is never filled in with a plausible guess.
+
+### Context Readiness Matrix (current evidence, v5.15, 2026-09-08)
+
+Read directly from this project's own real, current Supabase DEV state and provider-evidence history (Phase 8.4E's audit, `docs/ops/phase-8.4e-game-level-data-capability-resolution-2026-09-08.md`) — not assumed:
+
+| Dimension | Status | Exact reason |
+|---|---|---|
+| Player identity | **READY** | 40 real `players` rows, 34 real `mysportsfeeds` `player_provider_ids` including Hunter Henry (9999), cross-verified 34/34 against `lineup.json` (Phase 8.2) |
+| Game identity/history (current season, going forward) | **PARTIAL** | `games`/`game_provider_ids` real but small (12/17 rows); current-season discovery works (BALLDONTLIE free-tier `games`, MSF current-season schedule) |
+| Game identity/history (past seasons, backtesting depth) | **BLOCKED** | MySportsFeeds' own game-listing feed returns `403` for a prior season on this plan; no alternate historical game-ID source has been exercised yet |
+| Opponent / home-away | **READY** (wherever a game row exists) | Derivable directly from `games`' own team columns |
+| Venue | **PARTIAL** | 5 real venues captured; not yet at league-wide coverage |
+| Player performance (the actual per-game stat line) | **BLOCKED — the central gap this proof exists to surface** | `player_stats` holds only 2 fixture-pattern rows (confirmed by inspecting the raw row IDs); zero real per-game stat lines exist for any player, Hunter Henry included |
+| Usage/snaps (per-game) | **BLOCKED** | Same root cause as player performance above — season-level snap counts are real (Phase 8.3C), per-game snap counts do not exist yet |
+| Lineup/depth role | **PARTIAL** | 4 real `depth_chart_snapshots` rows, from a single MSF `lineup.json` call; team-scoped, not game-scoped, per Volume 3 §4.1's documented shape |
+| Injuries / teammate availability | **BLOCKED** | `injury_reports` is 1 fixture row; BALLDONTLIE's adapter is complete but blocked (Sep 5 invoice, see Gate A below); MSF `injuries.json` worked once but was never activated as a recurring real pipeline |
+| Weather | **PARTIAL** | 4 real rows only (WeatherAPI + the `lineup.json` bonus forecast finding); no real historical-game weather at scale |
+| News | **READY** (for its own coverage window) | 121 real GNews rows already flowing (Phase 8.0.5 Pass 2); no history before GNews activation, per §8.6's own News-history gap above |
+| Odds/market history | **READY** | 272 real odds rows, live Phase 7 odds worker |
+
+**Bottom line, unchanged from Phase 8.4E's own finding**: nothing about the Context Assembly Proof is executable end-to-end yet — every dimension above is READY, PARTIAL, or BLOCKED, and the single BLOCKED dimension that gates everything downstream of it (player performance/usage) is real per-game player stats, which no currently-accessible source has yet supplied.
+
+### Game-Level Source Strategy (hypothesis, not a provider lock — v5.15, 2026-09-08)
+
+Preserves Phase 8.4E's own evidence-supported hybrid finding, treated explicitly as **a hypothesis pending live validation, not a final provider selection**:
+
+- **BALLDONTLIE** — candidate historical/per-game player-stat backbone (`/nfl/v1/stats`, confirmed live 2026-09-03, ~50 typed fields, real per-game granularity across at least one prior season). Currently blocked — see Gate A.
+- **MySportsFeeds** — candidate current-season boxscore/play-by-play/lineup enrichment (`game_boxscore`/`game_playbyplay`/`game_lineup`, the path-scoped request shape structurally distinct from the now-closed `_gamelogs` family). Currently untestable against real content — see Gate B.
+- **The Odds API** — market history (already real, already flowing, Phase 7).
+- **GNews** — DEV news (already real, already flowing, Phase 8.0.5).
+- **A weather provider** (WeatherAPI, already integrated) — environmental context.
+- **MANSA's own canonical layer** — provider-neutral normalization (`PlayerStatLine`/`PlayerSeasonStatLine`, `resolve_player_ids`/`resolve_game_ids`, all already built and proven against real fixtures per Phase 8.3D) — the join layer this proof exercises, not a new build.
+
+**MySportsFeeds' `_gamelogs` family (`seasonal_player_gamelogs`/`seasonal_team_gamelogs` and their daily/weekly variants) is closed, per Phase 8.4D's own conclusive finding (4/4 real requests failed, `400`, across two endpoints and three parameter shapes) — it is not reopened or re-probed by this entry, and no future pass should re-litigate it absent new external documentation or support guidance.**
+
+**Gate A — BALLDONTLIE.** Blocked until billing/access is restored (the account's Sep 5 invoice remains open/unpaid as of the last check, 2026-09-08). Once restored, **exactly one authorized `/nfl/v1/stats` reconfirmation call** — its 2026-09-03 GREEN result predates the billing gap and needs re-confirmation, not blind trust, since every BALLDONTLIE paid-tier endpoint tested since that gap emerged has come back blocked.
+
+**Gate B — MySportsFeeds.** Wait for a completed real 2026 NFL game (the season started 2026-09-09, one day after this gate was defined). Then **exactly one, separately authorized `game_boxscore` request**, using an already-known real provider game ID. If successful: inspect player/game identity fields, stat coverage, snaps/usage fields, timestamps/corrections behavior, and canonical (`PlayerStatLine`) compatibility — the same evaluation shape Phase 8.4B/D/E already applied to every other MSF diagnostic this arc.
+
+**Neither gate's call is executed by this entry.** Both remain future, separately authorized, single-call diagnostics, matching this project's own established `activation_run_markers`-guarded, exception-safe, chunk-logged execution discipline.
+
+### Phase 8.1 Gate (added v5.15, 2026-09-08, HQ directive)
+
+**Do not begin substantive Contextual Performance Intelligence scoring/modeling until real per-game performance substrate exists and the Context Assembly Proof can be executed meaningfully** — i.e., until Gate A or Gate B (or another evidence-supported source) actually supplies real per-game player stats, and the readiness matrix above shows the currently-BLOCKED player-performance/usage row has moved to at least PARTIAL. **Schema/interface preparation for Milestone 8.1 may be separately authorized before that** (e.g. defining the module's function signatures, its expected input/output shape against `PlayerStatLine`) — but **fixtures must never masquerade as validation**: a Context Assembly Proof built entirely from fixture data would prove nothing about whether MANSA's real joins actually work, and must not be presented as satisfying this gate.
 
 ---
 
