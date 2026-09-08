@@ -15,7 +15,7 @@ The Playbook is an AI-powered sports betting operating system — not a picks ap
 - `volume-5-frontend-ux.md` — dashboards, components, notifications, chat-first navigation
 - `v2.0-amendments-architecture-review.md` — schema/architecture additions from the external review, referenced throughout the volumes above
 - `v3.0-amendments-conversational-intelligence.md` — chat-first UX, intelligence pipeline, and schema additions, referenced throughout the volumes above
-- `engineering-roadmap-build-order.md` — **this is the file that governs how you work.** 12 phases (0–11), each with milestones, tasks, dependencies, acceptance criteria, and testing requirements.
+- `engineering-roadmap-build-order.md` — **this is the file that governs how you work.** 15 phases (0–14), each with milestones, tasks, dependencies, acceptance criteria, and testing requirements.
 - `CHANGELOG.md` — version history. Every architectural decision has a reason, what changed, alternatives considered, and expected impact.
 
 Each file's own header states its current version — this manifest doesn't track versions separately. Check `docs/blueprint/README.md` for the live version table, or the file's own header, rather than relying on this list.
