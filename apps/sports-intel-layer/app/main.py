@@ -492,34 +492,3 @@ if os.environ.get("RAILWAY_ENVIRONMENT_NAME", "dev") == "dev":
     @app.get("/sentry-debug")
     async def trigger_error():
         division_by_zero = 1 / 0
-
-    if os.environ.get("RUN_MSF_LINEUP_DEPTH_ACTIVATION") == "1":
-        import json
-        import logging
-
-        _msf_lineup_depth_logger = logging.getLogger("sports-intel-layer.diagnostics.msf_lineup_depth_activation")
-
-        @app.on_event("startup")
-        async def _run_msf_lineup_depth_activation_once() -> None:
-            """TEMPORARY, one-shot activation hook for MANSA Phase 8.2's
-            HQ-authorized controlled DEV lineup/depth activation
-            (2026-09-08, see `app.diagnostics.
-            msf_lineup_depth_activation`'s own module docstring). Zero
-            live MySportsFeeds calls -- the real, already-captured
-            lineup body embedded in that module is the only input.
-            Dev-only mount, gated behind
-            `RUN_MSF_LINEUP_DEPTH_ACTIVATION == "1"`. Real, durable
-            write via the real `persist_lineup_depth_chart()` path --
-            reverting this file afterward removes only the temporary
-            wiring, never the resulting rows."""
-            from app.diagnostics.msf_lineup_depth_activation import run_msf_lineup_depth_activation
-
-            results = await run_msf_lineup_depth_activation()
-
-            _msf_lineup_depth_logger.warning("MSF_LINEUP_DEPTH_ACTIVATION_START")
-            for team, result in results.items():
-                _msf_lineup_depth_logger.warning(
-                    "MSF_LINEUP_DEPTH_ACTIVATION_TEAM_RESULT %s",
-                    json.dumps({"team": team, "result": result.__dict__}, default=str),
-                )
-            _msf_lineup_depth_logger.warning("MSF_LINEUP_DEPTH_ACTIVATION_DONE")
