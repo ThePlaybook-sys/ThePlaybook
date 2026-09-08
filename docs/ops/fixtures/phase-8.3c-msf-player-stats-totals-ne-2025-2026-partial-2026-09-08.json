@@ -1,0 +1,5299 @@
+{
+  "source": "MySportsFeeds v2.1 seasonal_player_stats (player_stats_totals.json)",
+  "request": {
+    "league": "nfl",
+    "season": "2025-2026-regular",
+    "team": "NE"
+  },
+  "captured_at_utc": "2026-09-08T18:31:14.717585+00:00",
+  "lastUpdatedOn": "2026-09-08T17:58:23.195Z",
+  "http_status": 200,
+  "real_response_size_bytes": 166159,
+  "elapsed_seconds": 0.173,
+  "capture_note": "Railway logged this response via logger.warning(json.dumps(result)); Railway truncates a single log message at 80KB, cutting the JSON off mid-object partway through the playerStatsTotals array. These are the 43 COMPLETE player entries recoverable from that truncated capture -- NOT the full roster. The real response was 166,159 bytes; this recovered slice covers roughly the first half by byte count. The true total player count in the untruncated payload is unknown (see report Phase 8.3C for the full disclosure) -- do not treat 43 as the full NE roster count.",
+  "playerStatsTotals": [
+    {
+      "player": {
+        "id": 166956,
+        "firstName": "Julian",
+        "lastName": "Ashby",
+        "primaryPosition": "LS",
+        "jerseyNumber": 47,
+        "currentTeam": {
+          "id": 50,
+          "abbreviation": "NE"
+        },
+        "currentRosterStatus": "ROSTER",
+        "currentInjury": null,
+        "height": "6'2\"",
+        "weight": 231,
+        "birthDate": "2002-07-08",
+        "age": 24,
+        "birthCity": "Atlanta, GA",
+        "birthCountry": "USA",
+        "rookie": false,
+        "highSchool": null,
+        "college": "Vanderbilt",
+        "handedness": null,
+        "officialImageSrc": null,
+        "socialMediaAccounts": []
+      },
+      "team": {
+        "id": 50,
+        "abbreviation": "NE"
+      },
+      "stats": {
+        "gamesPlayed": 17,
+        "rushing": {
+          "rushAttempts": 0,
+          "rushYards": 0,
+          "rushAverage": 0.0,
+          "rushTD": 0,
+          "rushLng": 0,
+          "rush1stDowns": 0,
+          "rush1stDownsPct": 0.0,
+          "rush20Plus": 0,
+          "rush40Plus": 0,
+          "rushFumbles": 0
+        },
+        "receiving": {
+          "targets": 0,
+          "receptions": 0,
+          "recYards": 0,
+          "recAverage": 0.0,
+          "recTD": 0,
+          "recLng": 0,
+          "rec1stDowns": 0,
+          "rec20Plus": 0,
+          "rec40Plus": 0,
+          "recFumbles": 0
+        },
+        "tackles": {
+          "tackleSolo": 2,
+          "tackleTotal": 3,
+          "tackleAst": 1,
+          "sacks": 0.0,
+          "sackYds": 0,
+          "tacklesForLoss": 0.0
+        },
+        "interceptions": {
+          "interceptions": 0,
+          "intTD": 0,
+          "intYds": 0,
+          "intAverage": 0.0,
+          "intLng": 0,
+          "passesDefended": 0,
+          "stuffs": 0,
+          "stuffYds": 0,
+          "safeties": 0,
+          "kB": 0
+        },
+        "fumbles": {
+          "fumbles": 0,
+          "fumLost": 0,
+          "fumForced": 0,
+          "fumOwnRec": 0,
+          "fumOppRec": 0,
+          "fumRecYds": 0,
+          "fumTotalRec": 0,
+          "fumTD": 0,
+          "offFumTD": 0
+        },
+        "kickoffReturns": {
+          "krRet": 0,
+          "krYds": 0,
+          "krAvg": 0.0,
+          "krLng": 0,
+          "krTD": 0,
+          "kr20Plus": 0,
+          "kr40Plus": 0,
+          "krFC": 0,
+          "krFum": 0
+        },
+        "puntReturns": {
+          "prRet": 0,
+          "prYds": 0,
+          "prAvg": 0.0,
+          "prLng": 0,
+          "prTD": 0,
+          "pr20Plus": 0,
+          "pr40Plus": 0,
+          "prFC": 0,
+          "prFum": 0
+        },
+        "miscellaneous": {
+          "gamesStarted": 0
+        },
+        "snapCounts": {
+          "offenseSnaps": 0,
+          "defenseSnaps": 0,
+          "specialTeamSnaps": 140
+        }
+      }
+    },
+    {
+      "player": {
+        "id": 111933,
+        "firstName": "Alex",
+        "lastName": "Austin",
+        "primaryPosition": "CB",
+        "jerseyNumber": 28,
+        "currentTeam": {
+          "id": 50,
+          "abbreviation": "NE"
+        },
+        "currentRosterStatus": "INJURY_LIST",
+        "currentInjury": null,
+        "height": "6'1\"",
+        "weight": 191,
+        "birthDate": "2001-05-22",
+        "age": 25,
+        "birthCity": null,
+        "birthCountry": null,
+        "rookie": false,
+        "highSchool": null,
+        "college": "Oregon State",
+        "handedness": null,
+        "officialImageSrc": "https://static.www.nfl.com/image/private/t_headshot_desktop/league/num9gzspcpa0ed52k4zj",
+        "socialMediaAccounts": []
+      },
+      "team": {
+        "id": 50,
+        "abbreviation": "NE"
+      },
+      "stats": {
+        "gamesPlayed": 12,
+        "tackles": {
+          "tackleSolo": 10,
+          "tackleTotal": 13,
+          "tackleAst": 3,
+          "sacks": 0.0,
+          "sackYds": 0,
+          "tacklesForLoss": 1.0
+        },
+        "interceptions": {
+          "interceptions": 0,
+          "intTD": 0,
+          "intYds": 0,
+          "intAverage": 0.0,
+          "intLng": 0,
+          "passesDefended": 1,
+          "stuffs": 1,
+          "stuffYds": 1,
+          "safeties": 0,
+          "kB": 0
+        },
+        "fumbles": {
+          "fumbles": 0,
+          "fumLost": 0,
+          "fumForced": 0,
+          "fumOwnRec": 0,
+          "fumOppRec": 0,
+          "fumRecYds": 0,
+          "fumTotalRec": 0,
+          "fumTD": 0,
+          "offFumTD": 0
+        },
+        "kickoffReturns": {
+          "krRet": 0,
+          "krYds": 0,
+          "krAvg": 0.0,
+          "krLng": 0,
+          "krTD": 0,
+          "kr20Plus": 0,
+          "kr40Plus": 0,
+          "krFC": 0,
+          "krFum": 0
+        },
+        "puntReturns": {
+          "prRet": 0,
+          "prYds": 0,
+          "prAvg": 0.0,
+          "prLng": 0,
+          "prTD": 0,
+          "pr20Plus": 0,
+          "pr40Plus": 0,
+          "prFC": 0,
+          "prFum": 0
+        },
+        "miscellaneous": {
+          "gamesStarted": 0
+        },
+        "snapCounts": {
+          "offenseSnaps": 0,
+          "defenseSnaps": 144,
+          "specialTeamSnaps": 120
+        }
+      }
+    },
+    {
+      "player": {
+        "id": 16520,
+        "firstName": "Corey",
+        "lastName": "Ballentine",
+        "primaryPosition": "CB",
+        "jerseyNumber": 36,
+        "currentTeam": {
+          "id": 52,
+          "abbreviation": "DAL"
+        },
+        "currentRosterStatus": "ROSTER",
+        "currentInjury": null,
+        "height": "5'11\"",
+        "weight": 196,
+        "birthDate": "1996-04-13",
+        "age": 30,
+        "birthCity": null,
+        "birthCountry": null,
+        "rookie": false,
+        "highSchool": null,
+        "college": "Washburn",
+        "handedness": null,
+        "officialImageSrc": "https://static.www.nfl.com/image/private/t_headshot_desktop/league/dudil7f05mdd61gxoi30",
+        "socialMediaAccounts": []
+      },
+      "team": {
+        "id": 50,
+        "abbreviation": "NE"
+      },
+      "stats": {
+        "gamesPlayed": 1,
+        "tackles": {
+          "tackleSolo": 0,
+          "tackleTotal": 1,
+          "tackleAst": 1,
+          "sacks": 0.0,
+          "sackYds": 0,
+          "tacklesForLoss": 0.0
+        },
+        "interceptions": {
+          "interceptions": 0,
+          "intTD": 0,
+          "intYds": 0,
+          "intAverage": 0.0,
+          "intLng": 0,
+          "passesDefended": 0,
+          "stuffs": 0,
+          "stuffYds": 0,
+          "safeties": 0,
+          "kB": 0
+        },
+        "fumbles": {
+          "fumbles": 0,
+          "fumLost": 0,
+          "fumForced": 0,
+          "fumOwnRec": 0,
+          "fumOppRec": 0,
+          "fumRecYds": 0,
+          "fumTotalRec": 0,
+          "fumTD": 0,
+          "offFumTD": 0
+        },
+        "kickoffReturns": {
+          "krRet": 0,
+          "krYds": 0,
+          "krAvg": 0.0,
+          "krLng": 0,
+          "krTD": 0,
+          "kr20Plus": 0,
+          "kr40Plus": 0,
+          "krFC": 0,
+          "krFum": 0
+        },
+        "puntReturns": {
+          "prRet": 0,
+          "prYds": 0,
+          "prAvg": 0.0,
+          "prLng": 0,
+          "prTD": 0,
+          "pr20Plus": 0,
+          "pr40Plus": 0,
+          "prFC": 0,
+          "prFum": 0
+        },
+        "miscellaneous": {
+          "gamesStarted": 0
+        },
+        "snapCounts": {
+          "offenseSnaps": 0,
+          "defenseSnaps": 0,
+          "specialTeamSnaps": 20
+        }
+      }
+    },
+    {
+      "player": {
+        "id": 108878,
+        "firstName": "Bryce",
+        "lastName": "Baringer",
+        "primaryPosition": "P",
+        "jerseyNumber": 17,
+        "currentTeam": {
+          "id": 50,
+          "abbreviation": "NE"
+        },
+        "currentRosterStatus": "ROSTER",
+        "currentInjury": null,
+        "height": "6'2\"",
+        "weight": 215,
+        "birthDate": "1999-04-26",
+        "age": 27,
+        "birthCity": "Waterford, MI",
+        "birthCountry": "USA",
+        "rookie": false,
+        "highSchool": null,
+        "college": "Michigan State",
+        "handedness": null,
+        "officialImageSrc": "https://static.www.nfl.com/image/private/t_headshot_desktop/league/zdms0ixy8nwfmi8z2nl7",
+        "socialMediaAccounts": []
+      },
+      "team": {
+        "id": 50,
+        "abbreviation": "NE"
+      },
+      "stats": {
+        "gamesPlayed": 17,
+        "tackles": {
+          "tackleSolo": 0,
+          "tackleTotal": 0,
+          "tackleAst": 0,
+          "sacks": 0.0,
+          "sackYds": 0,
+          "tacklesForLoss": 0.0
+        },
+        "interceptions": {
+          "interceptions": 0,
+          "intTD": 0,
+          "intYds": 0,
+          "intAverage": 0.0,
+          "intLng": 0,
+          "passesDefended": 0,
+          "stuffs": 0,
+          "stuffYds": 0,
+          "safeties": 0,
+          "kB": 0
+        },
+        "fumbles": {
+          "fumbles": 0,
+          "fumLost": 0,
+          "fumForced": 0,
+          "fumOwnRec": 0,
+          "fumOppRec": 0,
+          "fumRecYds": 0,
+          "fumTotalRec": 0,
+          "fumTD": 0,
+          "offFumTD": 0
+        },
+        "kickoffReturns": {
+          "krRet": 0,
+          "krYds": 0,
+          "krAvg": 0.0,
+          "krLng": 0,
+          "krTD": 0,
+          "kr20Plus": 0,
+          "kr40Plus": 0,
+          "krFC": 0,
+          "krFum": 0
+        },
+        "puntReturns": {
+          "prRet": 0,
+          "prYds": 0,
+          "prAvg": 0.0,
+          "prLng": 0,
+          "prTD": 0,
+          "pr20Plus": 0,
+          "pr40Plus": 0,
+          "prFC": 0,
+          "prFum": 0
+        },
+        "punting": {
+          "punts": 51,
+          "puntYds": 2416,
+          "puntNetYds": 2130,
+          "puntLng": 975,
+          "puntAvg": 47.4,
+          "puntNetAvg": 41.8,
+          "puntBlk": 0,
+          "puntOOB": 6,
+          "puntDown": 4,
+          "puntIn20": 21,
+          "puntIn20Pct": 41.2,
+          "puntTB": 4,
+          "puntTBPct": 7.8,
+          "puntFC": 15,
+          "puntRet": 22,
+          "puntRetYds": 286,
+          "puntRetAvg": 13.0
+        },
+        "miscellaneous": {
+          "gamesStarted": 0
+        },
+        "snapCounts": {
+          "offenseSnaps": 0,
+          "defenseSnaps": 0,
+          "specialTeamSnaps": 141
+        }
+      }
+    },
+    {
+      "player": {
+        "id": 30820,
+        "firstName": "Christian",
+        "lastName": "Barmore",
+        "primaryPosition": "DT",
+        "jerseyNumber": 90,
+        "currentTeam": {
+          "id": 50,
+          "abbreviation": "NE"
+        },
+        "currentRosterStatus": "ROSTER",
+        "currentInjury": null,
+        "height": "6'4\"",
+        "weight": 315,
+        "birthDate": "1999-07-28",
+        "age": 27,
+        "birthCity": "Philadelphia, PA",
+        "birthCountry": "USA",
+        "rookie": false,
+        "highSchool": null,
+        "college": "Alabama",
+        "handedness": null,
+        "officialImageSrc": "https://static.www.nfl.com/image/private/t_headshot_desktop/league/h4rtemvkpsx1uyjvnm63",
+        "socialMediaAccounts": []
+      },
+      "team": {
+        "id": 50,
+        "abbreviation": "NE"
+      },
+      "stats": {
+        "gamesPlayed": 17,
+        "passing": {
+          "passAttempts": 0,
+          "passCompletions": 0,
+          "passPct": 0.0,
+          "passYards": 0,
+          "passAvg": 0.0,
+          "passYardsPerAtt": 0.0,
+          "passTD": 0,
+          "passTDPct": 0.0,
+          "passInt": 0,
+          "passIntPct": 0.0,
+          "passLng": 0,
+          "pass20Plus": 0,
+          "pass40Plus": 0,
+          "passSacks": 0,
+          "passSackY": 0,
+          "qbRating": 0.0
+        },
+        "rushing": {
+          "rushAttempts": 0,
+          "rushYards": 0,
+          "rushAverage": 0.0,
+          "rushTD": 0,
+          "rushLng": 0,
+          "rush1stDowns": 0,
+          "rush1stDownsPct": 0.0,
+          "rush20Plus": 0,
+          "rush40Plus": 0,
+          "rushFumbles": 0
+        },
+        "receiving": {
+          "targets": 0,
+          "receptions": 0,
+          "recYards": 0,
+          "recAverage": 0.0,
+          "recTD": 0,
+          "recLng": 0,
+          "rec1stDowns": 0,
+          "rec20Plus": 0,
+          "rec40Plus": 0,
+          "recFumbles": 0
+        },
+        "tackles": {
+          "tackleSolo": 15,
+          "tackleTotal": 29,
+          "tackleAst": 14,
+          "sacks": 2.0,
+          "sackYds": 16,
+          "tacklesForLoss": 4.0
+        },
+        "interceptions": {
+          "interceptions": 0,
+          "intTD": 0,
+          "intYds": 0,
+          "intAverage": 0.0,
+          "intLng": 0,
+          "passesDefended": 0,
+          "stuffs": 9,
+          "stuffYds": 21,
+          "safeties": 0,
+          "kB": 0
+        },
+        "fumbles": {
+          "fumbles": 0,
+          "fumLost": 0,
+          "fumForced": 0,
+          "fumOwnRec": 0,
+          "fumOppRec": 0,
+          "fumRecYds": 0,
+          "fumTotalRec": 0,
+          "fumTD": 0,
+          "offFumTD": 0
+        },
+        "kickoffReturns": {
+          "krRet": 0,
+          "krYds": 0,
+          "krAvg": 0.0,
+          "krLng": 0,
+          "krTD": 0,
+          "kr20Plus": 0,
+          "kr40Plus": 0,
+          "krFC": 0,
+          "krFum": 0
+        },
+        "puntReturns": {
+          "prRet": 0,
+          "prYds": 0,
+          "prAvg": 0.0,
+          "prLng": 0,
+          "prTD": 0,
+          "pr20Plus": 0,
+          "pr40Plus": 0,
+          "prFC": 0,
+          "prFum": 0
+        },
+        "miscellaneous": {
+          "gamesStarted": 0
+        },
+        "snapCounts": {
+          "offenseSnaps": 0,
+          "defenseSnaps": 665,
+          "specialTeamSnaps": 46
+        }
+      }
+    },
+    {
+      "player": {
+        "id": 134378,
+        "firstName": "Miles",
+        "lastName": "Battle",
+        "primaryPosition": "CB",
+        "jerseyNumber": 35,
+        "currentTeam": {
+          "id": 50,
+          "abbreviation": "NE"
+        },
+        "currentRosterStatus": "ROSTER",
+        "currentInjury": null,
+        "height": "6'3\"",
+        "weight": 197,
+        "birthDate": "2000-01-04",
+        "age": 26,
+        "birthCity": null,
+        "birthCountry": null,
+        "rookie": false,
+        "highSchool": null,
+        "college": "Utah",
+        "handedness": null,
+        "officialImageSrc": null,
+        "socialMediaAccounts": []
+      },
+      "team": {
+        "id": 50,
+        "abbreviation": "NE"
+      },
+      "stats": {
+        "gamesPlayed": 5,
+        "tackles": {
+          "tackleSolo": 3,
+          "tackleTotal": 3,
+          "tackleAst": 0,
+          "sacks": 0.0,
+          "sackYds": 0,
+          "tacklesForLoss": 0.0
+        },
+        "interceptions": {
+          "interceptions": 0,
+          "intTD": 0,
+          "intYds": 0,
+          "intAverage": 0.0,
+          "intLng": 0,
+          "passesDefended": 0,
+          "stuffs": 0,
+          "stuffYds": 0,
+          "safeties": 0,
+          "kB": 0
+        },
+        "fumbles": {
+          "fumbles": 0,
+          "fumLost": 0,
+          "fumForced": 0,
+          "fumOwnRec": 0,
+          "fumOppRec": 0,
+          "fumRecYds": 0,
+          "fumTotalRec": 0,
+          "fumTD": 0,
+          "offFumTD": 0
+        },
+        "kickoffReturns": {
+          "krRet": 0,
+          "krYds": 0,
+          "krAvg": 0.0,
+          "krLng": 0,
+          "krTD": 0,
+          "kr20Plus": 0,
+          "kr40Plus": 0,
+          "krFC": 0,
+          "krFum": 0
+        },
+        "puntReturns": {
+          "prRet": 0,
+          "prYds": 0,
+          "prAvg": 0.0,
+          "prLng": 0,
+          "prTD": 0,
+          "pr20Plus": 0,
+          "pr40Plus": 0,
+          "prFC": 0,
+          "prFum": 0
+        },
+        "miscellaneous": {
+          "gamesStarted": 0
+        },
+        "snapCounts": {
+          "offenseSnaps": 0,
+          "defenseSnaps": 29,
+          "specialTeamSnaps": 54
+        }
+      }
+    },
+    {
+      "player": {
+        "id": 166894,
+        "firstName": "Andres",
+        "lastName": "Borregales",
+        "primaryPosition": "K",
+        "jerseyNumber": 36,
+        "currentTeam": {
+          "id": 50,
+          "abbreviation": "NE"
+        },
+        "currentRosterStatus": "ROSTER",
+        "currentInjury": null,
+        "height": "5'11\"",
+        "weight": 202,
+        "birthDate": "2002-01-02",
+        "age": 24,
+        "birthCity": "Caracas",
+        "birthCountry": "Venezuela",
+        "rookie": false,
+        "highSchool": null,
+        "college": "Miami",
+        "handedness": null,
+        "officialImageSrc": null,
+        "socialMediaAccounts": []
+      },
+      "team": {
+        "id": 50,
+        "abbreviation": "NE"
+      },
+      "stats": {
+        "gamesPlayed": 17,
+        "tackles": {
+          "tackleSolo": 1,
+          "tackleTotal": 1,
+          "tackleAst": 0,
+          "sacks": 0.0,
+          "sackYds": 0,
+          "tacklesForLoss": 0.0
+        },
+        "interceptions": {
+          "interceptions": 0,
+          "intTD": 0,
+          "intYds": 0,
+          "intAverage": 0.0,
+          "intLng": 0,
+          "passesDefended": 0,
+          "stuffs": 0,
+          "stuffYds": 0,
+          "safeties": 0,
+          "kB": 0
+        },
+        "fumbles": {
+          "fumbles": 0,
+          "fumLost": 0,
+          "fumForced": 0,
+          "fumOwnRec": 0,
+          "fumOppRec": 0,
+          "fumRecYds": 0,
+          "fumTotalRec": 0,
+          "fumTD": 0,
+          "offFumTD": 0
+        },
+        "kickoffReturns": {
+          "krRet": 0,
+          "krYds": 0,
+          "krAvg": 0.0,
+          "krLng": 0,
+          "krTD": 0,
+          "kr20Plus": 0,
+          "kr40Plus": 0,
+          "krFC": 0,
+          "krFum": 0
+        },
+        "puntReturns": {
+          "prRet": 0,
+          "prYds": 0,
+          "prAvg": 0.0,
+          "prLng": 0,
+          "prTD": 0,
+          "pr20Plus": 0,
+          "pr40Plus": 0,
+          "prFC": 0,
+          "prFum": 0
+        },
+        "fieldGoals": {
+          "fgBlk": 1,
+          "fgMade": 27,
+          "fgAtt": 32,
+          "fgPct": 84.4,
+          "fgMade1_19": 2,
+          "fgAtt1_19": 2,
+          "fg1_19Pct": 100.0,
+          "fgMade20_29": 6,
+          "fgAtt20_29": 6,
+          "fg20_29Pct": 100.0,
+          "fgMade30_39": 8,
+          "fgAtt30_39": 9,
+          "fg30_39Pct": 88.9,
+          "fgMade40_49": 7,
+          "fgAtt40_49": 11,
+          "fg40_49Pct": 63.6,
+          "fgMade50Plus": 4,
+          "fgAtt50Plus": 4,
+          "fg50PlusPct": 100.0,
+          "fgLng": 549
+        },
+        "extraPointAttempts": {
+          "xpBlk": 0,
+          "xpMade": 53,
+          "xpAtt": 55,
+          "xpPct": 96.4,
+          "fgAndXpPts": 134
+        },
+        "kickoffs": {
+          "kickoffs": 96,
+          "koYds": 5799,
+          "koOOB": 2,
+          "koAvg": 60.4,
+          "koTB": 25,
+          "koRet": 67,
+          "koRetYds": 1766,
+          "koRetAvgYds": 26.4,
+          "koTD": 0,
+          "koOS": 1,
+          "koOSR": 0
+        },
+        "punting": {
+          "punts": 0,
+          "puntYds": 0,
+          "puntNetYds": 0,
+          "puntLng": 0,
+          "puntAvg": 0.0,
+          "puntNetAvg": 0.0,
+          "puntBlk": 0,
+          "puntOOB": 0,
+          "puntDown": 0,
+          "puntIn20": 0,
+          "puntIn20Pct": 0.0,
+          "puntTB": 0,
+          "puntTBPct": 0.0,
+          "puntFC": 0,
+          "puntRet": 0,
+          "puntRetYds": 0,
+          "puntRetAvg": 0.0
+        },
+        "miscellaneous": {
+          "gamesStarted": 0
+        },
+        "snapCounts": {
+          "offenseSnaps": 0,
+          "defenseSnaps": 0,
+          "specialTeamSnaps": 183
+        }
+      }
+    },
+    {
+      "player": {
+        "id": 108873,
+        "firstName": "Kayshon",
+        "lastName": "Boutte",
+        "primaryPosition": "WR",
+        "jerseyNumber": 9,
+        "currentTeam": {
+          "id": 50,
+          "abbreviation": "NE"
+        },
+        "currentRosterStatus": "ROSTER",
+        "currentInjury": null,
+        "height": "6'0\"",
+        "weight": 197,
+        "birthDate": "2002-05-07",
+        "age": 24,
+        "birthCity": "New Iberia, LA",
+        "birthCountry": "USA",
+        "rookie": false,
+        "highSchool": null,
+        "college": "LSU",
+        "handedness": null,
+        "officialImageSrc": "https://static.www.nfl.com/image/private/t_headshot_desktop/league/nz6t7jhx6erszovbv1bd",
+        "socialMediaAccounts": []
+      },
+      "team": {
+        "id": 50,
+        "abbreviation": "NE"
+      },
+      "stats": {
+        "gamesPlayed": 14,
+        "passing": {
+          "passAttempts": 0,
+          "passCompletions": 0,
+          "passPct": 0.0,
+          "passYards": 0,
+          "passAvg": 0.0,
+          "passYardsPerAtt": 0.0,
+          "passTD": 0,
+          "passTDPct": 0.0,
+          "passInt": 0,
+          "passIntPct": 0.0,
+          "passLng": 0,
+          "pass20Plus": 0,
+          "pass40Plus": 0,
+          "passSacks": 0,
+          "passSackY": 0,
+          "qbRating": 0.0
+        },
+        "rushing": {
+          "rushAttempts": 0,
+          "rushYards": 0,
+          "rushAverage": 0.0,
+          "rushTD": 0,
+          "rushLng": 0,
+          "rush1stDowns": 0,
+          "rush1stDownsPct": 0.0,
+          "rush20Plus": 0,
+          "rush40Plus": 0,
+          "rushFumbles": 0
+        },
+        "receiving": {
+          "targets": 46,
+          "receptions": 33,
+          "recYards": 551,
+          "recAverage": 16.7,
+          "recTD": 6,
+          "recLng": 285,
+          "rec1stDowns": 27,
+          "rec20Plus": 10,
+          "rec40Plus": 0,
+          "recFumbles": 0
+        },
+        "tackles": {
+          "tackleSolo": 1,
+          "tackleTotal": 1,
+          "tackleAst": 0,
+          "sacks": 0.0,
+          "sackYds": 0,
+          "tacklesForLoss": 0.0
+        },
+        "interceptions": {
+          "interceptions": 0,
+          "intTD": 0,
+          "intYds": 0,
+          "intAverage": 0.0,
+          "intLng": 0,
+          "passesDefended": 0,
+          "stuffs": 0,
+          "stuffYds": 0,
+          "safeties": 0,
+          "kB": 0
+        },
+        "fumbles": {
+          "fumbles": 0,
+          "fumLost": 0,
+          "fumForced": 0,
+          "fumOwnRec": 0,
+          "fumOppRec": 0,
+          "fumRecYds": 0,
+          "fumTotalRec": 0,
+          "fumTD": 0,
+          "offFumTD": 0
+        },
+        "kickoffReturns": {
+          "krRet": 0,
+          "krYds": 0,
+          "krAvg": 0.0,
+          "krLng": 0,
+          "krTD": 0,
+          "kr20Plus": 0,
+          "kr40Plus": 0,
+          "krFC": 0,
+          "krFum": 0
+        },
+        "puntReturns": {
+          "prRet": 0,
+          "prYds": 0,
+          "prAvg": 0.0,
+          "prLng": 0,
+          "prTD": 0,
+          "pr20Plus": 0,
+          "pr40Plus": 0,
+          "prFC": 0,
+          "prFum": 0
+        },
+        "miscellaneous": {
+          "gamesStarted": 0
+        },
+        "twoPointAttempts": {
+          "twoPtAtt": 0,
+          "twoPtMade": 0,
+          "twoPtPassAtt": 0,
+          "twoPtPassMade": 0,
+          "twoPtPassRec": 0,
+          "twoPtRushAtt": 0,
+          "twoPtRushMade": 0
+        },
+        "snapCounts": {
+          "offenseSnaps": 607,
+          "defenseSnaps": 0,
+          "specialTeamSnaps": 1
+        }
+      }
+    },
+    {
+      "player": {
+        "id": 16361,
+        "firstName": "Garrett",
+        "lastName": "Bradbury",
+        "primaryPosition": "C",
+        "jerseyNumber": 65,
+        "currentTeam": {
+          "id": 50,
+          "abbreviation": "NE"
+        },
+        "currentRosterStatus": "ROSTER",
+        "currentInjury": null,
+        "height": "6'3\"",
+        "weight": 300,
+        "birthDate": "1995-06-20",
+        "age": 31,
+        "birthCity": null,
+        "birthCountry": null,
+        "rookie": false,
+        "highSchool": null,
+        "college": "North Carolina State",
+        "handedness": null,
+        "officialImageSrc": "https://static.www.nfl.com/image/private/t_headshot_desktop/league/yj2qcr7tetiimrz7zxtg",
+        "socialMediaAccounts": []
+      },
+      "team": {
+        "id": 50,
+        "abbreviation": "NE"
+      },
+      "stats": {
+        "gamesPlayed": 17,
+        "tackles": {
+          "tackleSolo": 1,
+          "tackleTotal": 1,
+          "tackleAst": 0,
+          "sacks": 0.0,
+          "sackYds": 0,
+          "tacklesForLoss": 0.0
+        },
+        "interceptions": {
+          "interceptions": 0,
+          "intTD": 0,
+          "intYds": 0,
+          "intAverage": 0.0,
+          "intLng": 0,
+          "passesDefended": 0,
+          "stuffs": 0,
+          "stuffYds": 0,
+          "safeties": 0,
+          "kB": 0
+        },
+        "fumbles": {
+          "fumbles": 2,
+          "fumLost": 0,
+          "fumForced": 0,
+          "fumOwnRec": 0,
+          "fumOppRec": 0,
+          "fumRecYds": -18,
+          "fumTotalRec": 0,
+          "fumTD": 0,
+          "offFumTD": 0
+        },
+        "kickoffReturns": {
+          "krRet": 0,
+          "krYds": 0,
+          "krAvg": 0.0,
+          "krLng": 0,
+          "krTD": 0,
+          "kr20Plus": 0,
+          "kr40Plus": 0,
+          "krFC": 0,
+          "krFum": 0
+        },
+        "puntReturns": {
+          "prRet": 0,
+          "prYds": 0,
+          "prAvg": 0.0,
+          "prLng": 0,
+          "prTD": 0,
+          "pr20Plus": 0,
+          "pr40Plus": 0,
+          "prFC": 0,
+          "prFum": 0
+        },
+        "miscellaneous": {
+          "gamesStarted": 0
+        },
+        "snapCounts": {
+          "offenseSnaps": 1072,
+          "defenseSnaps": 0,
+          "specialTeamSnaps": 0
+        }
+      }
+    },
+    {
+      "player": {
+        "id": 56745,
+        "firstName": "Ben",
+        "lastName": "Brown",
+        "primaryPosition": "C",
+        "jerseyNumber": 77,
+        "currentTeam": {
+          "id": 50,
+          "abbreviation": "NE"
+        },
+        "currentRosterStatus": "ROSTER",
+        "currentInjury": null,
+        "height": "6'4\"",
+        "weight": 313,
+        "birthDate": "1998-05-19",
+        "age": 28,
+        "birthCity": null,
+        "birthCountry": null,
+        "rookie": false,
+        "highSchool": null,
+        "college": "Mississippi",
+        "handedness": null,
+        "officialImageSrc": null,
+        "socialMediaAccounts": []
+      },
+      "team": {
+        "id": 50,
+        "abbreviation": "NE"
+      },
+      "stats": {
+        "gamesPlayed": 17,
+        "tackles": {
+          "tackleSolo": 0,
+          "tackleTotal": 0,
+          "tackleAst": 0,
+          "sacks": 0.0,
+          "sackYds": 0,
+          "tacklesForLoss": 0.0
+        },
+        "interceptions": {
+          "interceptions": 0,
+          "intTD": 0,
+          "intYds": 0,
+          "intAverage": 0.0,
+          "intLng": 0,
+          "passesDefended": 0,
+          "stuffs": 0,
+          "stuffYds": 0,
+          "safeties": 0,
+          "kB": 0
+        },
+        "fumbles": {
+          "fumbles": 0,
+          "fumLost": 0,
+          "fumForced": 0,
+          "fumOwnRec": 0,
+          "fumOppRec": 0,
+          "fumRecYds": 0,
+          "fumTotalRec": 0,
+          "fumTD": 0,
+          "offFumTD": 0
+        },
+        "kickoffReturns": {
+          "krRet": 0,
+          "krYds": 0,
+          "krAvg": 0.0,
+          "krLng": 0,
+          "krTD": 0,
+          "kr20Plus": 0,
+          "kr40Plus": 0,
+          "krFC": 0,
+          "krFum": 0
+        },
+        "puntReturns": {
+          "prRet": 0,
+          "prYds": 0,
+          "prAvg": 0.0,
+          "prLng": 0,
+          "prTD": 0,
+          "pr20Plus": 0,
+          "pr40Plus": 0,
+          "prFC": 0,
+          "prFum": 0
+        },
+        "miscellaneous": {
+          "gamesStarted": 0
+        },
+        "snapCounts": {
+          "offenseSnaps": 331,
+          "defenseSnaps": 0,
+          "specialTeamSnaps": 87
+        }
+      }
+    },
+    {
+      "player": {
+        "id": 166928,
+        "firstName": "Marcus",
+        "lastName": "Bryant",
+        "primaryPosition": "T",
+        "jerseyNumber": 52,
+        "currentTeam": {
+          "id": 50,
+          "abbreviation": "NE"
+        },
+        "currentRosterStatus": "ROSTER",
+        "currentInjury": null,
+        "height": "6'7\"",
+        "weight": 320,
+        "birthDate": "2002-06-22",
+        "age": 24,
+        "birthCity": "Round Rock, TX",
+        "birthCountry": "USA",
+        "rookie": false,
+        "highSchool": null,
+        "college": "Missouri",
+        "handedness": null,
+        "officialImageSrc": null,
+        "socialMediaAccounts": []
+      },
+      "team": {
+        "id": 50,
+        "abbreviation": "NE"
+      },
+      "stats": {
+        "gamesPlayed": 12,
+        "tackles": {
+          "tackleSolo": 0,
+          "tackleTotal": 0,
+          "tackleAst": 0,
+          "sacks": 0.0,
+          "sackYds": 0,
+          "tacklesForLoss": 0.0
+        },
+        "interceptions": {
+          "interceptions": 0,
+          "intTD": 0,
+          "intYds": 0,
+          "intAverage": 0.0,
+          "intLng": 0,
+          "passesDefended": 0,
+          "stuffs": 0,
+          "stuffYds": 0,
+          "safeties": 0,
+          "kB": 0
+        },
+        "fumbles": {
+          "fumbles": 0,
+          "fumLost": 0,
+          "fumForced": 0,
+          "fumOwnRec": 0,
+          "fumOppRec": 0,
+          "fumRecYds": 0,
+          "fumTotalRec": 0,
+          "fumTD": 0,
+          "offFumTD": 0
+        },
+        "kickoffReturns": {
+          "krRet": 0,
+          "krYds": 0,
+          "krAvg": 0.0,
+          "krLng": 0,
+          "krTD": 0,
+          "kr20Plus": 0,
+          "kr40Plus": 0,
+          "krFC": 0,
+          "krFum": 0
+        },
+        "puntReturns": {
+          "prRet": 0,
+          "prYds": 0,
+          "prAvg": 0.0,
+          "prLng": 0,
+          "prTD": 0,
+          "pr20Plus": 0,
+          "pr40Plus": 0,
+          "prFC": 0,
+          "prFum": 0
+        },
+        "miscellaneous": {
+          "gamesStarted": 0
+        },
+        "snapCounts": {
+          "offenseSnaps": 19,
+          "defenseSnaps": 0,
+          "specialTeamSnaps": 56
+        }
+      }
+    },
+    {
+      "player": {
+        "id": 166678,
+        "firstName": "Will",
+        "lastName": "Campbell",
+        "primaryPosition": "T",
+        "jerseyNumber": 66,
+        "currentTeam": {
+          "id": 50,
+          "abbreviation": "NE"
+        },
+        "currentRosterStatus": "ROSTER",
+        "currentInjury": null,
+        "height": "6'6\"",
+        "weight": 319,
+        "birthDate": "2004-01-06",
+        "age": 22,
+        "birthCity": "Monroe, LA",
+        "birthCountry": "USA",
+        "rookie": false,
+        "highSchool": null,
+        "college": "LSU",
+        "handedness": null,
+        "officialImageSrc": null,
+        "socialMediaAccounts": []
+      },
+      "team": {
+        "id": 50,
+        "abbreviation": "NE"
+      },
+      "stats": {
+        "gamesPlayed": 13,
+        "tackles": {
+          "tackleSolo": 2,
+          "tackleTotal": 2,
+          "tackleAst": 0,
+          "sacks": 0.0,
+          "sackYds": 0,
+          "tacklesForLoss": 0.0
+        },
+        "interceptions": {
+          "interceptions": 0,
+          "intTD": 0,
+          "intYds": 0,
+          "intAverage": 0.0,
+          "intLng": 0,
+          "passesDefended": 0,
+          "stuffs": 0,
+          "stuffYds": 0,
+          "safeties": 0,
+          "kB": 0
+        },
+        "fumbles": {
+          "fumbles": 0,
+          "fumLost": 0,
+          "fumForced": 0,
+          "fumOwnRec": 1,
+          "fumOppRec": 0,
+          "fumRecYds": 0,
+          "fumTotalRec": 1,
+          "fumTD": 0,
+          "offFumTD": 0
+        },
+        "kickoffReturns": {
+          "krRet": 0,
+          "krYds": 0,
+          "krAvg": 0.0,
+          "krLng": 0,
+          "krTD": 0,
+          "kr20Plus": 0,
+          "kr40Plus": 0,
+          "krFC": 0,
+          "krFum": 0
+        },
+        "puntReturns": {
+          "prRet": 0,
+          "prYds": 0,
+          "prAvg": 0.0,
+          "prLng": 0,
+          "prTD": 0,
+          "pr20Plus": 0,
+          "pr40Plus": 0,
+          "prFC": 0,
+          "prFum": 0
+        },
+        "miscellaneous": {
+          "gamesStarted": 0
+        },
+        "snapCounts": {
+          "offenseSnaps": 783,
+          "defenseSnaps": 0,
+          "specialTeamSnaps": 18
+        }
+      }
+    },
+    {
+      "player": {
+        "id": 18616,
+        "firstName": "K'Lavon",
+        "lastName": "Chaisson",
+        "primaryPosition": "LB",
+        "jerseyNumber": 44,
+        "currentTeam": {
+          "id": 50,
+          "abbreviation": "NE"
+        },
+        "currentRosterStatus": "ROSTER",
+        "currentInjury": null,
+        "height": "6'3\"",
+        "weight": 255,
+        "birthDate": "1999-07-25",
+        "age": 27,
+        "birthCity": "Houston, TX",
+        "birthCountry": "USA",
+        "rookie": false,
+        "highSchool": "North Shore",
+        "college": "LSU",
+        "handedness": null,
+        "officialImageSrc": null,
+        "socialMediaAccounts": []
+      },
+      "team": {
+        "id": 50,
+        "abbreviation": "NE"
+      },
+      "stats": {
+        "gamesPlayed": 16,
+        "passing": {
+          "passAttempts": 0,
+          "passCompletions": 0,
+          "passPct": 0.0,
+          "passYards": 0,
+          "passAvg": 0.0,
+          "passYardsPerAtt": 0.0,
+          "passTD": 0,
+          "passTDPct": 0.0,
+          "passInt": 0,
+          "passIntPct": 0.0,
+          "passLng": 0,
+          "pass20Plus": 0,
+          "pass40Plus": 0,
+          "passSacks": 0,
+          "passSackY": 0,
+          "qbRating": 0.0
+        },
+        "rushing": {
+          "rushAttempts": 0,
+          "rushYards": 0,
+          "rushAverage": 0.0,
+          "rushTD": 0,
+          "rushLng": 0,
+          "rush1stDowns": 0,
+          "rush1stDownsPct": 0.0,
+          "rush20Plus": 0,
+          "rush40Plus": 0,
+          "rushFumbles": 0
+        },
+        "receiving": {
+          "targets": 0,
+          "receptions": 0,
+          "recYards": 0,
+          "recAverage": 0.0,
+          "recTD": 0,
+          "recLng": 0,
+          "rec1stDowns": 0,
+          "rec20Plus": 0,
+          "rec40Plus": 0,
+          "recFumbles": 0
+        },
+        "tackles": {
+          "tackleSolo": 18,
+          "tackleTotal": 31,
+          "tackleAst": 13,
+          "sacks": 7.5,
+          "sackYds": 48,
+          "tacklesForLoss": 10.0
+        },
+        "interceptions": {
+          "interceptions": 0,
+          "intTD": 0,
+          "intYds": 0,
+          "intAverage": 0.0,
+          "intLng": 0,
+          "passesDefended": 2,
+          "stuffs": 14,
+          "stuffYds": 59,
+          "safeties": 0,
+          "kB": 0
+        },
+        "fumbles": {
+          "fumbles": 0,
+          "fumLost": 0,
+          "fumForced": 2,
+          "fumOwnRec": 0,
+          "fumOppRec": 1,
+          "fumRecYds": 4,
+          "fumTotalRec": 1,
+          "fumTD": 1,
+          "offFumTD": 0
+        },
+        "kickoffReturns": {
+          "krRet": 0,
+          "krYds": 0,
+          "krAvg": 0.0,
+          "krLng": 0,
+          "krTD": 0,
+          "kr20Plus": 0,
+          "kr40Plus": 0,
+          "krFC": 0,
+          "krFum": 0
+        },
+        "puntReturns": {
+          "prRet": 0,
+          "prYds": 0,
+          "prAvg": 0.0,
+          "prLng": 0,
+          "prTD": 0,
+          "pr20Plus": 0,
+          "pr40Plus": 0,
+          "prFC": 0,
+          "prFum": 0
+        },
+        "miscellaneous": {
+          "gamesStarted": 0
+        },
+        "snapCounts": {
+          "offenseSnaps": 0,
+          "defenseSnaps": 639,
+          "specialTeamSnaps": 108
+        }
+      }
+    },
+    {
+      "player": {
+        "id": 167668,
+        "firstName": "Efton",
+        "lastName": "Chism III",
+        "primaryPosition": "WR",
+        "jerseyNumber": 86,
+        "currentTeam": {
+          "id": 50,
+          "abbreviation": "NE"
+        },
+        "currentRosterStatus": "ROSTER",
+        "currentInjury": null,
+        "height": "5'10\"",
+        "weight": 198,
+        "birthDate": "2001-10-26",
+        "age": 24,
+        "birthCity": null,
+        "birthCountry": null,
+        "rookie": false,
+        "highSchool": null,
+        "college": "Eastern Washington",
+        "handedness": null,
+        "officialImageSrc": null,
+        "socialMediaAccounts": []
+      },
+      "team": {
+        "id": 50,
+        "abbreviation": "NE"
+      },
+      "stats": {
+        "gamesPlayed": 8,
+        "passing": {
+          "passAttempts": 0,
+          "passCompletions": 0,
+          "passPct": 0.0,
+          "passYards": 0,
+          "passAvg": 0.0,
+          "passYardsPerAtt": 0.0,
+          "passTD": 0,
+          "passTDPct": 0.0,
+          "passInt": 0,
+          "passIntPct": 0.0,
+          "passLng": 0,
+          "pass20Plus": 0,
+          "pass40Plus": 0,
+          "passSacks": 0,
+          "passSackY": 0,
+          "qbRating": 0.0
+        },
+        "rushing": {
+          "rushAttempts": 0,
+          "rushYards": 0,
+          "rushAverage": 0.0,
+          "rushTD": 0,
+          "rushLng": 0,
+          "rush1stDowns": 0,
+          "rush1stDownsPct": 0.0,
+          "rush20Plus": 0,
+          "rush40Plus": 0,
+          "rushFumbles": 0
+        },
+        "receiving": {
+          "targets": 3,
+          "receptions": 3,
+          "recYards": 75,
+          "recAverage": 25.0,
+          "recTD": 1,
+          "recLng": 65,
+          "rec1stDowns": 3,
+          "rec20Plus": 2,
+          "rec40Plus": 0,
+          "recFumbles": 0
+        },
+        "tackles": {
+          "tackleSolo": 0,
+          "tackleTotal": 0,
+          "tackleAst": 0,
+          "sacks": 0.0,
+          "sackYds": 0,
+          "tacklesForLoss": 0.0
+        },
+        "interceptions": {
+          "interceptions": 0,
+          "intTD": 0,
+          "intYds": 0,
+          "intAverage": 0.0,
+          "intLng": 0,
+          "passesDefended": 0,
+          "stuffs": 0,
+          "stuffYds": 0,
+          "safeties": 0,
+          "kB": 0
+        },
+        "fumbles": {
+          "fumbles": 0,
+          "fumLost": 0,
+          "fumForced": 0,
+          "fumOwnRec": 0,
+          "fumOppRec": 0,
+          "fumRecYds": 0,
+          "fumTotalRec": 0,
+          "fumTD": 0,
+          "offFumTD": 0
+        },
+        "kickoffReturns": {
+          "krRet": 16,
+          "krYds": 383,
+          "krAvg": 23.9,
+          "krLng": 157,
+          "krTD": 0,
+          "kr20Plus": 13,
+          "kr40Plus": 0,
+          "krFC": 0,
+          "krFum": 0
+        },
+        "puntReturns": {
+          "prRet": 0,
+          "prYds": 0,
+          "prAvg": 0.0,
+          "prLng": 0,
+          "prTD": 0,
+          "pr20Plus": 0,
+          "pr40Plus": 0,
+          "prFC": 2,
+          "prFum": 0
+        },
+        "miscellaneous": {
+          "gamesStarted": 0
+        },
+        "twoPointAttempts": {
+          "twoPtAtt": 0,
+          "twoPtMade": 0,
+          "twoPtPassAtt": 0,
+          "twoPtPassMade": 0,
+          "twoPtPassRec": 0,
+          "twoPtRushAtt": 0,
+          "twoPtRushMade": 0
+        },
+        "snapCounts": {
+          "offenseSnaps": 92,
+          "defenseSnaps": 0,
+          "specialTeamSnaps": 59
+        }
+      }
+    },
+    {
+      "player": {
+        "id": 14990,
+        "firstName": "Carlton",
+        "lastName": "Davis",
+        "primaryPosition": "CB",
+        "jerseyNumber": 7,
+        "currentTeam": {
+          "id": 50,
+          "abbreviation": "NE"
+        },
+        "currentRosterStatus": "ROSTER",
+        "currentInjury": null,
+        "height": "6'1\"",
+        "weight": 206,
+        "birthDate": "1996-12-31",
+        "age": 29,
+        "birthCity": null,
+        "birthCountry": null,
+        "rookie": false,
+        "highSchool": null,
+        "college": "Auburn",
+        "handedness": null,
+        "officialImageSrc": "https://static.www.nfl.com/image/private/t_headshot_desktop/league/gct2ozuxdinju6w0i8dj",
+        "socialMediaAccounts": []
+      },
+      "team": {
+        "id": 50,
+        "abbreviation": "NE"
+      },
+      "stats": {
+        "gamesPlayed": 17,
+        "tackles": {
+          "tackleSolo": 39,
+          "tackleTotal": 69,
+          "tackleAst": 30,
+          "sacks": 0.0,
+          "sackYds": 0,
+          "tacklesForLoss": 3.0
+        },
+        "interceptions": {
+          "interceptions": 0,
+          "intTD": 0,
+          "intYds": 0,
+          "intAverage": 0.0,
+          "intLng": 0,
+          "passesDefended": 10,
+          "stuffs": 1,
+          "stuffYds": 0,
+          "safeties": 0,
+          "kB": 0
+        },
+        "fumbles": {
+          "fumbles": 0,
+          "fumLost": 0,
+          "fumForced": 0,
+          "fumOwnRec": 0,
+          "fumOppRec": 0,
+          "fumRecYds": 0,
+          "fumTotalRec": 0,
+          "fumTD": 0,
+          "offFumTD": 0
+        },
+        "kickoffReturns": {
+          "krRet": 0,
+          "krYds": 0,
+          "krAvg": 0.0,
+          "krLng": 0,
+          "krTD": 0,
+          "kr20Plus": 0,
+          "kr40Plus": 0,
+          "krFC": 0,
+          "krFum": 0
+        },
+        "puntReturns": {
+          "prRet": 0,
+          "prYds": 0,
+          "prAvg": 0.0,
+          "prLng": 0,
+          "prTD": 0,
+          "pr20Plus": 0,
+          "pr40Plus": 0,
+          "prFC": 0,
+          "prFum": 0
+        },
+        "miscellaneous": {
+          "gamesStarted": 0
+        },
+        "snapCounts": {
+          "offenseSnaps": 0,
+          "defenseSnaps": 926,
+          "specialTeamSnaps": 0
+        }
+      }
+    },
+    {
+      "player": {
+        "id": 7471,
+        "firstName": "Stefon",
+        "lastName": "Diggs",
+        "primaryPosition": "WR",
+        "jerseyNumber": 8,
+        "currentTeam": {
+          "id": 50,
+          "abbreviation": "NE"
+        },
+        "currentRosterStatus": "ROSTER",
+        "currentInjury": null,
+        "height": "6'0\"",
+        "weight": 191,
+        "birthDate": "1993-11-29",
+        "age": 32,
+        "birthCity": "Alexandria, VA",
+        "birthCountry": "USA",
+        "rookie": false,
+        "highSchool": null,
+        "college": "Maryland",
+        "handedness": null,
+        "officialImageSrc": "https://static.www.nfl.com/image/private/t_headshot_desktop/league/zf6nbnzcfzu4y7yq2nzk",
+        "socialMediaAccounts": []
+      },
+      "team": {
+        "id": 50,
+        "abbreviation": "NE"
+      },
+      "stats": {
+        "gamesPlayed": 17,
+        "passing": {
+          "passAttempts": 0,
+          "passCompletions": 0,
+          "passPct": 0.0,
+          "passYards": 0,
+          "passAvg": 0.0,
+          "passYardsPerAtt": 0.0,
+          "passTD": 0,
+          "passTDPct": 0.0,
+          "passInt": 0,
+          "passIntPct": 0.0,
+          "passLng": 0,
+          "pass20Plus": 0,
+          "pass40Plus": 0,
+          "passSacks": 0,
+          "passSackY": 0,
+          "qbRating": 0.0
+        },
+        "rushing": {
+          "rushAttempts": 0,
+          "rushYards": 0,
+          "rushAverage": 0.0,
+          "rushTD": 0,
+          "rushLng": 0,
+          "rush1stDowns": 0,
+          "rush1stDownsPct": 0.0,
+          "rush20Plus": 0,
+          "rush40Plus": 0,
+          "rushFumbles": 0
+        },
+        "receiving": {
+          "targets": 102,
+          "receptions": 85,
+          "recYards": 1013,
+          "recAverage": 11.9,
+          "recTD": 4,
+          "recLng": 351,
+          "rec1stDowns": 51,
+          "rec20Plus": 17,
+          "rec40Plus": 0,
+          "recFumbles": 0
+        },
+        "tackles": {
+          "tackleSolo": 2,
+          "tackleTotal": 2,
+          "tackleAst": 0,
+          "sacks": 0.0,
+          "sackYds": 0,
+          "tacklesForLoss": 0.0
+        },
+        "interceptions": {
+          "interceptions": 0,
+          "intTD": 0,
+          "intYds": 0,
+          "intAverage": 0.0,
+          "intLng": 0,
+          "passesDefended": 0,
+          "stuffs": 0,
+          "stuffYds": 0,
+          "safeties": 0,
+          "kB": 0
+        },
+        "fumbles": {
+          "fumbles": 0,
+          "fumLost": 0,
+          "fumForced": 0,
+          "fumOwnRec": 0,
+          "fumOppRec": 0,
+          "fumRecYds": 0,
+          "fumTotalRec": 0,
+          "fumTD": 0,
+          "offFumTD": 0
+        },
+        "kickoffReturns": {
+          "krRet": 1,
+          "krYds": 0,
+          "krAvg": 0.0,
+          "krLng": 0,
+          "krTD": 0,
+          "kr20Plus": 0,
+          "kr40Plus": 0,
+          "krFC": 0,
+          "krFum": 0
+        },
+        "puntReturns": {
+          "prRet": 0,
+          "prYds": 0,
+          "prAvg": 0.0,
+          "prLng": 0,
+          "prTD": 0,
+          "pr20Plus": 0,
+          "pr40Plus": 0,
+          "prFC": 0,
+          "prFum": 0
+        },
+        "miscellaneous": {
+          "gamesStarted": 0
+        },
+        "twoPointAttempts": {
+          "twoPtAtt": 0,
+          "twoPtMade": 0,
+          "twoPtPassAtt": 0,
+          "twoPtPassMade": 0,
+          "twoPtPassRec": 0,
+          "twoPtRushAtt": 0,
+          "twoPtRushMade": 0
+        },
+        "snapCounts": {
+          "offenseSnaps": 598,
+          "defenseSnaps": 0,
+          "specialTeamSnaps": 3
+        }
+      }
+    },
+    {
+      "player": {
+        "id": 167670,
+        "firstName": "CJ",
+        "lastName": "Dippre",
+        "primaryPosition": "TE",
+        "jerseyNumber": 82,
+        "currentTeam": {
+          "id": 50,
+          "abbreviation": "NE"
+        },
+        "currentRosterStatus": "ROSTER",
+        "currentInjury": null,
+        "height": "6'5\"",
+        "weight": 256,
+        "birthDate": "2002-04-29",
+        "age": 24,
+        "birthCity": null,
+        "birthCountry": null,
+        "rookie": false,
+        "highSchool": null,
+        "college": "Alabama",
+        "handedness": null,
+        "officialImageSrc": null,
+        "socialMediaAccounts": []
+      },
+      "team": {
+        "id": 50,
+        "abbreviation": "NE"
+      },
+      "stats": {
+        "gamesPlayed": 2,
+        "passing": {
+          "passAttempts": 0,
+          "passCompletions": 0,
+          "passPct": 0.0,
+          "passYards": 0,
+          "passAvg": 0.0,
+          "passYardsPerAtt": 0.0,
+          "passTD": 0,
+          "passTDPct": 0.0,
+          "passInt": 0,
+          "passIntPct": 0.0,
+          "passLng": 0,
+          "pass20Plus": 0,
+          "pass40Plus": 0,
+          "passSacks": 0,
+          "passSackY": 0,
+          "qbRating": 0.0
+        },
+        "rushing": {
+          "rushAttempts": 0,
+          "rushYards": 0,
+          "rushAverage": 0.0,
+          "rushTD": 0,
+          "rushLng": 0,
+          "rush1stDowns": 0,
+          "rush1stDownsPct": 0.0,
+          "rush20Plus": 0,
+          "rush40Plus": 0,
+          "rushFumbles": 0
+        },
+        "receiving": {
+          "targets": 0,
+          "receptions": 0,
+          "recYards": 0,
+          "recAverage": 0.0,
+          "recTD": 0,
+          "recLng": 0,
+          "rec1stDowns": 0,
+          "rec20Plus": 0,
+          "rec40Plus": 0,
+          "recFumbles": 0
+        },
+        "tackles": {
+          "tackleSolo": 0,
+          "tackleTotal": 0,
+          "tackleAst": 0,
+          "sacks": 0.0,
+          "sackYds": 0,
+          "tacklesForLoss": 0.0
+        },
+        "interceptions": {
+          "interceptions": 0,
+          "intTD": 0,
+          "intYds": 0,
+          "intAverage": 0.0,
+          "intLng": 0,
+          "passesDefended": 0,
+          "stuffs": 0,
+          "stuffYds": 0,
+          "safeties": 0,
+          "kB": 0
+        },
+        "fumbles": {
+          "fumbles": 0,
+          "fumLost": 0,
+          "fumForced": 0,
+          "fumOwnRec": 0,
+          "fumOppRec": 0,
+          "fumRecYds": 0,
+          "fumTotalRec": 0,
+          "fumTD": 0,
+          "offFumTD": 0
+        },
+        "kickoffReturns": {
+          "krRet": 0,
+          "krYds": 0,
+          "krAvg": 0.0,
+          "krLng": 0,
+          "krTD": 0,
+          "kr20Plus": 0,
+          "kr40Plus": 0,
+          "krFC": 0,
+          "krFum": 0
+        },
+        "puntReturns": {
+          "prRet": 0,
+          "prYds": 0,
+          "prAvg": 0.0,
+          "prLng": 0,
+          "prTD": 0,
+          "pr20Plus": 0,
+          "pr40Plus": 0,
+          "prFC": 0,
+          "prFum": 0
+        },
+        "miscellaneous": {
+          "gamesStarted": 0
+        },
+        "twoPointAttempts": {
+          "twoPtAtt": 0,
+          "twoPtMade": 0,
+          "twoPtPassAtt": 0,
+          "twoPtPassMade": 0,
+          "twoPtPassRec": 0,
+          "twoPtRushAtt": 0,
+          "twoPtRushMade": 0
+        },
+        "snapCounts": {
+          "offenseSnaps": 20,
+          "defenseSnaps": 0,
+          "specialTeamSnaps": 26
+        }
+      }
+    },
+    {
+      "player": {
+        "id": 13191,
+        "firstName": "Joshua",
+        "lastName": "Dobbs",
+        "primaryPosition": "QB",
+        "jerseyNumber": 11,
+        "currentTeam": {
+          "id": 50,
+          "abbreviation": "NE"
+        },
+        "currentRosterStatus": "ROSTER",
+        "currentInjury": null,
+        "height": "6'3\"",
+        "weight": 220,
+        "birthDate": "1995-01-26",
+        "age": 31,
+        "birthCity": "Birmingham, AL",
+        "birthCountry": "USA",
+        "rookie": false,
+        "highSchool": null,
+        "college": "Tennessee",
+        "handedness": {
+          "throws": null
+        },
+        "officialImageSrc": "http://static.nfl.com/static/content/public/static/img/fantasy/transparent/200x200/DOB302360.png",
+        "socialMediaAccounts": []
+      },
+      "team": {
+        "id": 50,
+        "abbreviation": "NE"
+      },
+      "stats": {
+        "gamesPlayed": 4,
+        "passing": {
+          "passAttempts": 10,
+          "passCompletions": 7,
+          "passPct": 70.0,
+          "passYards": 65,
+          "passAvg": 6.5,
+          "passYardsPerAtt": 6.5,
+          "passTD": 0,
+          "passTDPct": 0.0,
+          "passInt": 0,
+          "passIntPct": 0.0,
+          "passLng": 55,
+          "pass20Plus": 2,
+          "pass40Plus": 0,
+          "passSacks": 0,
+          "passSackY": 0,
+          "qbRating": 87.5
+        },
+        "rushing": {
+          "rushAttempts": 10,
+          "rushYards": -5,
+          "rushAverage": -0.5,
+          "rushTD": 0,
+          "rushLng": 1,
+          "rush1stDowns": 0,
+          "rush1stDownsPct": 0.0,
+          "rush20Plus": 0,
+          "rush40Plus": 0,
+          "rushFumbles": 0
+        },
+        "receiving": {
+          "targets": 0,
+          "receptions": 0,
+          "recYards": 0,
+          "recAverage": 0.0,
+          "recTD": 0,
+          "recLng": 0,
+          "rec1stDowns": 0,
+          "rec20Plus": 0,
+          "rec40Plus": 0,
+          "recFumbles": 0
+        },
+        "tackles": {
+          "tackleSolo": 0,
+          "tackleTotal": 0,
+          "tackleAst": 0,
+          "sacks": 0.0,
+          "sackYds": 0,
+          "tacklesForLoss": 0.0
+        },
+        "interceptions": {
+          "interceptions": 0,
+          "intTD": 0,
+          "intYds": 0,
+          "intAverage": 0.0,
+          "intLng": 0,
+          "passesDefended": 0,
+          "stuffs": 0,
+          "stuffYds": 0,
+          "safeties": 0,
+          "kB": 0
+        },
+        "fumbles": {
+          "fumbles": 0,
+          "fumLost": 0,
+          "fumForced": 0,
+          "fumOwnRec": 0,
+          "fumOppRec": 0,
+          "fumRecYds": 0,
+          "fumTotalRec": 0,
+          "fumTD": 0,
+          "offFumTD": 0
+        },
+        "kickoffReturns": {
+          "krRet": 0,
+          "krYds": 0,
+          "krAvg": 0.0,
+          "krLng": 0,
+          "krTD": 0,
+          "kr20Plus": 0,
+          "kr40Plus": 0,
+          "krFC": 0,
+          "krFum": 0
+        },
+        "puntReturns": {
+          "prRet": 0,
+          "prYds": 0,
+          "prAvg": 0.0,
+          "prLng": 0,
+          "prTD": 0,
+          "pr20Plus": 0,
+          "pr40Plus": 0,
+          "prFC": 0,
+          "prFum": 0
+        },
+        "miscellaneous": {
+          "gamesStarted": 0
+        },
+        "twoPointAttempts": {
+          "twoPtAtt": 0,
+          "twoPtMade": 0,
+          "twoPtPassAtt": 0,
+          "twoPtPassMade": 0,
+          "twoPtPassRec": 0,
+          "twoPtRushAtt": 0,
+          "twoPtRushMade": 0
+        },
+        "snapCounts": {
+          "offenseSnaps": 44,
+          "defenseSnaps": 0,
+          "specialTeamSnaps": 0
+        }
+      }
+    },
+    {
+      "player": {
+        "id": 108896,
+        "firstName": "Demario",
+        "lastName": "Douglas",
+        "primaryPosition": "WR",
+        "jerseyNumber": 3,
+        "currentTeam": {
+          "id": 50,
+          "abbreviation": "NE"
+        },
+        "currentRosterStatus": "ROSTER",
+        "currentInjury": null,
+        "height": "5'8\"",
+        "weight": 192,
+        "birthDate": "2000-12-08",
+        "age": 25,
+        "birthCity": "Jacksonville, FL",
+        "birthCountry": "USA",
+        "rookie": false,
+        "highSchool": null,
+        "college": "Liberty",
+        "handedness": null,
+        "officialImageSrc": "https://static.www.nfl.com/image/private/t_headshot_desktop/league/svnh61ottqtfmcqvnbj3",
+        "socialMediaAccounts": []
+      },
+      "team": {
+        "id": 50,
+        "abbreviation": "NE"
+      },
+      "stats": {
+        "gamesPlayed": 17,
+        "passing": {
+          "passAttempts": 0,
+          "passCompletions": 0,
+          "passPct": 0.0,
+          "passYards": 0,
+          "passAvg": 0.0,
+          "passYardsPerAtt": 0.0,
+          "passTD": 0,
+          "passTDPct": 0.0,
+          "passInt": 0,
+          "passIntPct": 0.0,
+          "passLng": 0,
+          "pass20Plus": 0,
+          "pass40Plus": 0,
+          "passSacks": 0,
+          "passSackY": 0,
+          "qbRating": 0.0
+        },
+        "rushing": {
+          "rushAttempts": 7,
+          "rushYards": 21,
+          "rushAverage": 3.0,
+          "rushTD": 0,
+          "rushLng": 26,
+          "rush1stDowns": 2,
+          "rush1stDownsPct": 28.6,
+          "rush20Plus": 0,
+          "rush40Plus": 0,
+          "rushFumbles": 0
+        },
+        "receiving": {
+          "targets": 46,
+          "receptions": 31,
+          "recYards": 447,
+          "recAverage": 14.4,
+          "recTD": 3,
+          "recLng": 335,
+          "rec1stDowns": 17,
+          "rec20Plus": 7,
+          "rec40Plus": 3,
+          "recFumbles": 0
+        },
+        "tackles": {
+          "tackleSolo": 0,
+          "tackleTotal": 0,
+          "tackleAst": 0,
+          "sacks": 0.0,
+          "sackYds": 0,
+          "tacklesForLoss": 0.0
+        },
+        "interceptions": {
+          "interceptions": 0,
+          "intTD": 0,
+          "intYds": 0,
+          "intAverage": 0.0,
+          "intLng": 0,
+          "passesDefended": 0,
+          "stuffs": 0,
+          "stuffYds": 0,
+          "safeties": 0,
+          "kB": 0
+        },
+        "fumbles": {
+          "fumbles": 0,
+          "fumLost": 0,
+          "fumForced": 0,
+          "fumOwnRec": 0,
+          "fumOppRec": 0,
+          "fumRecYds": 0,
+          "fumTotalRec": 0,
+          "fumTD": 0,
+          "offFumTD": 0
+        },
+        "kickoffReturns": {
+          "krRet": 0,
+          "krYds": 0,
+          "krAvg": 0.0,
+          "krLng": 0,
+          "krTD": 0,
+          "kr20Plus": 0,
+          "kr40Plus": 0,
+          "krFC": 0,
+          "krFum": 0
+        },
+        "puntReturns": {
+          "prRet": 0,
+          "prYds": 0,
+          "prAvg": 0.0,
+          "prLng": 0,
+          "prTD": 0,
+          "pr20Plus": 0,
+          "pr40Plus": 0,
+          "prFC": 0,
+          "prFum": 0
+        },
+        "miscellaneous": {
+          "gamesStarted": 0
+        },
+        "twoPointAttempts": {
+          "twoPtAtt": 0,
+          "twoPtMade": 0,
+          "twoPtPassAtt": 0,
+          "twoPtPassMade": 0,
+          "twoPtPassRec": 0,
+          "twoPtRushAtt": 0,
+          "twoPtRushMade": 0
+        },
+        "snapCounts": {
+          "offenseSnaps": 288,
+          "defenseSnaps": 0,
+          "specialTeamSnaps": 3
+        }
+      }
+    },
+    {
+      "player": {
+        "id": 18655,
+        "firstName": "Kyle",
+        "lastName": "Dugger",
+        "primaryPosition": "FS",
+        "jerseyNumber": 29,
+        "currentTeam": {
+          "id": 59,
+          "abbreviation": "PIT"
+        },
+        "currentRosterStatus": "ROSTER",
+        "currentInjury": null,
+        "height": "6'1\"",
+        "weight": 216,
+        "birthDate": "1996-03-22",
+        "age": 30,
+        "birthCity": "Fayetteville, GA",
+        "birthCountry": "USA",
+        "rookie": false,
+        "highSchool": "Whitewater",
+        "college": "Lenoir-Rhyne",
+        "handedness": null,
+        "officialImageSrc": "https://static.www.nfl.com/image/private/t_headshot_desktop/league/gckckiryskfmdmgkkgj5",
+        "socialMediaAccounts": []
+      },
+      "team": {
+        "id": 50,
+        "abbreviation": "NE"
+      },
+      "stats": {
+        "gamesPlayed": 7,
+        "tackles": {
+          "tackleSolo": 7,
+          "tackleTotal": 17,
+          "tackleAst": 10,
+          "sacks": 0.0,
+          "sackYds": 0,
+          "tacklesForLoss": 0.0
+        },
+        "interceptions": {
+          "interceptions": 0,
+          "intTD": 0,
+          "intYds": 0,
+          "intAverage": 0.0,
+          "intLng": 0,
+          "passesDefended": 0,
+          "stuffs": 1,
+          "stuffYds": 1,
+          "safeties": 0,
+          "kB": 0
+        },
+        "fumbles": {
+          "fumbles": 0,
+          "fumLost": 0,
+          "fumForced": 0,
+          "fumOwnRec": 0,
+          "fumOppRec": 0,
+          "fumRecYds": 0,
+          "fumTotalRec": 0,
+          "fumTD": 0,
+          "offFumTD": 0
+        },
+        "kickoffReturns": {
+          "krRet": 0,
+          "krYds": 0,
+          "krAvg": 0.0,
+          "krLng": 0,
+          "krTD": 0,
+          "kr20Plus": 0,
+          "kr40Plus": 0,
+          "krFC": 0,
+          "krFum": 0
+        },
+        "puntReturns": {
+          "prRet": 0,
+          "prYds": 0,
+          "prAvg": 0.0,
+          "prLng": 0,
+          "prTD": 0,
+          "pr20Plus": 0,
+          "pr40Plus": 0,
+          "prFC": 0,
+          "prFum": 0
+        },
+        "miscellaneous": {
+          "gamesStarted": 0
+        },
+        "snapCounts": {
+          "offenseSnaps": 0,
+          "defenseSnaps": 184,
+          "specialTeamSnaps": 77
+        }
+      }
+    },
+    {
+      "player": {
+        "id": 112190,
+        "firstName": "Cory",
+        "lastName": "Durden",
+        "primaryPosition": "DT",
+        "jerseyNumber": 94,
+        "currentTeam": {
+          "id": 50,
+          "abbreviation": "NE"
+        },
+        "currentRosterStatus": "ROSTER",
+        "currentInjury": null,
+        "height": "6'4\"",
+        "weight": 316,
+        "birthDate": "1999-01-26",
+        "age": 27,
+        "birthCity": null,
+        "birthCountry": null,
+        "rookie": false,
+        "highSchool": null,
+        "college": "North Carolina State",
+        "handedness": null,
+        "officialImageSrc": "https://static.www.nfl.com/image/private/t_headshot_desktop/league/jqssjkaqsnpg3vrspp45",
+        "socialMediaAccounts": []
+      },
+      "team": {
+        "id": 50,
+        "abbreviation": "NE"
+      },
+      "stats": {
+        "gamesPlayed": 17,
+        "passing": {
+          "passAttempts": 0,
+          "passCompletions": 0,
+          "passPct": 0.0,
+          "passYards": 0,
+          "passAvg": 0.0,
+          "passYardsPerAtt": 0.0,
+          "passTD": 0,
+          "passTDPct": 0.0,
+          "passInt": 0,
+          "passIntPct": 0.0,
+          "passLng": 0,
+          "pass20Plus": 0,
+          "pass40Plus": 0,
+          "passSacks": 0,
+          "passSackY": 0,
+          "qbRating": 0.0
+        },
+        "rushing": {
+          "rushAttempts": 0,
+          "rushYards": 0,
+          "rushAverage": 0.0,
+          "rushTD": 0,
+          "rushLng": 0,
+          "rush1stDowns": 0,
+          "rush1stDownsPct": 0.0,
+          "rush20Plus": 0,
+          "rush40Plus": 0,
+          "rushFumbles": 0
+        },
+        "receiving": {
+          "targets": 0,
+          "receptions": 0,
+          "recYards": 0,
+          "recAverage": 0.0,
+          "recTD": 0,
+          "recLng": 0,
+          "rec1stDowns": 0,
+          "rec20Plus": 0,
+          "rec40Plus": 0,
+          "recFumbles": 0
+        },
+        "tackles": {
+          "tackleSolo": 10,
+          "tackleTotal": 30,
+          "tackleAst": 20,
+          "sacks": 0.0,
+          "sackYds": 0,
+          "tacklesForLoss": 5.0
+        },
+        "interceptions": {
+          "interceptions": 0,
+          "intTD": 0,
+          "intYds": 0,
+          "intAverage": 0.0,
+          "intLng": 0,
+          "passesDefended": 0,
+          "stuffs": 9,
+          "stuffYds": 9,
+          "safeties": 0,
+          "kB": 0
+        },
+        "fumbles": {
+          "fumbles": 0,
+          "fumLost": 0,
+          "fumForced": 0,
+          "fumOwnRec": 0,
+          "fumOppRec": 0,
+          "fumRecYds": 0,
+          "fumTotalRec": 0,
+          "fumTD": 0,
+          "offFumTD": 0
+        },
+        "kickoffReturns": {
+          "krRet": 0,
+          "krYds": 0,
+          "krAvg": 0.0,
+          "krLng": 0,
+          "krTD": 0,
+          "kr20Plus": 0,
+          "kr40Plus": 0,
+          "krFC": 0,
+          "krFum": 0
+        },
+        "puntReturns": {
+          "prRet": 0,
+          "prYds": 0,
+          "prAvg": 0.0,
+          "prLng": 0,
+          "prTD": 0,
+          "pr20Plus": 0,
+          "pr40Plus": 0,
+          "prFC": 0,
+          "prFum": 0
+        },
+        "miscellaneous": {
+          "gamesStarted": 0
+        },
+        "snapCounts": {
+          "offenseSnaps": 0,
+          "defenseSnaps": 383,
+          "specialTeamSnaps": 97
+        }
+      }
+    },
+    {
+      "player": {
+        "id": 30398,
+        "firstName": "Christian",
+        "lastName": "Elliss",
+        "primaryPosition": "ILB",
+        "jerseyNumber": 53,
+        "currentTeam": {
+          "id": 50,
+          "abbreviation": "NE"
+        },
+        "currentRosterStatus": "ROSTER",
+        "currentInjury": null,
+        "height": "6'2\"",
+        "weight": 231,
+        "birthDate": "1999-01-02",
+        "age": 27,
+        "birthCity": "Highlands Ranch, CO",
+        "birthCountry": "USA",
+        "rookie": false,
+        "highSchool": null,
+        "college": "Idaho",
+        "handedness": null,
+        "officialImageSrc": "https://static.www.nfl.com/image/private/t_headshot_desktop/league/juwzuqw906hhkf4wbt5r",
+        "socialMediaAccounts": []
+      },
+      "team": {
+        "id": 50,
+        "abbreviation": "NE"
+      },
+      "stats": {
+        "gamesPlayed": 15,
+        "tackles": {
+          "tackleSolo": 39,
+          "tackleTotal": 93,
+          "tackleAst": 54,
+          "sacks": 0.0,
+          "sackYds": 0,
+          "tacklesForLoss": 0.0
+        },
+        "interceptions": {
+          "interceptions": 0,
+          "intTD": 0,
+          "intYds": 0,
+          "intAverage": 0.0,
+          "intLng": 0,
+          "passesDefended": 3,
+          "stuffs": 3,
+          "stuffYds": 0,
+          "safeties": 0,
+          "kB": 0
+        },
+        "fumbles": {
+          "fumbles": 0,
+          "fumLost": 0,
+          "fumForced": 1,
+          "fumOwnRec": 0,
+          "fumOppRec": 0,
+          "fumRecYds": 0,
+          "fumTotalRec": 0,
+          "fumTD": 0,
+          "offFumTD": 0
+        },
+        "kickoffReturns": {
+          "krRet": 0,
+          "krYds": 0,
+          "krAvg": 0.0,
+          "krLng": 0,
+          "krTD": 0,
+          "kr20Plus": 0,
+          "kr40Plus": 0,
+          "krFC": 0,
+          "krFum": 0
+        },
+        "puntReturns": {
+          "prRet": 0,
+          "prYds": 0,
+          "prAvg": 0.0,
+          "prLng": 0,
+          "prTD": 0,
+          "pr20Plus": 0,
+          "pr40Plus": 0,
+          "prFC": 0,
+          "prFum": 0
+        },
+        "miscellaneous": {
+          "gamesStarted": 0
+        },
+        "snapCounts": {
+          "offenseSnaps": 0,
+          "defenseSnaps": 506,
+          "specialTeamSnaps": 171
+        }
+      }
+    },
+    {
+      "player": {
+        "id": 166670,
+        "firstName": "Joshua",
+        "lastName": "Farmer",
+        "primaryPosition": "DT",
+        "jerseyNumber": 92,
+        "currentTeam": {
+          "id": 50,
+          "abbreviation": "NE"
+        },
+        "currentRosterStatus": "INJURY_LIST",
+        "currentInjury": {
+          "description": "hamstring",
+          "playingProbability": "OUT"
+        },
+        "height": "6'3\"",
+        "weight": 312,
+        "birthDate": "2003-01-17",
+        "age": 23,
+        "birthCity": "Port St. Joe, FL",
+        "birthCountry": "USA",
+        "rookie": false,
+        "highSchool": null,
+        "college": "Florida State",
+        "handedness": null,
+        "officialImageSrc": null,
+        "socialMediaAccounts": []
+      },
+      "team": {
+        "id": 50,
+        "abbreviation": "NE"
+      },
+      "stats": {
+        "gamesPlayed": 13,
+        "passing": {
+          "passAttempts": 0,
+          "passCompletions": 0,
+          "passPct": 0.0,
+          "passYards": 0,
+          "passAvg": 0.0,
+          "passYardsPerAtt": 0.0,
+          "passTD": 0,
+          "passTDPct": 0.0,
+          "passInt": 0,
+          "passIntPct": 0.0,
+          "passLng": 0,
+          "pass20Plus": 0,
+          "pass40Plus": 0,
+          "passSacks": 0,
+          "passSackY": 0,
+          "qbRating": 0.0
+        },
+        "rushing": {
+          "rushAttempts": 0,
+          "rushYards": 0,
+          "rushAverage": 0.0,
+          "rushTD": 0,
+          "rushLng": 0,
+          "rush1stDowns": 0,
+          "rush1stDownsPct": 0.0,
+          "rush20Plus": 0,
+          "rush40Plus": 0,
+          "rushFumbles": 0
+        },
+        "receiving": {
+          "targets": 0,
+          "receptions": 0,
+          "recYards": 0,
+          "recAverage": 0.0,
+          "recTD": 0,
+          "recLng": 0,
+          "rec1stDowns": 0,
+          "rec20Plus": 0,
+          "rec40Plus": 0,
+          "recFumbles": 0
+        },
+        "tackles": {
+          "tackleSolo": 7,
+          "tackleTotal": 15,
+          "tackleAst": 8,
+          "sacks": 0.0,
+          "sackYds": 0,
+          "tacklesForLoss": 1.0
+        },
+        "interceptions": {
+          "interceptions": 0,
+          "intTD": 0,
+          "intYds": 0,
+          "intAverage": 0.0,
+          "intLng": 0,
+          "passesDefended": 1,
+          "stuffs": 4,
+          "stuffYds": 5,
+          "safeties": 0,
+          "kB": 0
+        },
+        "fumbles": {
+          "fumbles": 0,
+          "fumLost": 0,
+          "fumForced": 0,
+          "fumOwnRec": 0,
+          "fumOppRec": 1,
+          "fumRecYds": 0,
+          "fumTotalRec": 1,
+          "fumTD": 0,
+          "offFumTD": 0
+        },
+        "kickoffReturns": {
+          "krRet": 0,
+          "krYds": 0,
+          "krAvg": 0.0,
+          "krLng": 0,
+          "krTD": 0,
+          "kr20Plus": 0,
+          "kr40Plus": 0,
+          "krFC": 0,
+          "krFum": 0
+        },
+        "puntReturns": {
+          "prRet": 0,
+          "prYds": 0,
+          "prAvg": 0.0,
+          "prLng": 0,
+          "prTD": 0,
+          "pr20Plus": 0,
+          "pr40Plus": 0,
+          "prFC": 0,
+          "prFum": 0
+        },
+        "miscellaneous": {
+          "gamesStarted": 0
+        },
+        "snapCounts": {
+          "offenseSnaps": 0,
+          "defenseSnaps": 224,
+          "specialTeamSnaps": 17
+        }
+      }
+    },
+    {
+      "player": {
+        "id": 45716,
+        "firstName": "Jack",
+        "lastName": "Gibbens",
+        "primaryPosition": "LB",
+        "jerseyNumber": 51,
+        "currentTeam": {
+          "id": 50,
+          "abbreviation": "NE"
+        },
+        "currentRosterStatus": "ROSTER",
+        "currentInjury": null,
+        "height": "6'3\"",
+        "weight": 242,
+        "birthDate": "1998-11-24",
+        "age": 27,
+        "birthCity": null,
+        "birthCountry": null,
+        "rookie": false,
+        "highSchool": null,
+        "college": "Minnesota",
+        "handedness": null,
+        "officialImageSrc": "https://static.www.nfl.com/image/private/t_headshot_desktop/league/r3ncusvkfwjmyak9uqb9",
+        "socialMediaAccounts": []
+      },
+      "team": {
+        "id": 50,
+        "abbreviation": "NE"
+      },
+      "stats": {
+        "gamesPlayed": 17,
+        "passing": {
+          "passAttempts": 0,
+          "passCompletions": 0,
+          "passPct": 0.0,
+          "passYards": 0,
+          "passAvg": 0.0,
+          "passYardsPerAtt": 0.0,
+          "passTD": 0,
+          "passTDPct": 0.0,
+          "passInt": 0,
+          "passIntPct": 0.0,
+          "passLng": 0,
+          "pass20Plus": 0,
+          "pass40Plus": 0,
+          "passSacks": 0,
+          "passSackY": 0,
+          "qbRating": 0.0
+        },
+        "rushing": {
+          "rushAttempts": 0,
+          "rushYards": 0,
+          "rushAverage": 0.0,
+          "rushTD": 0,
+          "rushLng": 0,
+          "rush1stDowns": 0,
+          "rush1stDownsPct": 0.0,
+          "rush20Plus": 0,
+          "rush40Plus": 0,
+          "rushFumbles": 0
+        },
+        "receiving": {
+          "targets": 0,
+          "receptions": 0,
+          "recYards": 0,
+          "recAverage": 0.0,
+          "recTD": 0,
+          "recLng": 0,
+          "rec1stDowns": 0,
+          "rec20Plus": 0,
+          "rec40Plus": 0,
+          "recFumbles": 0
+        },
+        "tackles": {
+          "tackleSolo": 43,
+          "tackleTotal": 81,
+          "tackleAst": 38,
+          "sacks": 1.0,
+          "sackYds": 6,
+          "tacklesForLoss": 8.0
+        },
+        "interceptions": {
+          "interceptions": 0,
+          "intTD": 0,
+          "intYds": 0,
+          "intAverage": 0.0,
+          "intLng": 0,
+          "passesDefended": 4,
+          "stuffs": 8,
+          "stuffYds": 14,
+          "safeties": 0,
+          "kB": 0
+        },
+        "fumbles": {
+          "fumbles": 0,
+          "fumLost": 0,
+          "fumForced": 1,
+          "fumOwnRec": 1,
+          "fumOppRec": 0,
+          "fumRecYds": 0,
+          "fumTotalRec": 1,
+          "fumTD": 0,
+          "offFumTD": 0
+        },
+        "kickoffReturns": {
+          "krRet": 0,
+          "krYds": 0,
+          "krAvg": 0.0,
+          "krLng": 0,
+          "krTD": 0,
+          "kr20Plus": 0,
+          "kr40Plus": 0,
+          "krFC": 0,
+          "krFum": 0
+        },
+        "puntReturns": {
+          "prRet": 0,
+          "prYds": 0,
+          "prAvg": 0.0,
+          "prLng": 0,
+          "prTD": 0,
+          "pr20Plus": 0,
+          "pr40Plus": 0,
+          "prFC": 0,
+          "prFum": 0
+        },
+        "miscellaneous": {
+          "gamesStarted": 0
+        },
+        "snapCounts": {
+          "offenseSnaps": 0,
+          "defenseSnaps": 491,
+          "specialTeamSnaps": 281
+        }
+      }
+    },
+    {
+      "player": {
+        "id": 18688,
+        "firstName": "Antonio",
+        "lastName": "Gibson",
+        "primaryPosition": "RB",
+        "jerseyNumber": 4,
+        "currentTeam": {
+          "id": 50,
+          "abbreviation": "NE"
+        },
+        "currentRosterStatus": "INJURY_LIST",
+        "currentInjury": null,
+        "height": "6'0\"",
+        "weight": 228,
+        "birthDate": "1998-06-23",
+        "age": 28,
+        "birthCity": null,
+        "birthCountry": null,
+        "rookie": false,
+        "highSchool": "Eagle's Landing",
+        "college": "Memphis",
+        "handedness": null,
+        "officialImageSrc": "https://static.www.nfl.com/image/private/t_headshot_desktop/league/be1get4pxw5trszzu6gu",
+        "socialMediaAccounts": []
+      },
+      "team": {
+        "id": 50,
+        "abbreviation": "NE"
+      },
+      "stats": {
+        "gamesPlayed": 5,
+        "passing": {
+          "passAttempts": 0,
+          "passCompletions": 0,
+          "passPct": 0.0,
+          "passYards": 0,
+          "passAvg": 0.0,
+          "passYardsPerAtt": 0.0,
+          "passTD": 0,
+          "passTDPct": 0.0,
+          "passInt": 0,
+          "passIntPct": 0.0,
+          "passLng": 0,
+          "pass20Plus": 0,
+          "pass40Plus": 0,
+          "passSacks": 0,
+          "passSackY": 0,
+          "qbRating": 0.0
+        },
+        "rushing": {
+          "rushAttempts": 25,
+          "rushYards": 106,
+          "rushAverage": 4.2,
+          "rushTD": 1,
+          "rushLng": 58,
+          "rush1stDowns": 6,
+          "rush1stDownsPct": 24.0,
+          "rush20Plus": 1,
+          "rush40Plus": 0,
+          "rushFumbles": 1
+        },
+        "receiving": {
+          "targets": 3,
+          "receptions": 2,
+          "recYards": 6,
+          "recAverage": 3.0,
+          "recTD": 0,
+          "recLng": 6,
+          "rec1stDowns": 0,
+          "rec20Plus": 0,
+          "rec40Plus": 0,
+          "recFumbles": 0
+        },
+        "tackles": {
+          "tackleSolo": 0,
+          "tackleTotal": 0,
+          "tackleAst": 0,
+          "sacks": 0.0,
+          "sackYds": 0,
+          "tacklesForLoss": 0.0
+        },
+        "interceptions": {
+          "interceptions": 0,
+          "intTD": 0,
+          "intYds": 0,
+          "intAverage": 0.0,
+          "intLng": 0,
+          "passesDefended": 0,
+          "stuffs": 0,
+          "stuffYds": 0,
+          "safeties": 0,
+          "kB": 0
+        },
+        "fumbles": {
+          "fumbles": 3,
+          "fumLost": 1,
+          "fumForced": 0,
+          "fumOwnRec": 0,
+          "fumOppRec": 0,
+          "fumRecYds": -1,
+          "fumTotalRec": 0,
+          "fumTD": 0,
+          "offFumTD": 0
+        },
+        "kickoffReturns": {
+          "krRet": 11,
+          "krYds": 357,
+          "krAvg": 32.5,
+          "krLng": 210,
+          "krTD": 1,
+          "kr20Plus": 10,
+          "kr40Plus": 2,
+          "krFC": 0,
+          "krFum": 0
+        },
+        "puntReturns": {
+          "prRet": 0,
+          "prYds": 0,
+          "prAvg": 0.0,
+          "prLng": 0,
+          "prTD": 0,
+          "pr20Plus": 0,
+          "pr40Plus": 0,
+          "prFC": 0,
+          "prFum": 0
+        },
+        "miscellaneous": {
+          "gamesStarted": 0
+        },
+        "twoPointAttempts": {
+          "twoPtAtt": 0,
+          "twoPtMade": 0,
+          "twoPtPassAtt": 0,
+          "twoPtPassMade": 0,
+          "twoPtPassRec": 0,
+          "twoPtRushAtt": 0,
+          "twoPtRushMade": 0
+        },
+        "snapCounts": {
+          "offenseSnaps": 52,
+          "defenseSnaps": 0,
+          "specialTeamSnaps": 23
+        }
+      }
+    },
+    {
+      "player": {
+        "id": 79755,
+        "firstName": "Christian",
+        "lastName": "Gonzalez",
+        "primaryPosition": "CB",
+        "jerseyNumber": 0,
+        "currentTeam": {
+          "id": 50,
+          "abbreviation": "NE"
+        },
+        "currentRosterStatus": "ROSTER",
+        "currentInjury": null,
+        "height": "6'1\"",
+        "weight": 205,
+        "birthDate": "2002-06-28",
+        "age": 24,
+        "birthCity": "Carrolton, TX",
+        "birthCountry": "USA",
+        "rookie": false,
+        "highSchool": null,
+        "college": "Oregon",
+        "handedness": null,
+        "officialImageSrc": "https://static.www.nfl.com/image/private/t_headshot_desktop/league/lfwn1eailvfq2yx1qtqi",
+        "socialMediaAccounts": []
+      },
+      "team": {
+        "id": 50,
+        "abbreviation": "NE"
+      },
+      "stats": {
+        "gamesPlayed": 14,
+        "tackles": {
+          "tackleSolo": 54,
+          "tackleTotal": 69,
+          "tackleAst": 15,
+          "sacks": 0.0,
+          "sackYds": 0,
+          "tacklesForLoss": 1.0
+        },
+        "interceptions": {
+          "interceptions": 0,
+          "intTD": 0,
+          "intYds": 0,
+          "intAverage": 0.0,
+          "intLng": 0,
+          "passesDefended": 10,
+          "stuffs": 1,
+          "stuffYds": 0,
+          "safeties": 0,
+          "kB": 0
+        },
+        "fumbles": {
+          "fumbles": 0,
+          "fumLost": 0,
+          "fumForced": 0,
+          "fumOwnRec": 0,
+          "fumOppRec": 0,
+          "fumRecYds": 0,
+          "fumTotalRec": 0,
+          "fumTD": 0,
+          "offFumTD": 0
+        },
+        "kickoffReturns": {
+          "krRet": 0,
+          "krYds": 0,
+          "krAvg": 0.0,
+          "krLng": 0,
+          "krTD": 0,
+          "kr20Plus": 0,
+          "kr40Plus": 0,
+          "krFC": 0,
+          "krFum": 0
+        },
+        "puntReturns": {
+          "prRet": 0,
+          "prYds": 0,
+          "prAvg": 0.0,
+          "prLng": 0,
+          "prTD": 0,
+          "pr20Plus": 0,
+          "pr40Plus": 0,
+          "prFC": 0,
+          "prFum": 0
+        },
+        "miscellaneous": {
+          "gamesStarted": 0
+        },
+        "snapCounts": {
+          "offenseSnaps": 0,
+          "defenseSnaps": 771,
+          "specialTeamSnaps": 1
+        }
+      }
+    },
+    {
+      "player": {
+        "id": 30623,
+        "firstName": "Richie",
+        "lastName": "Grant",
+        "primaryPosition": "FS",
+        "jerseyNumber": 39,
+        "currentTeam": {
+          "id": 50,
+          "abbreviation": "NE"
+        },
+        "currentRosterStatus": "ROSTER",
+        "currentInjury": null,
+        "height": "6'0\"",
+        "weight": 200,
+        "birthDate": "1997-11-09",
+        "age": 28,
+        "birthCity": "Lumberton, MS",
+        "birthCountry": "USA",
+        "rookie": false,
+        "highSchool": null,
+        "college": "Central Florida",
+        "handedness": null,
+        "officialImageSrc": "https://static.www.nfl.com/image/private/t_headshot_desktop/league/qgglbkoaoypwidyockgm",
+        "socialMediaAccounts": []
+      },
+      "team": {
+        "id": 50,
+        "abbreviation": "NE"
+      },
+      "stats": {
+        "gamesPlayed": 1,
+        "tackles": {
+          "tackleSolo": 1,
+          "tackleTotal": 1,
+          "tackleAst": 0,
+          "sacks": 0.0,
+          "sackYds": 0,
+          "tacklesForLoss": 0.0
+        },
+        "interceptions": {
+          "interceptions": 0,
+          "intTD": 0,
+          "intYds": 0,
+          "intAverage": 0.0,
+          "intLng": 0,
+          "passesDefended": 0,
+          "stuffs": 0,
+          "stuffYds": 0,
+          "safeties": 0,
+          "kB": 0
+        },
+        "fumbles": {
+          "fumbles": 0,
+          "fumLost": 0,
+          "fumForced": 0,
+          "fumOwnRec": 0,
+          "fumOppRec": 0,
+          "fumRecYds": 0,
+          "fumTotalRec": 0,
+          "fumTD": 0,
+          "offFumTD": 0
+        },
+        "kickoffReturns": {
+          "krRet": 0,
+          "krYds": 0,
+          "krAvg": 0.0,
+          "krLng": 0,
+          "krTD": 0,
+          "kr20Plus": 0,
+          "kr40Plus": 0,
+          "krFC": 0,
+          "krFum": 0
+        },
+        "puntReturns": {
+          "prRet": 0,
+          "prYds": 0,
+          "prAvg": 0.0,
+          "prLng": 0,
+          "prTD": 0,
+          "pr20Plus": 0,
+          "pr40Plus": 0,
+          "prFC": 0,
+          "prFum": 0
+        },
+        "miscellaneous": {
+          "gamesStarted": 0
+        },
+        "snapCounts": {
+          "offenseSnaps": 0,
+          "defenseSnaps": 0,
+          "specialTeamSnaps": 9
+        }
+      }
+    },
+    {
+      "player": {
+        "id": 167726,
+        "firstName": "Eric",
+        "lastName": "Gregory",
+        "primaryPosition": "DT",
+        "jerseyNumber": 55,
+        "currentTeam": {
+          "id": 50,
+          "abbreviation": "NE"
+        },
+        "currentRosterStatus": "ROSTER",
+        "currentInjury": null,
+        "height": "6'3\"",
+        "weight": 319,
+        "birthDate": "2000-09-13",
+        "age": 25,
+        "birthCity": null,
+        "birthCountry": null,
+        "rookie": false,
+        "highSchool": null,
+        "college": "Arkansas",
+        "handedness": null,
+        "officialImageSrc": null,
+        "socialMediaAccounts": []
+      },
+      "team": {
+        "id": 50,
+        "abbreviation": "NE"
+      },
+      "stats": {
+        "gamesPlayed": 6,
+        "passing": {
+          "passAttempts": 0,
+          "passCompletions": 0,
+          "passPct": 0.0,
+          "passYards": 0,
+          "passAvg": 0.0,
+          "passYardsPerAtt": 0.0,
+          "passTD": 0,
+          "passTDPct": 0.0,
+          "passInt": 0,
+          "passIntPct": 0.0,
+          "passLng": 0,
+          "pass20Plus": 0,
+          "pass40Plus": 0,
+          "passSacks": 0,
+          "passSackY": 0,
+          "qbRating": 0.0
+        },
+        "rushing": {
+          "rushAttempts": 0,
+          "rushYards": 0,
+          "rushAverage": 0.0,
+          "rushTD": 0,
+          "rushLng": 0,
+          "rush1stDowns": 0,
+          "rush1stDownsPct": 0.0,
+          "rush20Plus": 0,
+          "rush40Plus": 0,
+          "rushFumbles": 0
+        },
+        "receiving": {
+          "targets": 0,
+          "receptions": 0,
+          "recYards": 0,
+          "recAverage": 0.0,
+          "recTD": 0,
+          "recLng": 0,
+          "rec1stDowns": 0,
+          "rec20Plus": 0,
+          "rec40Plus": 0,
+          "recFumbles": 0
+        },
+        "tackles": {
+          "tackleSolo": 1,
+          "tackleTotal": 8,
+          "tackleAst": 7,
+          "sacks": 0.0,
+          "sackYds": 0,
+          "tacklesForLoss": 0.0
+        },
+        "interceptions": {
+          "interceptions": 0,
+          "intTD": 0,
+          "intYds": 0,
+          "intAverage": 0.0,
+          "intLng": 0,
+          "passesDefended": 0,
+          "stuffs": 0,
+          "stuffYds": 0,
+          "safeties": 0,
+          "kB": 0
+        },
+        "fumbles": {
+          "fumbles": 0,
+          "fumLost": 0,
+          "fumForced": 0,
+          "fumOwnRec": 0,
+          "fumOppRec": 0,
+          "fumRecYds": 0,
+          "fumTotalRec": 0,
+          "fumTD": 0,
+          "offFumTD": 0
+        },
+        "kickoffReturns": {
+          "krRet": 0,
+          "krYds": 0,
+          "krAvg": 0.0,
+          "krLng": 0,
+          "krTD": 0,
+          "kr20Plus": 0,
+          "kr40Plus": 0,
+          "krFC": 0,
+          "krFum": 0
+        },
+        "puntReturns": {
+          "prRet": 0,
+          "prYds": 0,
+          "prAvg": 0.0,
+          "prLng": 0,
+          "prTD": 0,
+          "pr20Plus": 0,
+          "pr40Plus": 0,
+          "prFC": 0,
+          "prFum": 0
+        },
+        "miscellaneous": {
+          "gamesStarted": 0
+        },
+        "snapCounts": {
+          "offenseSnaps": 0,
+          "defenseSnaps": 126,
+          "specialTeamSnaps": 11
+        }
+      }
+    },
+    {
+      "player": {
+        "id": 31900,
+        "firstName": "Darius",
+        "lastName": "Harris",
+        "primaryPosition": "LB",
+        "jerseyNumber": 42,
+        "currentTeam": {
+          "id": 50,
+          "abbreviation": "NE"
+        },
+        "currentRosterStatus": "ROSTER",
+        "currentInjury": null,
+        "height": "6'2\"",
+        "weight": 238,
+        "birthDate": "1996-01-17",
+        "age": 30,
+        "birthCity": null,
+        "birthCountry": null,
+        "rookie": false,
+        "highSchool": null,
+        "college": "Middle Tennessee",
+        "handedness": null,
+        "officialImageSrc": "https://static.www.nfl.com/image/private/t_headshot_desktop/league/bqxkaiq5wnqmk4pc343o",
+        "socialMediaAccounts": []
+      },
+      "team": {
+        "id": 50,
+        "abbreviation": "NE"
+      },
+      "stats": {
+        "gamesPlayed": 3,
+        "passing": {
+          "passAttempts": 0,
+          "passCompletions": 0,
+          "passPct": 0.0,
+          "passYards": 0,
+          "passAvg": 0.0,
+          "passYardsPerAtt": 0.0,
+          "passTD": 0,
+          "passTDPct": 0.0,
+          "passInt": 0,
+          "passIntPct": 0.0,
+          "passLng": 0,
+          "pass20Plus": 0,
+          "pass40Plus": 0,
+          "passSacks": 0,
+          "passSackY": 0,
+          "qbRating": 0.0
+        },
+        "rushing": {
+          "rushAttempts": 0,
+          "rushYards": 0,
+          "rushAverage": 0.0,
+          "rushTD": 0,
+          "rushLng": 0,
+          "rush1stDowns": 0,
+          "rush1stDownsPct": 0.0,
+          "rush20Plus": 0,
+          "rush40Plus": 0,
+          "rushFumbles": 0
+        },
+        "receiving": {
+          "targets": 0,
+          "receptions": 0,
+          "recYards": 0,
+          "recAverage": 0.0,
+          "recTD": 0,
+          "recLng": 0,
+          "rec1stDowns": 0,
+          "rec20Plus": 0,
+          "rec40Plus": 0,
+          "recFumbles": 0
+        },
+        "tackles": {
+          "tackleSolo": 2,
+          "tackleTotal": 4,
+          "tackleAst": 2,
+          "sacks": 0.0,
+          "sackYds": 0,
+          "tacklesForLoss": 0.0
+        },
+        "interceptions": {
+          "interceptions": 0,
+          "intTD": 0,
+          "intYds": 0,
+          "intAverage": 0.0,
+          "intLng": 0,
+          "passesDefended": 0,
+          "stuffs": 0,
+          "stuffYds": 0,
+          "safeties": 0,
+          "kB": 0
+        },
+        "fumbles": {
+          "fumbles": 0,
+          "fumLost": 0,
+          "fumForced": 0,
+          "fumOwnRec": 0,
+          "fumOppRec": 0,
+          "fumRecYds": 0,
+          "fumTotalRec": 0,
+          "fumTD": 0,
+          "offFumTD": 0
+        },
+        "kickoffReturns": {
+          "krRet": 0,
+          "krYds": 0,
+          "krAvg": 0.0,
+          "krLng": 0,
+          "krTD": 0,
+          "kr20Plus": 0,
+          "kr40Plus": 0,
+          "krFC": 0,
+          "krFum": 0
+        },
+        "puntReturns": {
+          "prRet": 0,
+          "prYds": 0,
+          "prAvg": 0.0,
+          "prLng": 0,
+          "prTD": 0,
+          "pr20Plus": 0,
+          "pr40Plus": 0,
+          "prFC": 0,
+          "prFum": 0
+        },
+        "miscellaneous": {
+          "gamesStarted": 0
+        },
+        "snapCounts": {
+          "offenseSnaps": 0,
+          "defenseSnaps": 0,
+          "specialTeamSnaps": 52
+        }
+      }
+    },
+    {
+      "player": {
+        "id": 18715,
+        "firstName": "Jaylinn",
+        "lastName": "Hawkins",
+        "primaryPosition": "FS",
+        "jerseyNumber": 21,
+        "currentTeam": {
+          "id": 50,
+          "abbreviation": "NE"
+        },
+        "currentRosterStatus": "ROSTER",
+        "currentInjury": null,
+        "height": "6'1\"",
+        "weight": 208,
+        "birthDate": "1997-08-25",
+        "age": 29,
+        "birthCity": null,
+        "birthCountry": "USA",
+        "rookie": false,
+        "highSchool": "Buena Park",
+        "college": "California",
+        "handedness": null,
+        "officialImageSrc": null,
+        "socialMediaAccounts": []
+      },
+      "team": {
+        "id": 50,
+        "abbreviation": "NE"
+      },
+      "stats": {
+        "gamesPlayed": 15,
+        "tackles": {
+          "tackleSolo": 45,
+          "tackleTotal": 72,
+          "tackleAst": 27,
+          "sacks": 1.5,
+          "sackYds": 13,
+          "tacklesForLoss": 4.0
+        },
+        "interceptions": {
+          "interceptions": 4,
+          "intTD": 0,
+          "intYds": 1,
+          "intAverage": 0.2,
+          "intLng": 1,
+          "passesDefended": 6,
+          "stuffs": 4,
+          "stuffYds": 14,
+          "safeties": 0,
+          "kB": 0
+        },
+        "fumbles": {
+          "fumbles": 0,
+          "fumLost": 0,
+          "fumForced": 1,
+          "fumOwnRec": 0,
+          "fumOppRec": 1,
+          "fumRecYds": 0,
+          "fumTotalRec": 1,
+          "fumTD": 0,
+          "offFumTD": 0
+        },
+        "kickoffReturns": {
+          "krRet": 0,
+          "krYds": 0,
+          "krAvg": 0.0,
+          "krLng": 0,
+          "krTD": 0,
+          "kr20Plus": 0,
+          "kr40Plus": 0,
+          "krFC": 0,
+          "krFum": 0
+        },
+        "puntReturns": {
+          "prRet": 0,
+          "prYds": 0,
+          "prAvg": 0.0,
+          "prLng": 0,
+          "prTD": 0,
+          "pr20Plus": 0,
+          "pr40Plus": 0,
+          "prFC": 0,
+          "prFum": 0
+        },
+        "miscellaneous": {
+          "gamesStarted": 0
+        },
+        "snapCounts": {
+          "offenseSnaps": 0,
+          "defenseSnaps": 838,
+          "specialTeamSnaps": 56
+        }
+      }
+    },
+    {
+      "player": {
+        "id": 166708,
+        "firstName": "TreVeyon",
+        "lastName": "Henderson",
+        "primaryPosition": "RB",
+        "jerseyNumber": 32,
+        "currentTeam": {
+          "id": 50,
+          "abbreviation": "NE"
+        },
+        "currentRosterStatus": "ROSTER",
+        "currentInjury": null,
+        "height": "5'10\"",
+        "weight": 202,
+        "birthDate": "2002-10-22",
+        "age": 23,
+        "birthCity": "Hopewell, VA",
+        "birthCountry": "USA",
+        "rookie": false,
+        "highSchool": null,
+        "college": "Ohio State",
+        "handedness": null,
+        "officialImageSrc": null,
+        "socialMediaAccounts": []
+      },
+      "team": {
+        "id": 50,
+        "abbreviation": "NE"
+      },
+      "stats": {
+        "gamesPlayed": 17,
+        "passing": {
+          "passAttempts": 0,
+          "passCompletions": 0,
+          "passPct": 0.0,
+          "passYards": 0,
+          "passAvg": 0.0,
+          "passYardsPerAtt": 0.0,
+          "passTD": 0,
+          "passTDPct": 0.0,
+          "passInt": 0,
+          "passIntPct": 0.0,
+          "passLng": 0,
+          "pass20Plus": 0,
+          "pass40Plus": 0,
+          "passSacks": 0,
+          "passSackY": 0,
+          "qbRating": 0.0
+        },
+        "rushing": {
+          "rushAttempts": 180,
+          "rushYards": 911,
+          "rushAverage": 5.1,
+          "rushTD": 9,
+          "rushLng": 308,
+          "rush1stDowns": 45,
+          "rush1stDownsPct": 25.0,
+          "rush20Plus": 2,
+          "rush40Plus": 4,
+          "rushFumbles": 1
+        },
+        "receiving": {
+          "targets": 42,
+          "receptions": 35,
+          "recYards": 221,
+          "recAverage": 6.3,
+          "recTD": 1,
+          "recLng": 125,
+          "rec1stDowns": 7,
+          "rec20Plus": 0,
+          "rec40Plus": 0,
+          "recFumbles": 0
+        },
+        "tackles": {
+          "tackleSolo": 0,
+          "tackleTotal": 0,
+          "tackleAst": 0,
+          "sacks": 0.0,
+          "sackYds": 0,
+          "tacklesForLoss": 0.0
+        },
+        "interceptions": {
+          "interceptions": 0,
+          "intTD": 0,
+          "intYds": 0,
+          "intAverage": 0.0,
+          "intLng": 0,
+          "passesDefended": 0,
+          "stuffs": 0,
+          "stuffYds": 0,
+          "safeties": 0,
+          "kB": 0
+        },
+        "fumbles": {
+          "fumbles": 1,
+          "fumLost": 1,
+          "fumForced": 0,
+          "fumOwnRec": 1,
+          "fumOppRec": 0,
+          "fumRecYds": 5,
+          "fumTotalRec": 1,
+          "fumTD": 0,
+          "offFumTD": 0
+        },
+        "kickoffReturns": {
+          "krRet": 9,
+          "krYds": 224,
+          "krAvg": 24.9,
+          "krLng": 129,
+          "krTD": 0,
+          "kr20Plus": 9,
+          "kr40Plus": 0,
+          "krFC": 0,
+          "krFum": 0
+        },
+        "puntReturns": {
+          "prRet": 0,
+          "prYds": 0,
+          "prAvg": 0.0,
+          "prLng": 0,
+          "prTD": 0,
+          "pr20Plus": 0,
+          "pr40Plus": 0,
+          "prFC": 0,
+          "prFum": 0
+        },
+        "miscellaneous": {
+          "gamesStarted": 0
+        },
+        "twoPointAttempts": {
+          "twoPtAtt": 0,
+          "twoPtMade": 0,
+          "twoPtPassAtt": 0,
+          "twoPtPassMade": 0,
+          "twoPtPassRec": 0,
+          "twoPtRushAtt": 0,
+          "twoPtRushMade": 0
+        },
+        "snapCounts": {
+          "offenseSnaps": 501,
+          "defenseSnaps": 0,
+          "specialTeamSnaps": 25
+        }
+      }
+    },
+    {
+      "player": {
+        "id": 9999,
+        "firstName": "Hunter",
+        "lastName": "Henry",
+        "primaryPosition": "TE",
+        "jerseyNumber": 85,
+        "currentTeam": {
+          "id": 50,
+          "abbreviation": "NE"
+        },
+        "currentRosterStatus": "ROSTER",
+        "currentInjury": null,
+        "height": "6'5\"",
+        "weight": 249,
+        "birthDate": "1994-12-07",
+        "age": 31,
+        "birthCity": "Little Rock, AR",
+        "birthCountry": "USA",
+        "rookie": false,
+        "highSchool": null,
+        "college": "Arkansas",
+        "handedness": null,
+        "officialImageSrc": "https://static.www.nfl.com/image/private/t_headshot_desktop/league/sdjob9akppefyo7py5tj",
+        "socialMediaAccounts": []
+      },
+      "team": {
+        "id": 50,
+        "abbreviation": "NE"
+      },
+      "stats": {
+        "gamesPlayed": 17,
+        "passing": {
+          "passAttempts": 0,
+          "passCompletions": 0,
+          "passPct": 0.0,
+          "passYards": 0,
+          "passAvg": 0.0,
+          "passYardsPerAtt": 0.0,
+          "passTD": 0,
+          "passTDPct": 0.0,
+          "passInt": 0,
+          "passIntPct": 0.0,
+          "passLng": 0,
+          "pass20Plus": 0,
+          "pass40Plus": 0,
+          "passSacks": 0,
+          "passSackY": 0,
+          "qbRating": 0.0
+        },
+        "rushing": {
+          "rushAttempts": 0,
+          "rushYards": 0,
+          "rushAverage": 0.0,
+          "rushTD": 0,
+          "rushLng": 0,
+          "rush1stDowns": 0,
+          "rush1stDownsPct": 0.0,
+          "rush20Plus": 0,
+          "rush40Plus": 0,
+          "rushFumbles": 0
+        },
+        "receiving": {
+          "targets": 87,
+          "receptions": 60,
+          "recYards": 768,
+          "recAverage": 12.8,
+          "recTD": 7,
+          "recLng": 336,
+          "rec1stDowns": 42,
+          "rec20Plus": 11,
+          "rec40Plus": 0,
+          "recFumbles": 0
+        },
+        "tackles": {
+          "tackleSolo": 0,
+          "tackleTotal": 0,
+          "tackleAst": 0,
+          "sacks": 0.0,
+          "sackYds": 0,
+          "tacklesForLoss": 0.0
+        },
+        "interceptions": {
+          "interceptions": 0,
+          "intTD": 0,
+          "intYds": 0,
+          "intAverage": 0.0,
+          "intLng": 0,
+          "passesDefended": 0,
+          "stuffs": 0,
+          "stuffYds": 0,
+          "safeties": 0,
+          "kB": 0
+        },
+        "fumbles": {
+          "fumbles": 0,
+          "fumLost": 0,
+          "fumForced": 0,
+          "fumOwnRec": 0,
+          "fumOppRec": 0,
+          "fumRecYds": 0,
+          "fumTotalRec": 0,
+          "fumTD": 0,
+          "offFumTD": 0
+        },
+        "kickoffReturns": {
+          "krRet": 0,
+          "krYds": 0,
+          "krAvg": 0.0,
+          "krLng": 0,
+          "krTD": 0,
+          "kr20Plus": 0,
+          "kr40Plus": 0,
+          "krFC": 0,
+          "krFum": 0
+        },
+        "puntReturns": {
+          "prRet": 0,
+          "prYds": 0,
+          "prAvg": 0.0,
+          "prLng": 0,
+          "prTD": 0,
+          "pr20Plus": 0,
+          "pr40Plus": 0,
+          "prFC": 0,
+          "prFum": 0
+        },
+        "miscellaneous": {
+          "gamesStarted": 0
+        },
+        "twoPointAttempts": {
+          "twoPtAtt": 0,
+          "twoPtMade": 0,
+          "twoPtPassAtt": 0,
+          "twoPtPassMade": 0,
+          "twoPtPassRec": 0,
+          "twoPtRushAtt": 0,
+          "twoPtRushMade": 0
+        },
+        "snapCounts": {
+          "offenseSnaps": 869,
+          "defenseSnaps": 0,
+          "specialTeamSnaps": 9
+        }
+      }
+    },
+    {
+      "player": {
+        "id": 13280,
+        "firstName": "Mack",
+        "lastName": "Hollins",
+        "primaryPosition": "WR",
+        "jerseyNumber": 13,
+        "currentTeam": {
+          "id": 50,
+          "abbreviation": "NE"
+        },
+        "currentRosterStatus": "INJURY_LIST",
+        "currentInjury": {
+          "description": "abdomen",
+          "playingProbability": "OUT"
+        },
+        "height": "6'4\"",
+        "weight": 221,
+        "birthDate": "1993-09-16",
+        "age": 32,
+        "birthCity": "Baltimore, MD",
+        "birthCountry": "USA",
+        "rookie": false,
+        "highSchool": null,
+        "college": "North Carolina",
+        "handedness": null,
+        "officialImageSrc": "http://static.nfl.com/static/content/public/static/img/fantasy/transparent/200x200/HOL280459.png",
+        "socialMediaAccounts": []
+      },
+      "team": {
+        "id": 50,
+        "abbreviation": "NE"
+      },
+      "stats": {
+        "gamesPlayed": 15,
+        "passing": {
+          "passAttempts": 0,
+          "passCompletions": 0,
+          "passPct": 0.0,
+          "passYards": 0,
+          "passAvg": 0.0,
+          "passYardsPerAtt": 0.0,
+          "passTD": 0,
+          "passTDPct": 0.0,
+          "passInt": 0,
+          "passIntPct": 0.0,
+          "passLng": 0,
+          "pass20Plus": 0,
+          "pass40Plus": 0,
+          "passSacks": 0,
+          "passSackY": 0,
+          "qbRating": 0.0
+        },
+        "rushing": {
+          "rushAttempts": 1,
+          "rushYards": 4,
+          "rushAverage": 4.0,
+          "rushTD": 0,
+          "rushLng": 4,
+          "rush1stDowns": 0,
+          "rush1stDownsPct": 0.0,
+          "rush20Plus": 0,
+          "rush40Plus": 0,
+          "rushFumbles": 0
+        },
+        "receiving": {
+          "targets": 65,
+          "receptions": 46,
+          "recYards": 550,
+          "recAverage": 12.0,
+          "recTD": 2,
+          "recLng": 242,
+          "rec1stDowns": 28,
+          "rec20Plus": 8,
+          "rec40Plus": 1,
+          "recFumbles": 0
+        },
+        "tackles": {
+          "tackleSolo": 1,
+          "tackleTotal": 1,
+          "tackleAst": 0,
+          "sacks": 0.0,
+          "sackYds": 0,
+          "tacklesForLoss": 0.0
+        },
+        "interceptions": {
+          "interceptions": 0,
+          "intTD": 0,
+          "intYds": 0,
+          "intAverage": 0.0,
+          "intLng": 0,
+          "passesDefended": 0,
+          "stuffs": 0,
+          "stuffYds": 0,
+          "safeties": 0,
+          "kB": 0
+        },
+        "fumbles": {
+          "fumbles": 1,
+          "fumLost": 0,
+          "fumForced": 0,
+          "fumOwnRec": 0,
+          "fumOppRec": 0,
+          "fumRecYds": 0,
+          "fumTotalRec": 0,
+          "fumTD": 0,
+          "offFumTD": 0
+        },
+        "kickoffReturns": {
+          "krRet": 0,
+          "krYds": 0,
+          "krAvg": 0.0,
+          "krLng": 0,
+          "krTD": 0,
+          "kr20Plus": 0,
+          "kr40Plus": 0,
+          "krFC": 0,
+          "krFum": 0
+        },
+        "puntReturns": {
+          "prRet": 0,
+          "prYds": 0,
+          "prAvg": 0.0,
+          "prLng": 0,
+          "prTD": 0,
+          "pr20Plus": 0,
+          "pr40Plus": 0,
+          "prFC": 0,
+          "prFum": 0
+        },
+        "miscellaneous": {
+          "gamesStarted": 0
+        },
+        "twoPointAttempts": {
+          "twoPtAtt": 0,
+          "twoPtMade": 0,
+          "twoPtPassAtt": 0,
+          "twoPtPassMade": 0,
+          "twoPtPassRec": 0,
+          "twoPtRushAtt": 0,
+          "twoPtRushMade": 0
+        },
+        "snapCounts": {
+          "offenseSnaps": 657,
+          "defenseSnaps": 1,
+          "specialTeamSnaps": 45
+        }
+      }
+    },
+    {
+      "player": {
+        "id": 9741,
+        "firstName": "Austin",
+        "lastName": "Hooper",
+        "primaryPosition": "TE",
+        "jerseyNumber": 81,
+        "currentTeam": {
+          "id": 50,
+          "abbreviation": "NE"
+        },
+        "currentRosterStatus": "ROSTER",
+        "currentInjury": null,
+        "height": "6'4\"",
+        "weight": 254,
+        "birthDate": "1994-10-29",
+        "age": 31,
+        "birthCity": "San Mateo, CA",
+        "birthCountry": "USA",
+        "rookie": false,
+        "highSchool": null,
+        "college": "Stanford",
+        "handedness": null,
+        "officialImageSrc": "https://static.www.nfl.com/image/private/t_headshot_desktop/league/jp2z8s6pcanbitupycwc",
+        "socialMediaAccounts": []
+      },
+      "team": {
+        "id": 50,
+        "abbreviation": "NE"
+      },
+      "stats": {
+        "gamesPlayed": 16,
+        "passing": {
+          "passAttempts": 0,
+          "passCompletions": 0,
+          "passPct": 0.0,
+          "passYards": 0,
+          "passAvg": 0.0,
+          "passYardsPerAtt": 0.0,
+          "passTD": 0,
+          "passTDPct": 0.0,
+          "passInt": 0,
+          "passIntPct": 0.0,
+          "passLng": 0,
+          "pass20Plus": 0,
+          "pass40Plus": 0,
+          "passSacks": 0,
+          "passSackY": 0,
+          "qbRating": 0.0
+        },
+        "rushing": {
+          "rushAttempts": 0,
+          "rushYards": 0,
+          "rushAverage": 0.0,
+          "rushTD": 0,
+          "rushLng": 0,
+          "rush1stDowns": 0,
+          "rush1stDownsPct": 0.0,
+          "rush20Plus": 0,
+          "rush40Plus": 0,
+          "rushFumbles": 0
+        },
+        "receiving": {
+          "targets": 26,
+          "receptions": 21,
+          "recYards": 263,
+          "recAverage": 12.5,
+          "recTD": 2,
+          "recLng": 197,
+          "rec1stDowns": 13,
+          "rec20Plus": 6,
+          "rec40Plus": 0,
+          "recFumbles": 0
+        },
+        "tackles": {
+          "tackleSolo": 0,
+          "tackleTotal": 0,
+          "tackleAst": 0,
+          "sacks": 0.0,
+          "sackYds": 0,
+          "tacklesForLoss": 0.0
+        },
+        "interceptions": {
+          "interceptions": 0,
+          "intTD": 0,
+          "intYds": 0,
+          "intAverage": 0.0,
+          "intLng": 0,
+          "passesDefended": 0,
+          "stuffs": 0,
+          "stuffYds": 0,
+          "safeties": 0,
+          "kB": 0
+        },
+        "fumbles": {
+          "fumbles": 0,
+          "fumLost": 0,
+          "fumForced": 0,
+          "fumOwnRec": 0,
+          "fumOppRec": 0,
+          "fumRecYds": 0,
+          "fumTotalRec": 0,
+          "fumTD": 0,
+          "offFumTD": 0
+        },
+        "kickoffReturns": {
+          "krRet": 1,
+          "krYds": 0,
+          "krAvg": 0.0,
+          "krLng": 0,
+          "krTD": 0,
+          "kr20Plus": 0,
+          "kr40Plus": 0,
+          "krFC": 0,
+          "krFum": 0
+        },
+        "puntReturns": {
+          "prRet": 0,
+          "prYds": 0,
+          "prAvg": 0.0,
+          "prLng": 0,
+          "prTD": 0,
+          "pr20Plus": 0,
+          "pr40Plus": 0,
+          "prFC": 0,
+          "prFum": 0
+        },
+        "miscellaneous": {
+          "gamesStarted": 0
+        },
+        "twoPointAttempts": {
+          "twoPtAtt": 0,
+          "twoPtMade": 0,
+          "twoPtPassAtt": 0,
+          "twoPtPassMade": 0,
+          "twoPtPassRec": 0,
+          "twoPtRushAtt": 0,
+          "twoPtRushMade": 0
+        },
+        "snapCounts": {
+          "offenseSnaps": 512,
+          "defenseSnaps": 0,
+          "specialTeamSnaps": 84
+        }
+      }
+    },
+    {
+      "player": {
+        "id": 33143,
+        "firstName": "Brenden",
+        "lastName": "Jaimes",
+        "primaryPosition": "G",
+        "jerseyNumber": 64,
+        "currentTeam": {
+          "id": 50,
+          "abbreviation": "NE"
+        },
+        "currentRosterStatus": "ROSTER",
+        "currentInjury": null,
+        "height": "6'5\"",
+        "weight": 300,
+        "birthDate": "1999-05-28",
+        "age": 27,
+        "birthCity": "Austin, TX",
+        "birthCountry": "USA",
+        "rookie": false,
+        "highSchool": null,
+        "college": "Nebraska",
+        "handedness": null,
+        "officialImageSrc": null,
+        "socialMediaAccounts": []
+      },
+      "team": {
+        "id": 50,
+        "abbreviation": "NE"
+      },
+      "stats": {
+        "gamesPlayed": 4,
+        "tackles": {
+          "tackleSolo": 0,
+          "tackleTotal": 0,
+          "tackleAst": 0,
+          "sacks": 0.0,
+          "sackYds": 0,
+          "tacklesForLoss": 0.0
+        },
+        "interceptions": {
+          "interceptions": 0,
+          "intTD": 0,
+          "intYds": 0,
+          "intAverage": 0.0,
+          "intLng": 0,
+          "passesDefended": 0,
+          "stuffs": 0,
+          "stuffYds": 0,
+          "safeties": 0,
+          "kB": 0
+        },
+        "fumbles": {
+          "fumbles": 0,
+          "fumLost": 0,
+          "fumForced": 0,
+          "fumOwnRec": 0,
+          "fumOppRec": 0,
+          "fumRecYds": 0,
+          "fumTotalRec": 0,
+          "fumTD": 0,
+          "offFumTD": 0
+        },
+        "kickoffReturns": {
+          "krRet": 0,
+          "krYds": 0,
+          "krAvg": 0.0,
+          "krLng": 0,
+          "krTD": 0,
+          "kr20Plus": 0,
+          "kr40Plus": 0,
+          "krFC": 0,
+          "krFum": 0
+        },
+        "puntReturns": {
+          "prRet": 0,
+          "prYds": 0,
+          "prAvg": 0.0,
+          "prLng": 0,
+          "prTD": 0,
+          "pr20Plus": 0,
+          "pr40Plus": 0,
+          "prFC": 0,
+          "prFum": 0
+        },
+        "miscellaneous": {
+          "gamesStarted": 0
+        },
+        "snapCounts": {
+          "offenseSnaps": 22,
+          "defenseSnaps": 0,
+          "specialTeamSnaps": 28
+        }
+      }
+    },
+    {
+      "player": {
+        "id": 134028,
+        "firstName": "D.J.",
+        "lastName": "James",
+        "primaryPosition": "CB",
+        "jerseyNumber": 30,
+        "currentTeam": null,
+        "currentRosterStatus": "UFA",
+        "currentInjury": null,
+        "height": "6'0\"",
+        "weight": 184,
+        "birthDate": "2001-03-05",
+        "age": 25,
+        "birthCity": "Mobile, AL",
+        "birthCountry": "USA",
+        "rookie": false,
+        "highSchool": null,
+        "college": "Auburn",
+        "handedness": null,
+        "officialImageSrc": null,
+        "socialMediaAccounts": []
+      },
+      "team": {
+        "id": 50,
+        "abbreviation": "NE"
+      },
+      "stats": {
+        "gamesPlayed": 1,
+        "tackles": {
+          "tackleSolo": 1,
+          "tackleTotal": 1,
+          "tackleAst": 0,
+          "sacks": 0.0,
+          "sackYds": 0,
+          "tacklesForLoss": 0.0
+        },
+        "interceptions": {
+          "interceptions": 0,
+          "intTD": 0,
+          "intYds": 0,
+          "intAverage": 0.0,
+          "intLng": 0,
+          "passesDefended": 0,
+          "stuffs": 0,
+          "stuffYds": 0,
+          "safeties": 0,
+          "kB": 0
+        },
+        "fumbles": {
+          "fumbles": 0,
+          "fumLost": 0,
+          "fumForced": 0,
+          "fumOwnRec": 0,
+          "fumOppRec": 0,
+          "fumRecYds": 0,
+          "fumTotalRec": 0,
+          "fumTD": 0,
+          "offFumTD": 0
+        },
+        "kickoffReturns": {
+          "krRet": 0,
+          "krYds": 0,
+          "krAvg": 0.0,
+          "krLng": 0,
+          "krTD": 0,
+          "kr20Plus": 0,
+          "kr40Plus": 0,
+          "krFC": 0,
+          "krFum": 0
+        },
+        "puntReturns": {
+          "prRet": 0,
+          "prYds": 0,
+          "prAvg": 0.0,
+          "prLng": 0,
+          "prTD": 0,
+          "pr20Plus": 0,
+          "pr40Plus": 0,
+          "prFC": 0,
+          "prFum": 0
+        },
+        "miscellaneous": {
+          "gamesStarted": 0
+        },
+        "snapCounts": {
+          "offenseSnaps": 0,
+          "defenseSnaps": 2,
+          "specialTeamSnaps": 5
+        }
+      }
+    },
+    {
+      "player": {
+        "id": 18654,
+        "firstName": "Anfernee",
+        "lastName": "Jennings",
+        "primaryPosition": "LB",
+        "jerseyNumber": 33,
+        "currentTeam": {
+          "id": 50,
+          "abbreviation": "NE"
+        },
+        "currentRosterStatus": "ROSTER",
+        "currentInjury": null,
+        "height": "6'2\"",
+        "weight": 255,
+        "birthDate": "1998-05-01",
+        "age": 28,
+        "birthCity": null,
+        "birthCountry": null,
+        "rookie": false,
+        "highSchool": "Dadeville",
+        "college": "Alabama",
+        "handedness": null,
+        "officialImageSrc": "https://static.www.nfl.com/image/private/t_headshot_desktop/league/rhpdybqsxdk8fo1wczc3",
+        "socialMediaAccounts": []
+      },
+      "team": {
+        "id": 50,
+        "abbreviation": "NE"
+      },
+      "stats": {
+        "gamesPlayed": 14,
+        "passing": {
+          "passAttempts": 0,
+          "passCompletions": 0,
+          "passPct": 0.0,
+          "passYards": 0,
+          "passAvg": 0.0,
+          "passYardsPerAtt": 0.0,
+          "passTD": 0,
+          "passTDPct": 0.0,
+          "passInt": 0,
+          "passIntPct": 0.0,
+          "passLng": 0,
+          "pass20Plus": 0,
+          "pass40Plus": 0,
+          "passSacks": 0,
+          "passSackY": 0,
+          "qbRating": 0.0
+        },
+        "rushing": {
+          "rushAttempts": 0,
+          "rushYards": 0,
+          "rushAverage": 0.0,
+          "rushTD": 0,
+          "rushLng": 0,
+          "rush1stDowns": 0,
+          "rush1stDownsPct": 0.0,
+          "rush20Plus": 0,
+          "rush40Plus": 0,
+          "rushFumbles": 0
+        },
+        "receiving": {
+          "targets": 0,
+          "receptions": 0,
+          "recYards": 0,
+          "recAverage": 0.0,
+          "recTD": 0,
+          "recLng": 0,
+          "rec1stDowns": 0,
+          "rec20Plus": 0,
+          "rec40Plus": 0,
+          "recFumbles": 0
+        },
+        "tackles": {
+          "tackleSolo": 15,
+          "tackleTotal": 26,
+          "tackleAst": 11,
+          "sacks": 2.0,
+          "sackYds": 18,
+          "tacklesForLoss": 5.0
+        },
+        "interceptions": {
+          "interceptions": 0,
+          "intTD": 0,
+          "intYds": 0,
+          "intAverage": 0.0,
+          "intLng": 0,
+          "passesDefended": 0,
+          "stuffs": 6,
+          "stuffYds": 36,
+          "safeties": 0,
+          "kB": 0
+        },
+        "fumbles": {
+          "fumbles": 0,
+          "fumLost": 0,
+          "fumForced": 0,
+          "fumOwnRec": 0,
+          "fumOppRec": 1,
+          "fumRecYds": 0,
+          "fumTotalRec": 1,
+          "fumTD": 0,
+          "offFumTD": 0
+        },
+        "kickoffReturns": {
+          "krRet": 0,
+          "krYds": 0,
+          "krAvg": 0.0,
+          "krLng": 0,
+          "krTD": 0,
+          "kr20Plus": 0,
+          "kr40Plus": 0,
+          "krFC": 0,
+          "krFum": 0
+        },
+        "puntReturns": {
+          "prRet": 0,
+          "prYds": 0,
+          "prAvg": 0.0,
+          "prLng": 0,
+          "prTD": 0,
+          "pr20Plus": 0,
+          "pr40Plus": 0,
+          "prFC": 0,
+          "prFum": 0
+        },
+        "miscellaneous": {
+          "gamesStarted": 0
+        },
+        "snapCounts": {
+          "offenseSnaps": 0,
+          "defenseSnaps": 280,
+          "specialTeamSnaps": 162
+        }
+      }
+    },
+    {
+      "player": {
+        "id": 134250,
+        "firstName": "Terrell",
+        "lastName": "Jennings",
+        "primaryPosition": "RB",
+        "jerseyNumber": 26,
+        "currentTeam": {
+          "id": 50,
+          "abbreviation": "NE"
+        },
+        "currentRosterStatus": "INJURY_LIST",
+        "currentInjury": {
+          "description": "concussion",
+          "playingProbability": "OUT"
+        },
+        "height": "6'0\"",
+        "weight": 217,
+        "birthDate": "2001-03-01",
+        "age": 25,
+        "birthCity": null,
+        "birthCountry": null,
+        "rookie": false,
+        "highSchool": null,
+        "college": "Florida A&M",
+        "handedness": null,
+        "officialImageSrc": null,
+        "socialMediaAccounts": []
+      },
+      "team": {
+        "id": 50,
+        "abbreviation": "NE"
+      },
+      "stats": {
+        "gamesPlayed": 7,
+        "passing": {
+          "passAttempts": 0,
+          "passCompletions": 0,
+          "passPct": 0.0,
+          "passYards": 0,
+          "passAvg": 0.0,
+          "passYardsPerAtt": 0.0,
+          "passTD": 0,
+          "passTDPct": 0.0,
+          "passInt": 0,
+          "passIntPct": 0.0,
+          "passLng": 0,
+          "pass20Plus": 0,
+          "pass40Plus": 0,
+          "passSacks": 0,
+          "passSackY": 0,
+          "qbRating": 0.0
+        },
+        "rushing": {
+          "rushAttempts": 23,
+          "rushYards": 73,
+          "rushAverage": 3.2,
+          "rushTD": 1,
+          "rushLng": 33,
+          "rush1stDowns": 8,
+          "rush1stDownsPct": 34.8,
+          "rush20Plus": 0,
+          "rush40Plus": 0,
+          "rushFumbles": 0
+        },
+        "receiving": {
+          "targets": 1,
+          "receptions": 1,
+          "recYards": 9,
+          "recAverage": 9.0,
+          "recTD": 0,
+          "recLng": 9,
+          "rec1stDowns": 0,
+          "rec20Plus": 0,
+          "rec40Plus": 0,
+          "recFumbles": 0
+        },
+        "tackles": {
+          "tackleSolo": 1,
+          "tackleTotal": 3,
+          "tackleAst": 2,
+          "sacks": 0.0,
+          "sackYds": 0,
+          "tacklesForLoss": 0.0
+        },
+        "interceptions": {
+          "interceptions": 0,
+          "intTD": 0,
+          "intYds": 0,
+          "intAverage": 0.0,
+          "intLng": 0,
+          "passesDefended": 0,
+          "stuffs": 0,
+          "stuffYds": 0,
+          "safeties": 0,
+          "kB": 0
+        },
+        "fumbles": {
+          "fumbles": 0,
+          "fumLost": 0,
+          "fumForced": 0,
+          "fumOwnRec": 0,
+          "fumOppRec": 0,
+          "fumRecYds": 0,
+          "fumTotalRec": 0,
+          "fumTD": 0,
+          "offFumTD": 0
+        },
+        "kickoffReturns": {
+          "krRet": 2,
+          "krYds": 59,
+          "krAvg": 29.5,
+          "krLng": 59,
+          "krTD": 0,
+          "kr20Plus": 2,
+          "kr40Plus": 0,
+          "krFC": 0,
+          "krFum": 0
+        },
+        "puntReturns": {
+          "prRet": 0,
+          "prYds": 0,
+          "prAvg": 0.0,
+          "prLng": 0,
+          "prTD": 0,
+          "pr20Plus": 0,
+          "pr40Plus": 0,
+          "prFC": 0,
+          "prFum": 0
+        },
+        "miscellaneous": {
+          "gamesStarted": 0
+        },
+        "twoPointAttempts": {
+          "twoPtAtt": 0,
+          "twoPtMade": 0,
+          "twoPtPassAtt": 0,
+          "twoPtPassMade": 0,
+          "twoPtPassRec": 0,
+          "twoPtRushAtt": 0,
+          "twoPtRushMade": 0
+        },
+        "snapCounts": {
+          "offenseSnaps": 39,
+          "defenseSnaps": 0,
+          "specialTeamSnaps": 51
+        }
+      }
+    },
+    {
+      "player": {
+        "id": 16858,
+        "firstName": "D'Ernest",
+        "lastName": "Johnson",
+        "primaryPosition": "RB",
+        "jerseyNumber": 34,
+        "currentTeam": {
+          "id": 50,
+          "abbreviation": "NE"
+        },
+        "currentRosterStatus": "ROSTER",
+        "currentInjury": null,
+        "height": "5'10\"",
+        "weight": 208,
+        "birthDate": "1996-02-27",
+        "age": 30,
+        "birthCity": null,
+        "birthCountry": null,
+        "rookie": false,
+        "highSchool": null,
+        "college": "South Florida",
+        "handedness": null,
+        "officialImageSrc": "http://static.nfl.com/static/content/public/static/img/fantasy/transparent/200x200/JOH201643.png",
+        "socialMediaAccounts": []
+      },
+      "team": {
+        "id": 50,
+        "abbreviation": "NE"
+      },
+      "stats": {
+        "gamesPlayed": 7,
+        "passing": {
+          "passAttempts": 0,
+          "passCompletions": 0,
+          "passPct": 0.0,
+          "passYards": 0,
+          "passAvg": 0.0,
+          "passYardsPerAtt": 0.0,
+          "passTD": 0,
+          "passTDPct": 0.0,
+          "passInt": 0,
+          "passIntPct": 0.0,
+          "passLng": 0,
+          "pass20Plus": 0,
+          "pass40Plus": 0,
+          "passSacks": 0,
+          "passSackY": 0,
+          "qbRating": 0.0
+        },
+        "rushing": {
+          "rushAttempts": 13,
+          "rushYards": 25,
+          "rushAverage": 1.9,
+          "rushTD": 0,
+          "rushLng": 14,
+          "rush1stDowns": 0,
+          "rush1stDownsPct": 0.0,
+          "rush20Plus": 0,
+          "rush40Plus": 0,
+          "rushFumbles": 0
+        },
+        "receiving": {
+          "targets": 0,
+          "receptions": 0,
+          "recYards": 0,
+          "recAverage": 0.0,
+          "recTD": 0,
+          "recLng": 0,
+          "rec1stDowns": 0,
+          "rec20Plus": 0,
+          "rec40Plus": 0,
+          "recFumbles": 0
+        },
+        "tackles": {
+          "tackleSolo": 0,
+          "tackleTotal": 0,
+          "tackleAst": 0,
+          "sacks": 0.0,
+          "sackYds": 0,
+          "tacklesForLoss": 0.0
+        },
+        "interceptions": {
+          "interceptions": 0,
+          "intTD": 0,
+          "intYds": 0,
+          "intAverage": 0.0,
+          "intLng": 0,
+          "passesDefended": 0,
+          "stuffs": 0,
+          "stuffYds": 0,
+          "safeties": 0,
+          "kB": 0
+        },
+        "fumbles": {
+          "fumbles": 0,
+          "fumLost": 0,
+          "fumForced": 0,
+          "fumOwnRec": 0,
+          "fumOppRec": 0,
+          "fumRecYds": 0,
+          "fumTotalRec": 0,
+          "fumTD": 0,
+          "offFumTD": 0
+        },
+        "kickoffReturns": {
+          "krRet": 5,
+          "krYds": 128,
+          "krAvg": 25.6,
+          "krLng": 61,
+          "krTD": 0,
+          "kr20Plus": 5,
+          "kr40Plus": 0,
+          "krFC": 0,
+          "krFum": 0
+        },
+        "puntReturns": {
+          "prRet": 0,
+          "prYds": 0,
+          "prAvg": 0.0,
+          "prLng": 0,
+          "prTD": 0,
+          "pr20Plus": 0,
+          "pr40Plus": 0,
+          "prFC": 0,
+          "prFum": 0
+        },
+        "miscellaneous": {
+          "gamesStarted": 0
+        },
+        "twoPointAttempts": {
+          "twoPtAtt": 0,
+          "twoPtMade": 0,
+          "twoPtPassAtt": 0,
+          "twoPtPassMade": 0,
+          "twoPtPassRec": 0,
+          "twoPtRushAtt": 0,
+          "twoPtRushMade": 0
+        },
+        "snapCounts": {
+          "offenseSnaps": 32,
+          "defenseSnaps": 0,
+          "specialTeamSnaps": 32
+        }
+      }
+    },
+    {
+      "player": {
+        "id": 48151,
+        "firstName": "Marcus",
+        "lastName": "Jones",
+        "primaryPosition": "CB",
+        "jerseyNumber": 25,
+        "currentTeam": {
+          "id": 50,
+          "abbreviation": "NE"
+        },
+        "currentRosterStatus": "ROSTER",
+        "currentInjury": null,
+        "height": "5'8\"",
+        "weight": 188,
+        "birthDate": "1998-10-22",
+        "age": 27,
+        "birthCity": null,
+        "birthCountry": null,
+        "rookie": false,
+        "highSchool": null,
+        "college": "Houston",
+        "handedness": null,
+        "officialImageSrc": "https://static.www.nfl.com/image/private/t_headshot_desktop/league/zmcq3k44umnxvsyomlvm",
+        "socialMediaAccounts": []
+      },
+      "team": {
+        "id": 50,
+        "abbreviation": "NE"
+      },
+      "stats": {
+        "gamesPlayed": 17,
+        "tackles": {
+          "tackleSolo": 47,
+          "tackleTotal": 65,
+          "tackleAst": 18,
+          "sacks": 2.0,
+          "sackYds": 9,
+          "tacklesForLoss": 8.0
+        },
+        "interceptions": {
+          "interceptions": 3,
+          "intTD": 1,
+          "intYds": 65,
+          "intAverage": 21.7,
+          "intLng": 65,
+          "passesDefended": 11,
+          "stuffs": 7,
+          "stuffYds": 14,
+          "safeties": 0,
+          "kB": 0
+        },
+        "fumbles": {
+          "fumbles": 2,
+          "fumLost": 0,
+          "fumForced": 0,
+          "fumOwnRec": 2,
+          "fumOppRec": 1,
+          "fumRecYds": 0,
+          "fumTotalRec": 3,
+          "fumTD": 0,
+          "offFumTD": 0
+        },
+        "kickoffReturns": {
+          "krRet": 0,
+          "krYds": 0,
+          "krAvg": 0.0,
+          "krLng": 0,
+          "krTD": 0,
+          "kr20Plus": 0,
+          "kr40Plus": 0,
+          "krFC": 0,
+          "krFum": 0
+        },
+        "puntReturns": {
+          "prRet": 19,
+          "prYds": 371,
+          "prAvg": 19.5,
+          "prLng": 249,
+          "prTD": 2,
+          "pr20Plus": 3,
+          "pr40Plus": 3,
+          "prFC": 18,
+          "prFum": 0
+        },
+        "miscellaneous": {
+          "gamesStarted": 0
+        },
+        "snapCounts": {
+          "offenseSnaps": 0,
+          "defenseSnaps": 721,
+          "specialTeamSnaps": 67
+        }
+      }
+    },
+    {
+      "player": {
+        "id": 112096,
+        "firstName": "Truman",
+        "lastName": "Jones",
+        "primaryPosition": "LB",
+        "jerseyNumber": 56,
+        "currentTeam": {
+          "id": 67,
+          "abbreviation": "TEN"
+        },
+        "currentRosterStatus": "ROSTER",
+        "currentInjury": null,
+        "height": "6'3\"",
+        "weight": 255,
+        "birthDate": "2000-05-13",
+        "age": 26,
+        "birthCity": null,
+        "birthCountry": null,
+        "rookie": false,
+        "highSchool": null,
+        "college": "Harvard",
+        "handedness": null,
+        "officialImageSrc": "https://static.www.nfl.com/image/private/t_headshot_desktop/league/unkokck5tfkzvxvklkgf",
+        "socialMediaAccounts": []
+      },
+      "team": {
+        "id": 50,
+        "abbreviation": "NE"
+      },
+      "stats": {
+        "gamesPlayed": 1,
+        "passing": {
+          "passAttempts": 0,
+          "passCompletions": 0,
+          "passPct": 0.0,
+          "passYards": 0,
+          "passAvg": 0.0,
+          "passYardsPerAtt": 0.0,
+          "passTD": 0,
+          "passTDPct": 0.0,
+          "passInt": 0,
+          "passIntPct": 0.0,
+          "passLng": 0,
+          "pass20Plus": 0,
+          "pass40Plus": 0,
+          "passSacks": 0,
+          "passSackY": 0,
+          "qbRating": 0.0
+        },
+        "rushing": {
+          "rushAttempts": 0,
+          "rushYards": 0,
+          "rushAverage": 0.0,
+          "rushTD": 0,
+          "rushLng": 0,
+          "rush1stDowns": 0,
+          "rush1stDownsPct": 0.0,
+          "rush20Plus": 0,
+          "rush40Plus": 0,
+          "rushFumbles": 0
+        },
+        "receiving": {
+          "targets": 0,
+          "receptions": 0,
+          "recYards": 0,
+          "recAverage": 0.0,
+          "recTD": 0,
+          "recLng": 0,
+          "rec1stDowns": 0,
+          "rec20Plus": 0,
+          "rec40Plus": 0,
+          "recFumbles": 0
+        },
+        "tackles": {
+          "tackleSolo": 0,
+          "tackleTotal": 0,
+          "tackleAst": 0,
+          "sacks": 0.0,
+          "sackYds": 0,
+          "tacklesForLoss": 0.0
+        },
+        "interceptions": {
+          "interceptions": 0,
+          "intTD": 0,
+          "intYds": 0,
+          "intAverage": 0.0,
+          "intLng": 0,
+          "passesDefended": 0,
+          "stuffs": 0,
+          "stuffYds": 0,
+          "safeties": 0,
+          "kB": 0
+        },
+        "fumbles": {
+          "fumbles": 0,
+          "fumLost": 0,
+          "fumForced": 0,
+          "fumOwnRec": 0,
+          "fumOppRec": 0,
+          "fumRecYds": 0,
+          "fumTotalRec": 0,
+          "fumTD": 0,
+          "offFumTD": 0
+        },
+        "kickoffReturns": {
+          "krRet": 0,
+          "krYds": 0,
+          "krAvg": 0.0,
+          "krLng": 0,
+          "krTD": 0,
+          "kr20Plus": 0,
+          "kr40Plus": 0,
+          "krFC": 0,
+          "krFum": 0
+        },
+        "puntReturns": {
+          "prRet": 0,
+          "prYds": 0,
+          "prAvg": 0.0,
+          "prLng": 0,
+          "prTD": 0,
+          "pr20Plus": 0,
+          "pr40Plus": 0,
+          "prFC": 0,
+          "prFum": 0
+        },
+        "miscellaneous": {
+          "gamesStarted": 0
+        },
+        "snapCounts": {
+          "offenseSnaps": 0,
+          "defenseSnaps": 0,
+          "specialTeamSnaps": 11
+        }
+      }
+    },
+    {
+      "player": {
+        "id": 15069,
+        "firstName": "Harold",
+        "lastName": "Landry III",
+        "primaryPosition": "LB",
+        "jerseyNumber": 2,
+        "currentTeam": {
+          "id": 50,
+          "abbreviation": "NE"
+        },
+        "currentRosterStatus": "ROSTER",
+        "currentInjury": {
+          "description": "knee",
+          "playingProbability": "OUT"
+        },
+        "height": "6'2\"",
+        "weight": 252,
+        "birthDate": "1996-06-05",
+        "age": 30,
+        "birthCity": "Spring Lake, NC",
+        "birthCountry": "USA",
+        "rookie": false,
+        "highSchool": null,
+        "college": "Boston College",
+        "handedness": null,
+        "officialImageSrc": "https://static.www.nfl.com/image/private/t_headshot_desktop/league/akafrpdcokvwz2psbbmj",
+        "socialMediaAccounts": []
+      },
+      "team": {
+        "id": 50,
+        "abbreviation": "NE"
+      },
+      "stats": {
+        "gamesPlayed": 15,
+        "passing": {
+          "passAttempts": 0,
+          "passCompletions": 0,
+          "passPct": 0.0,
+          "passYards": 0,
+          "passAvg": 0.0,
+          "passYardsPerAtt": 0.0,
+          "passTD": 0,
+          "passTDPct": 0.0,
+          "passInt": 0,
+          "passIntPct": 0.0,
+          "passLng": 0,
+          "pass20Plus": 0,
+          "pass40Plus": 0,
+          "passSacks": 0,
+          "passSackY": 0,
+          "qbRating": 0.0
+        },
+        "rushing": {
+          "rushAttempts": 0,
+          "rushYards": 0,
+          "rushAverage": 0.0,
+          "rushTD": 0,
+          "rushLng": 0,
+          "rush1stDowns": 0,
+          "rush1stDownsPct": 0.0,
+          "rush20Plus": 0,
+          "rush40Plus": 0,
+          "rushFumbles": 0
+        },
+        "receiving": {
+          "targets": 0,
+          "receptions": 0,
+          "recYards": 0,
+          "recAverage": 0.0,
+          "recTD": 0,
+          "recLng": 0,
+          "rec1stDowns": 0,
+          "rec20Plus": 0,
+          "rec40Plus": 0,
+          "recFumbles": 0
+        },
+        "tackles": {
+          "tackleSolo": 27,
+          "tackleTotal": 43,
+          "tackleAst": 16,
+          "sacks": 8.5,
+          "sackYds": 55,
+          "tacklesForLoss": 9.0
+        },
+        "interceptions": {
+          "interceptions": 0,
+          "intTD": 0,
+          "intYds": 0,
+          "intAverage": 0.0,
+          "intLng": 0,
+          "passesDefended": 0,
+          "stuffs": 14,
+          "stuffYds": 65,
+          "safeties": 0,
+          "kB": 0
+        },
+        "fumbles": {
+          "fumbles": 0,
+          "fumLost": 0,
+          "fumForced": 1,
+          "fumOwnRec": 0,
+          "fumOppRec": 0,
+          "fumRecYds": 0,
+          "fumTotalRec": 0,
+          "fumTD": 0,
+          "offFumTD": 0
+        },
+        "kickoffReturns": {
+          "krRet": 0,
+          "krYds": 0,
+          "krAvg": 0.0,
+          "krLng": 0,
+          "krTD": 0,
+          "kr20Plus": 0,
+          "kr40Plus": 0,
+          "krFC": 0,
+          "krFum": 0
+        },
+        "puntReturns": {
+          "prRet": 0,
+          "prYds": 0,
+          "prAvg": 0.0,
+          "prLng": 0,
+          "prTD": 0,
+          "pr20Plus": 0,
+          "pr40Plus": 0,
+          "prFC": 0,
+          "prFum": 0
+        },
+        "miscellaneous": {
+          "gamesStarted": 0
+        },
+        "snapCounts": {
+          "offenseSnaps": 0,
+          "defenseSnaps": 677,
+          "specialTeamSnaps": 0
+        }
+      }
+    },
+    {
+      "player": {
+        "id": 56782,
+        "firstName": "Vederian",
+        "lastName": "Lowe",
+        "primaryPosition": "T",
+        "jerseyNumber": 59,
+        "currentTeam": {
+          "id": 50,
+          "abbreviation": "NE"
+        },
+        "currentRosterStatus": "ROSTER",
+        "currentInjury": null,
+        "height": "6'5\"",
+        "weight": 315,
+        "birthDate": "1999-04-17",
+        "age": 27,
+        "birthCity": null,
+        "birthCountry": null,
+        "rookie": false,
+        "highSchool": null,
+        "college": "Illinois",
+        "handedness": null,
+        "officialImageSrc": "https://static.www.nfl.com/image/private/t_headshot_desktop/league/slqlqnovvtagitkxsm8y",
+        "socialMediaAccounts": []
+      },
+      "team": {
+        "id": 50,
+        "abbreviation": "NE"
+      },
+      "stats": {
+        "gamesPlayed": 17,
+        "tackles": {
+          "tackleSolo": 0,
+          "tackleTotal": 0,
+          "tackleAst": 0,
+          "sacks": 0.0,
+          "sackYds": 0,
+          "tacklesForLoss": 0.0
+        },
+        "interceptions": {
+          "interceptions": 0,
+          "intTD": 0,
+          "intYds": 0,
+          "intAverage": 0.0,
+          "intLng": 0,
+          "passesDefended": 0,
+          "stuffs": 0,
+          "stuffYds": 0,
+          "safeties": 0,
+          "kB": 0
+        },
+        "fumbles": {
+          "fumbles": 0,
+          "fumLost": 0,
+          "fumForced": 0,
+          "fumOwnRec": 0,
+          "fumOppRec": 0,
+          "fumRecYds": 0,
+          "fumTotalRec": 0,
+          "fumTD": 0,
+          "offFumTD": 0
+        },
+        "kickoffReturns": {
+          "krRet": 0,
+          "krYds": 0,
+          "krAvg": 0.0,
+          "krLng": 0,
+          "krTD": 0,
+          "kr20Plus": 0,
+          "kr40Plus": 0,
+          "krFC": 0,
+          "krFum": 0
+        },
+        "puntReturns": {
+          "prRet": 0,
+          "prYds": 0,
+          "prAvg": 0.0,
+          "prLng": 0,
+          "prTD": 0,
+          "pr20Plus": 0,
+          "pr40Plus": 0,
+          "prFC": 0,
+          "prFum": 0
+        },
+        "miscellaneous": {
+          "gamesStarted": 0
+        },
+        "snapCounts": {
+          "offenseSnaps": 318,
+          "defenseSnaps": 0,
+          "specialTeamSnaps": 87
+        }
+      }
+    }
+  ]
+}
