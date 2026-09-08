@@ -47,13 +47,6 @@ _GNEWS_BASE_URL = "https://gnews.io"
 #: fixture's respx mock target.
 _WEATHERAPI_BASE_URL = "https://api.weatherapi.com"
 
-#: MySportsFeeds v2.1 base URL, diagnostic use only (Phase 8.3B Player
-#: Season-Stats Single-Call Diagnostic, 2026-09-08 -- see `app.
-#: diagnostics.msf_player_stats_diagnostic`). CONFIRMED from the official
-#: `mysportsfeeds-node` npm package source (`API_v2_1.js`), identical to
-#: every prior Phase 8.2 MSF diagnostic's own value (all since reverted).
-_MYSPORTSFEEDS_BASE_URL = "https://api.mysportsfeeds.com/v2.1/pull"
-
 
 class MissingCredentialError(Exception):
     """Raised when a required provider credential is absent from this
@@ -175,22 +168,3 @@ def build_real_weather_worker_clients() -> tuple[httpx.AsyncClient, httpx.AsyncC
     supabase_client = httpx.AsyncClient(base_url=os.environ["SUPABASE_URL"], timeout=60.0)
     weatherapi_client = httpx.AsyncClient(base_url=_WEATHERAPI_BASE_URL, timeout=60.0)
     return supabase_client, weatherapi_client, api_key
-
-
-def build_msf_player_stats_diagnostic_client() -> tuple[httpx.AsyncClient, str] | None:
-    """Phase 8.3B Player Season-Stats Single-Call Diagnostic (2026-09-08,
-    diagnostic only -- see `app.diagnostics.msf_player_stats_diagnostic`):
-    returns `(client, api_key)` bound to `MYSPORTSFEEDS_API_KEY`, or
-    `None` if that credential isn't configured. Timeout 30.0s -- this
-    call is filtered to one team (not the whole league), so the 120.0s
-    raised for Phase 8.2's un-scoped `/nfl/players.json` diagnostic isn't
-    needed here; every other real MySportsFeeds call this project has
-    made (team_stats_totals, standings, both un-filtered, all 32 teams)
-    returned in well under 1s. `MYSPORTSFEEDS_API_KEY` is never read
-    anywhere outside this function, matching the isolation convention
-    every other provider credential in this module already follows. The
-    caller owns closing the returned client."""
-    api_key = os.environ.get("MYSPORTSFEEDS_API_KEY")
-    if not api_key:
-        return None
-    return httpx.AsyncClient(base_url=_MYSPORTSFEEDS_BASE_URL, timeout=30.0), api_key
