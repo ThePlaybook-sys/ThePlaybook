@@ -60,6 +60,7 @@ from app.adapters.errors import (
     ProviderUnavailableError,
 )
 from app.adapters.models import AdapterResponse, RosterEntry
+from app.persistence.player_season_stats import PlayerSeasonStatLine
 
 _logger = logging.getLogger("sports-intel-layer.adapters.mysportsfeeds")
 
@@ -166,4 +167,136 @@ class MySportsFeedsRosterAdapter(RosterAdapter):
         )
 
 
-__all__ = ["MySportsFeedsRosterAdapter"]
+_PLAYER_STATS_TOTALS_PATH_TEMPLATE = "/nfl/{season}/player_stats_totals.json"
+
+
+class MySportsFeedsPlayerSeasonStatsAdapter:
+    """MySportsFeeds `seasonal_player_stats` (`player_stats_totals.json`)
+    adapter -- Phase 8.3D (2026-09-08), built against the real payload
+    shape the Phase 8.3C diagnostic confirmed live (HTTP 200, team=NE,
+    season=2025-2026-regular, 43 real player entries recovered; see
+    `docs/ops/phase-8.3c-player-stats-diagnostic-retry-2026-09-08.md`
+    and the committed fixture `docs/ops/fixtures/phase-8.3c-msf-player-
+    stats-totals-ne-2025-2026-partial-2026-09-08.json`). Season-scoped,
+    not game-scoped -- deliberately not a `PlayerStatsAdapter` subclass
+    (that ABC's `fetch_player_stats(game_external_id)` contract is
+    explicitly game-scoped, per its own docstring), matching how
+    `MySportsFeedsTeamSeasonStatsAdapter`-equivalent parsing in Phase
+    8.3A was also kept outside the game-scoped `TeamStatsAdapter` ABC.
+
+    **This class is the only place in the codebase that knows
+    MySportsFeeds' real response shape for this feed** -- everything
+    downstream (persistence, tests) only ever sees provider-neutral
+    `PlayerSeasonStatLine` objects. A future NBA or other-provider
+    season-stats source would get its own adapter class producing the
+    same `PlayerSeasonStatLine` shape; nothing in `app.persistence.
+    player_season_stats` would need to change.
+
+    **`team` query param provenance and honesty, carried forward from
+    Phase 8.3C's own disclosure**: sourced from the vendored SDK
+    README's documented usage example for the ancestor v1.x feed in the
+    same player-stats-totals family, not a v2.x-confirmed example when
+    first used -- but Phase 8.3C's real live call CONFIRMED it is
+    honored server-side (a 166,159-byte response consistent with one
+    team's roster, not the whole league). No longer merely inferred.
+
+    **`gamesStarted` is real provider data, not MANSA-verified
+    participation evidence -- explicitly flagged, not silently trusted.**
+    Phase 8.3C's real capture showed `stats.miscellaneous.gamesStarted`
+    returning `0` for all 43 real players sampled, including obvious
+    starters (e.g. Stefon Diggs, 85 receptions across 14 games played,
+    still shows `gamesStarted: 0`). This adapter does not special-case,
+    correct, or drop that field -- the entire `stats` dict passes through
+    verbatim, unfiltered, matching every other stats adapter in this
+    codebase -- but no code in this project may treat `gamesStarted` as a
+    trustworthy signal of who actually started a game until this is
+    independently reconciled against a real, confirmed-working
+    participation source (`lineup.json`'s own "expected" lineup is
+    pre-game projection, not confirmed participation either -- see the
+    2026-09-08 Player/Team Performance Data Audit's own §2)."""
+
+    provider_name = "mysportsfeeds"
+
+    def __init__(self, *, client: httpx.AsyncClient, api_key: str):
+        self._client = client
+        self._api_key = api_key
+
+    async def fetch_player_season_stats(
+        self, *, team: str, season: str
+    ) -> AdapterResponse[list[PlayerSeasonStatLine]]:
+        """Fetches `player_stats_totals.json` for one team/season and
+        parses it into provider-neutral `PlayerSeasonStatLine` objects.
+        `PlayerSeasonStatLine.stats` is the real per-player `stats` dict
+        exactly as MySportsFeeds returns it (passing/rushing/receiving/
+        tackles/interceptions/fumbles/kickoffReturns/puntReturns/
+        fieldGoals/punting/kickoffs/extraPointAttempts/twoPointAttempts/
+        miscellaneous/snapCounts/gamesPlayed, per Phase 8.3C's real
+        confirmed capture) -- not reshaped, not filtered field-by-field."""
+        path = _PLAYER_STATS_TOTALS_PATH_TEMPLATE.format(season=season)
+        try:
+            response = await self._client.get(
+                path,
+                params={"team": team, "force": "false"},
+                headers=_auth_header(self._api_key),
+            )
+        except httpx.HTTPError as exc:
+            raise ProviderUnavailableError(
+                f"transport error calling {path}: {exc}", provider=self.provider_name
+            ) from exc
+
+        if response.status_code == 401:
+            raise ProviderAuthError("invalid or missing API key", provider=self.provider_name)
+        if response.status_code == 429:
+            raise ProviderRateLimitError("rate limited", provider=self.provider_name)
+        if response.status_code >= 500:
+            raise ProviderUnavailableError(
+                f"provider returned {response.status_code}", provider=self.provider_name
+            )
+        if response.status_code != 200:
+            raise ProviderDataError(
+                f"unexpected status {response.status_code}: {response.text}", provider=self.provider_name
+            )
+
+        try:
+            data = response.json()
+        except ValueError as exc:
+            raise ProviderDataError("response body was not valid JSON", provider=self.provider_name) from exc
+        if not isinstance(data, dict) or not isinstance(data.get("playerStatsTotals"), list):
+            raise ProviderDataError(
+                "expected an object with a 'playerStatsTotals' array", provider=self.provider_name
+            )
+
+        lines: list[PlayerSeasonStatLine] = []
+        for row in data["playerStatsTotals"]:
+            try:
+                player_id = row["player"]["id"]
+                stats = row["stats"]
+                if not isinstance(stats, dict):
+                    raise TypeError("stats was not an object")
+                lines.append(PlayerSeasonStatLine(player=str(player_id), stats=stats))
+            except (KeyError, TypeError) as exc:
+                _logger.warning(
+                    "skipping malformed mysportsfeeds player_stats_totals row (id=%r): %s",
+                    row.get("player", {}).get("id") if isinstance(row.get("player"), dict) else None,
+                    exc,
+                )
+                continue
+
+        last_updated_on = data.get("lastUpdatedOn")
+        provider_reported_at = None
+        if isinstance(last_updated_on, str):
+            try:
+                from datetime import datetime
+
+                provider_reported_at = datetime.fromisoformat(last_updated_on.replace("Z", "+00:00"))
+            except ValueError:
+                # Never fabricated -- an unparseable timestamp stays None
+                # rather than guessing a format.
+                provider_reported_at = None
+
+        return AdapterResponse(
+            value=lines, source=self.provider_name, provider_reported_at=provider_reported_at
+        )
+
+
+__all__ = ["MySportsFeedsRosterAdapter", "MySportsFeedsPlayerSeasonStatsAdapter"]
