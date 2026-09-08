@@ -8,6 +8,22 @@ unchanged), a `roster_memberships` history row when the observed team
 differs from the player's latest known team, and one
 `depth_chart_snapshots` row per call for the team.
 
+**Provider-neutral since Phase 8.2 (2026-09-08).** `persist_roster` now
+takes `provider_name` as an explicit keyword argument instead of the
+module-level `_PROVIDER_NAME = "sportsdataio"` constant this file
+previously hardcoded -- a real gap the Phase 8.2 audit found: the
+underlying `player_identity`/`team_identity` functions this module calls
+were already provider-name-parameterized, but this module's own callable
+surface wasn't. `provider_name` defaults to `"sportsdataio"` so every
+existing caller (`app.master_refresh.run.run_master_refresh`, every
+existing test) is unaffected. `write_depth_chart_snapshot` (default
+`True`, preserving existing behavior) lets a caller whose `RosterEntry`
+list carries no real depth data (e.g. a players-identity-only feed) skip
+the unconditional depth-chart write instead of persisting an all-null
+"snapshot" that would misrepresent roster membership as depth/lineup
+role -- these are deliberately kept separate concepts (Phase 8.2's own
+canonical-identity design), never conflated by this module.
+
 **No fuzzy matching, no fabricated identity.** A `RosterEntry` is only ever
 turned into a player via its own `player_external_id` -- `ensure_player`'s
 existing "resolve-or-create through an explicit provider identity" contract
@@ -55,8 +71,6 @@ import httpx
 from app.adapters.models import AdapterResponse, RosterEntry
 from app.persistence.player_identity import ensure_player, resolve_player_ids
 from app.persistence.team_identity import resolve_team_ids
-
-_PROVIDER_NAME = "sportsdataio"
 
 
 class RosterIngestionError(Exception):
@@ -138,14 +152,34 @@ async def _sync_membership(client: httpx.AsyncClient, headers: dict, *, player_i
     return True
 
 
-async def persist_roster(response: AdapterResponse[list[RosterEntry]]) -> RosterIngestionResult:
+async def persist_roster(
+    response: AdapterResponse[list[RosterEntry]],
+    *,
+    provider_name: str = "sportsdataio",
+    write_depth_chart_snapshot: bool = True,
+) -> RosterIngestionResult:
     """Writes one team's roster fetch into durable players/player_provider_ids
     (create-or-confirm, never fuzzy-matched), roster_memberships (insert
-    only on first observation or team change), and one unconditional
+    only on first observation or team change), and -- when
+    `write_depth_chart_snapshot` is True (the default) -- one unconditional
     depth_chart_snapshots row for the team. Every `RosterEntry` in
     `response.value` is expected to share the same `.team` -- one call
     corresponds to one team's roster, matching `RosterAdapter.fetch_roster`'s
-    own per-team contract."""
+    own per-team contract.
+
+    `provider_name` identifies which provider's identity space
+    `response.value`'s `player_external_id`/`team` values live in (e.g.
+    `"sportsdataio"`, `"mysportsfeeds"`) -- threaded straight through to
+    `team_identity.resolve_team_ids`/`player_identity.resolve_player_ids`/
+    `ensure_player`, which were already provider-neutral before this
+    parameter existed.
+
+    `write_depth_chart_snapshot=False` skips the depth-chart write
+    entirely (not even an empty/all-null row) -- for a caller whose
+    `RosterEntry` list carries no real depth_chart_rank data, writing a
+    "snapshot" of nulls would misrepresent roster membership as a real
+    depth/lineup observation. `result.depth_chart_written` stays `False`
+    in that case, an honest signal, not a masked failure."""
     entries = response.value
     if not entries:
         return RosterIngestionResult()
@@ -156,7 +190,7 @@ async def persist_roster(response: AdapterResponse[list[RosterEntry]]) -> Roster
 
     async with httpx.AsyncClient(base_url=supabase_url, timeout=5.0) as client:
         team_ids = await resolve_team_ids(
-            client, headers, provider_name=_PROVIDER_NAME, provider_team_ids=[team_abbrev]
+            client, headers, provider_name=provider_name, provider_team_ids=[team_abbrev]
         )
         team_id = team_ids.get(team_abbrev)
         if team_id is None:
@@ -168,14 +202,14 @@ async def persist_roster(response: AdapterResponse[list[RosterEntry]]) -> Roster
         result = RosterIngestionResult()
         for entry in entries:
             existing = await resolve_player_ids(
-                client, headers, provider_name=_PROVIDER_NAME, provider_player_ids=[entry.player_external_id]
+                client, headers, provider_name=provider_name, provider_player_ids=[entry.player_external_id]
             )
             is_new = entry.player_external_id not in existing
 
             player_id = await ensure_player(
                 client,
                 headers,
-                provider_name=_PROVIDER_NAME,
+                provider_name=provider_name,
                 provider_player_id=entry.player_external_id,
                 name=entry.player_name,
                 team_id=team_id,
@@ -191,25 +225,26 @@ async def persist_roster(response: AdapterResponse[list[RosterEntry]]) -> Roster
             else:
                 result.memberships_unchanged += 1
 
-        depth_chart_data = [
-            {
-                "player_external_id": e.player_external_id,
-                "name": e.player_name,
-                "position": e.position,
-                "depth_chart_rank": e.depth_chart_rank,
-            }
-            for e in entries
-        ]
-        insert_response = await client.post(
-            "/rest/v1/depth_chart_snapshots",
-            json={"team_id": team_id, "depth_chart_data": depth_chart_data},
-            headers=headers,
-        )
-        if insert_response.status_code not in (200, 201):
-            raise RosterIngestionError(
-                f"failed to insert depth_chart_snapshots for team {team_id}: "
-                f"{insert_response.status_code} {insert_response.text}"
+        if write_depth_chart_snapshot:
+            depth_chart_data = [
+                {
+                    "player_external_id": e.player_external_id,
+                    "name": e.player_name,
+                    "position": e.position,
+                    "depth_chart_rank": e.depth_chart_rank,
+                }
+                for e in entries
+            ]
+            insert_response = await client.post(
+                "/rest/v1/depth_chart_snapshots",
+                json={"team_id": team_id, "depth_chart_data": depth_chart_data},
+                headers=headers,
             )
-        result.depth_chart_written = True
+            if insert_response.status_code not in (200, 201):
+                raise RosterIngestionError(
+                    f"failed to insert depth_chart_snapshots for team {team_id}: "
+                    f"{insert_response.status_code} {insert_response.text}"
+                )
+            result.depth_chart_written = True
 
         return result
