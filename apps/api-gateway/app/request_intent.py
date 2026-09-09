@@ -78,11 +78,23 @@ _HIGHEST_CONFIDENCE_PHRASES: tuple[str, ...] = (
 #: pick today") -- checked against `_KNOWN_UNSUPPORTED_PHRASES`'s own
 #: "best pick" entry below and confirmed non-colliding: "best value
 #: pick" never contains "best pick" as a contiguous substring, proven
-#: by `test_request_intent.py`'s own collision test.
+#: by `test_request_intent.py`'s own collision test. "best-value"
+#: (Pass 4.1, HQ-authorized): a hyphenated variant of "best value" --
+#: HQ determined the two are semantically identical, so it is listed
+#: here as its own literal entry, mirroring this same tuple's existing
+#: "highest value"/"highest-value" pair rather than introducing a new
+#: general punctuation-normalization layer for one phrase. "best"
+#: alone (hyphenated or not) still means nothing on its own -- only
+#: the exact substrings "best value"/"best-value" resolve to
+#: HIGHEST_VALUE; "best pick"/"best-pick" are untouched by this
+#: addition and remain governed solely by `_KNOWN_UNSUPPORTED_PHRASES`
+#: below (which still only recognizes the space form, "best pick" --
+#: unchanged, out of this cleanup's narrow scope).
 _HIGHEST_VALUE_PHRASES: tuple[str, ...] = (
     "highest value",
     "highest-value",
     "best value",
+    "best-value",
 )
 
 #: Phrases HQ explicitly named as NOT equivalent to either supported

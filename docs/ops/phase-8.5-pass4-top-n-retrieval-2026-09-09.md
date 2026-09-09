@@ -276,3 +276,11 @@ match `_HIGHEST_VALUE_PHRASES` (`"best value"`, space, is recognized;
 2's own phrase list, outside Pass 4's mandate to fix (Step 7: "preserve all
 existing rules exactly"). Every test in this pass uses phrasing that does
 match the existing lists (`"best value"`/`"highest-value"`/`"highest value"`).
+
+**Resolved, Pass 4.1 (2026-09-09):** HQ authorized a narrow follow-up
+cleanup adding `"best-value"` as a literal entry in `_HIGHEST_VALUE_PHRASES`,
+mirroring the tuple's existing `"highest value"`/`"highest-value"` pair.
+`"best pick"`/`"best-pick"` are unaffected and remain unsupported/ambiguous.
+See `PROGRESS.md`'s Pass 4.1 entry for the full change record — no separate
+architecture document was created for this cleanup, per HQ's explicit
+instruction.
