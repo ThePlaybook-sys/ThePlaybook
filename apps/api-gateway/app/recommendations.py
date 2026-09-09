@@ -381,20 +381,31 @@ class AskRequest(BaseModel):
     question: str = Field(min_length=1, max_length=500)
 
 
-def _select_highest_confidence_card(cards: list[dict]) -> tuple[dict, dict] | None:
+def _select_highest_confidence_card(cards: list[dict], *, market_type: str | None = None) -> tuple[dict, dict] | None:
     """Among *active* cards' legs, returns `(card, leg)` for the real
     leg with the highest `finalAggregateConfidence`, or `None` if no
-    active card has any leg carrying a confidence value at all (e.g.
-    only `no_bet`/`bankroll_preservation` products exist today, or
-    nothing exists today). Withdrawn products are deliberately
+    active card has any qualifying leg carrying a confidence value at
+    all (e.g. only `no_bet`/`bankroll_preservation` products exist
+    today, nothing exists today, or -- Pass 3 -- no leg matches the
+    requested `market_type`). Withdrawn products are deliberately
     excluded here -- `/today` shows withdrawn history for transparency,
     but presenting a withdrawn product as "the pick" would misrepresent
-    it as a live recommendation, which this endpoint must never do."""
+    it as a live recommendation, which this endpoint must never do.
+
+    **Filter-before-rank (Pass 3, mandatory per HQ):** the
+    `market_type` check happens inside the same loop that finds the
+    max, BEFORE any comparison against the running best -- a
+    globally-stronger leg in a different market is never even
+    considered a candidate, let alone allowed to win. `market_type=None`
+    (no constraint) preserves Pass 1/2 behavior exactly -- every leg is
+    considered, unchanged."""
     best: tuple[float, dict, dict] | None = None
     for card in cards:
         if card["status"] != "active":
             continue
         for leg in card["legs"]:
+            if market_type is not None and leg["marketType"] != market_type:
+                continue
             confidence = leg["finalAggregateConfidence"]
             if confidence is None:
                 continue
@@ -406,13 +417,14 @@ def _select_highest_confidence_card(cards: list[dict]) -> tuple[dict, dict] | No
     return card, leg
 
 
-def _select_highest_value_card(cards: list[dict]) -> tuple[dict, dict] | None:
-    """Phase 8.5 Pass 2 -- among *active* cards' legs, returns
-    `(card, leg)` for the real leg with the highest `evPerDollar`, or
-    `None` if none qualifies. Mirrors `_select_highest_confidence_card`
-    exactly, with two deliberate, defensive checks beyond it, per HQ's
-    explicit "never treat NULL as zero" / "do not silently rank
-    missing metrics" instruction:
+def _select_highest_value_card(cards: list[dict], *, market_type: str | None = None) -> tuple[dict, dict] | None:
+    """Phase 8.5 Pass 2 (value) / Pass 3 (market filter) -- among
+    *active* cards' legs, returns `(card, leg)` for the real leg with
+    the highest `evPerDollar`, or `None` if none qualifies. Mirrors
+    `_select_highest_confidence_card` exactly, including its
+    filter-before-rank market check, with two further deliberate,
+    defensive checks per HQ's explicit "never treat NULL as zero" /
+    "do not silently rank missing metrics" instruction:
 
     - `evPerDollar is None` is skipped, never treated as 0 or as the
       worst-but-comparable value.
@@ -430,6 +442,8 @@ def _select_highest_value_card(cards: list[dict]) -> tuple[dict, dict] | None:
         if card["status"] != "active":
             continue
         for leg in card["legs"]:
+            if market_type is not None and leg["marketType"] != market_type:
+                continue
             ev = leg["evPerDollar"]
             if ev is None or ev <= 0:
                 continue
@@ -441,33 +455,34 @@ def _select_highest_value_card(cards: list[dict]) -> tuple[dict, dict] | None:
     return card, leg
 
 
-#: Phase 8.5 Pass 2: per-`ExecutionAction` response shape for the two
+#: Phase 8.5 Pass 2/3: per-`ExecutionAction` response shape for the
 #: supported retrieval modes -- kept as data, not a growing if/elif
-#: chain, so adding a third mode later (once authorized) is one new
-#: entry, not a restructure. Each entry names its own selector
-#: function, the honest label/metric-name/disclosure the terminology
-#: guardrail requires, and the exact no-result reason.
+#: chain, so adding a future mode is one new entry, not a restructure.
+#: `{market}` in the templates is replaced with `"<market> "` (trailing
+#: space) when a market constraint was resolved, or `""` when none was
+#: -- so "MANSA's highest-confidence spread pick today" vs. Pass 1/2's
+#: unchanged "MANSA's highest-confidence pick today".
 _RETRIEVAL_MODES: dict[ExecutionAction, dict] = {
     ExecutionAction.RETRIEVE_HIGHEST_CONFIDENCE_TODAY: {
         "select": _select_highest_confidence_card,
-        "label": "MANSA's highest-confidence pick today",
+        "label_template": "MANSA's highest-confidence {market}pick today",
         "metric": "finalAggregateConfidence",
         "disclosure": (
             "This reflects MANSA's own model confidence in this selection, "
             "not a guarantee of outcome or an objective safety rating."
         ),
-        "no_result_reason": "No eligible MANSA recommendation with a confidence score exists for today yet.",
+        "no_result_reason_template": "No eligible MANSA {market}recommendation with a confidence score exists for today yet.",
     },
     ExecutionAction.RETRIEVE_HIGHEST_VALUE_TODAY: {
         "select": _select_highest_value_card,
-        "label": "MANSA's highest-value pick today",
+        "label_template": "MANSA's highest-value {market}pick today",
         "metric": "evPerDollar",
         "disclosure": (
             "This reflects MANSA's own modeled expected value per dollar wagered "
             "at the actual offered price -- not a guarantee of profit and not a "
             "claim about win probability alone."
         ),
-        "no_result_reason": "No eligible MANSA recommendation with a positive expected-value score exists for today yet.",
+        "no_result_reason_template": "No eligible MANSA {market}recommendation with a positive expected-value score exists for today yet.",
     },
 }
 
@@ -476,10 +491,11 @@ _RETRIEVAL_MODES: dict[ExecutionAction, dict] = {
 async def ask_recommendation(
     body: AskRequest, current_user: CurrentUser = Depends(get_current_user)
 ) -> dict:
-    """Phase 8.5 Pass 1/2 (HQ-authorized): the first real user-request
-    entry point, now supporting two selection modes. Pipeline, each
-    stage kept separate per the Phase 8.5 audit's explicit instruction
-    not to collapse them into one opaque function:
+    """Phase 8.5 Pass 1/2/3 (HQ-authorized): the first real user-request
+    entry point, now supporting two selection modes and an optional
+    market constraint. Pipeline, each stage kept separate per the
+    Phase 8.5 audit's explicit instruction not to collapse them into
+    one opaque function:
 
     RAW INPUT (`AskRequest.question` -> `RawUserInput`)
       -> NORMALIZED REQUEST (`normalize_request`, pure)
@@ -487,6 +503,10 @@ async def ask_recommendation(
       -> EXECUTION PLAN (`build_execution_plan`, pure)
       -> EXISTING RECOMMENDATION RETRIEVAL (`_todays_visible_products`,
          reused verbatim from `/today` -- no new query logic)
+      -> FILTER-BEFORE-RANK (Pass 3, `mode["select"](cards,
+         market_type=...)` -- market restriction happens inside the
+         same pass that finds the max, never as a post-hoc check on an
+         already-globally-ranked winner)
       -> EXISTING CARD SERIALIZATION (`_serialize_product`/
          `_serialize_leg`, via `_visible_products_with_context`,
          completely untouched by this route)
@@ -498,13 +518,19 @@ async def ask_recommendation(
     other route in this module already uses -- confirmed by this
     pass's own tests asserting no additional host is ever contacted.
 
-    Terminology guardrail (HQ-mandated, Pass 2): "highest confidence"
+    Terminology guardrail (HQ-mandated, Pass 2/3): "highest confidence"
     and "highest value" are two genuinely distinct, never-interchangeable
     selection modes (`_RETRIEVAL_MODES` above) -- neither is ever
     presented as "the safest bet," "guaranteed," or "most likely to
     win," and the response always names which real metric
     (`finalAggregateConfidence` or `evPerDollar`) drove the selection,
-    plus an honest disclosure of what that metric actually means."""
+    which market (if any) it was scoped to, plus an honest disclosure
+    of what that metric actually means.
+
+    **No fallback (Pass 3, mandatory per HQ):** when a market
+    constraint is present and nothing qualifies for it, the response is
+    an honest no-result -- never a recommendation from a different
+    market, no matter how strong."""
     raw = RawUserInput(text=body.question)
     normalized = normalize_request(raw)
     intent = resolve_intent(normalized)
@@ -513,6 +539,7 @@ async def ask_recommendation(
     intent_payload = {
         "requestType": intent.request_type.value,
         "selectionMode": intent.selection_mode.value if intent.selection_mode else None,
+        "marketType": intent.market_type.value if intent.market_type else None,
         "timeScope": intent.time_scope,
     }
 
@@ -528,16 +555,19 @@ async def ask_recommendation(
             "result": None,
         }
 
+    market_value = plan.market_type.value if plan.market_type else None
+    market_prefix = f"{market_value} " if market_value else ""
+
     async with new_client() as client:
         user_tier = await read_active_subscription_tier(client, user_id=current_user.id)
         cards = await _todays_visible_products(client, user_tier=user_tier)
 
-    selected = mode["select"](cards)
+    selected = mode["select"](cards, market_type=market_value)
     if selected is None:
         return {
             "intent": intent_payload,
             "insufficientEvidence": True,
-            "reason": mode["no_result_reason"],
+            "reason": mode["no_result_reason_template"].format(market=market_prefix),
             "result": None,
         }
 
@@ -547,7 +577,7 @@ async def ask_recommendation(
         "insufficientEvidence": False,
         "reason": None,
         "result": {
-            "label": mode["label"],
+            "label": mode["label_template"].format(market=market_prefix),
             "selectionMetric": mode["metric"],
             "disclosure": mode["disclosure"],
             "recommendation": card,
