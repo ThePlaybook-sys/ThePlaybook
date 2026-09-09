@@ -4,10 +4,16 @@
 --   2. A provider id cannot silently map to two different games.
 -- Run via `supabase test db`, or manually inside a transaction that's rolled back --
 -- same convention as rls_policies_test.sql and migration_reversibility_check.sql.
+--
+-- MSF Game Provider ID Enablement (2026-09-09): Proof 3 below is the
+-- minimum required coverage for the 20260909190200 migration -- confirms
+-- 'mysportsfeeds' is now an accepted provider_name value on this table,
+-- exactly the same shape as the existing the_odds_api/sportsdataio proofs
+-- above, no new test mechanism invented.
 
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(4);
+select plan(5);
 
 insert into sports (id, code, name) values ('d0000000-0000-0000-0000-000000000001', 'nfl', 'NFL');
 insert into leagues (id, sport_id, code, name) values ('d0000000-0000-0000-0000-000000000002', 'd0000000-0000-0000-0000-000000000001', 'nfl', 'NFL');
@@ -48,6 +54,18 @@ select throws_ok(
   '23505',
   null,
   'a game cannot be mapped to two different ids from the same provider'
+);
+
+-- Proof 3: 'mysportsfeeds' is a real, accepted provider_name value
+-- (20260909190200_mysportsfeeds_game_provider_ids.sql) -- reuses the
+-- second seed game (d0...005), which has no other mapping in this test.
+insert into game_provider_ids (game_id, provider_name, provider_game_id) values
+  ('d0000000-0000-0000-0000-000000000005', 'mysportsfeeds', 'gptest-msf-1');
+
+select ok(
+  (select count(*) = 1 from game_provider_ids
+   where game_id = 'd0000000-0000-0000-0000-000000000005' and provider_name = 'mysportsfeeds'),
+  'mysportsfeeds is an accepted game_provider_ids.provider_name value'
 );
 
 select * from finish();
