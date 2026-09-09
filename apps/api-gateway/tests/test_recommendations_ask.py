@@ -198,7 +198,7 @@ def test_ask_returns_highest_confidence_pick():
     assert body["insufficientEvidence"] is False
     assert body["reason"] is None
     assert body["result"]["label"] == "MANSA's highest-confidence pick today"
-    assert body["result"]["confidenceMetric"] == "finalAggregateConfidence"
+    assert body["result"]["selectionMetric"] == "finalAggregateConfidence"
     assert "not a guarantee" in body["result"]["disclosure"].lower()
     recommendation = body["result"]["recommendation"]
     assert recommendation["displayId"] == "2026-00002"
@@ -337,3 +337,335 @@ def test_ask_only_selects_from_active_products_not_withdrawn():
     body = response.json()
     assert body["insufficientEvidence"] is True
     assert body["result"] is None
+
+
+# ---------------------------------------------------------------------------
+# Phase 8.5 Pass 2 -- "highest value" (ev_per_dollar)
+# ---------------------------------------------------------------------------
+
+
+def _two_products_diverging_confidence_and_value() -> None:
+    """Product A: higher confidence, lower EV. Product B: lower
+    confidence, higher EV. Proves the two selection modes genuinely
+    diverge -- neither is a proxy for the other."""
+    _mock_games(
+        today_ids=["game-a", "game-b"],
+        by_id={
+            "game-a": {
+                "id": "game-a",
+                "home_team": "A",
+                "away_team": "B",
+                "scheduled_start": "2026-09-09T13:00:00Z",
+                "status": "scheduled",
+            },
+            "game-b": {
+                "id": "game-b",
+                "home_team": "C",
+                "away_team": "D",
+                "scheduled_start": "2026-09-09T20:00:00Z",
+                "status": "scheduled",
+            },
+        },
+    )
+    respx.get(f"{SUPABASE_URL}/rest/v1/recommendation_products").mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                {
+                    "id": "prod-high-confidence-low-value",
+                    "display_id": "2026-00010",
+                    "recommendation_type": "single",
+                    "scope": "game",
+                    "game_id": "game-a",
+                    "status": "active",
+                    "min_required_tier": "free",
+                    "withdrawn_at": None,
+                    "withdrawal_reason": None,
+                    "created_at": "2026-09-09T06:00:00Z",
+                },
+                {
+                    "id": "prod-low-confidence-high-value",
+                    "display_id": "2026-00011",
+                    "recommendation_type": "single",
+                    "scope": "game",
+                    "game_id": "game-b",
+                    "status": "active",
+                    "min_required_tier": "free",
+                    "withdrawn_at": None,
+                    "withdrawal_reason": None,
+                    "created_at": "2026-09-09T06:00:00Z",
+                },
+            ],
+        )
+    )
+
+    def _legs_respond(request: httpx.Request) -> httpx.Response:
+        product_ids = request.url.params.get("recommendation_product_id", "")
+        legs = []
+        if "prod-high-confidence-low-value" in product_ids:
+            legs.append(
+                {
+                    "recommendation_product_id": "prod-high-confidence-low-value",
+                    "market_type": "moneyline",
+                    "selection": "A",
+                    "sportsbook": "book",
+                    "american_odds": -110,
+                    "point": None,
+                    "decimal_odds": 1.91,
+                    "ev_per_dollar": 0.03,
+                    "final_aggregate_confidence": 0.95,
+                    "leg_order": 1,
+                }
+            )
+        if "prod-low-confidence-high-value" in product_ids:
+            legs.append(
+                {
+                    "recommendation_product_id": "prod-low-confidence-high-value",
+                    "market_type": "moneyline",
+                    "selection": "D",
+                    "sportsbook": "book",
+                    "american_odds": 150,
+                    "point": None,
+                    "decimal_odds": 2.50,
+                    "ev_per_dollar": 0.35,
+                    "final_aggregate_confidence": 0.58,
+                    "leg_order": 1,
+                }
+            )
+        return httpx.Response(200, json=legs)
+
+    respx.get(f"{SUPABASE_URL}/rest/v1/recommendation_legs").mock(side_effect=_legs_respond)
+    _mock_empty_reads()
+
+
+@respx.mock
+def test_ask_returns_highest_value_pick():
+    _mock_authenticated_user()
+    _mock_no_runs()
+    _two_products_diverging_confidence_and_value()
+
+    response = _ask("What's MANSA's highest-value pick today?")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["intent"] == {
+        "requestType": "recommendation_lookup",
+        "selectionMode": "highest_value",
+        "timeScope": "today",
+    }
+    assert body["result"]["label"] == "MANSA's highest-value pick today"
+    assert body["result"]["selectionMetric"] == "evPerDollar"
+    assert "not a guarantee" in body["result"]["disclosure"].lower()
+    recommendation = body["result"]["recommendation"]
+    assert recommendation["displayId"] == "2026-00011"
+    assert recommendation["legs"][0]["evPerDollar"] == 0.35
+
+
+@respx.mock
+def test_ask_recognizes_equivalent_value_phrasing():
+    _mock_authenticated_user()
+    _mock_no_runs()
+    _two_products_diverging_confidence_and_value()
+
+    for phrase in ("what's the highest value?", "show me the best value pick today"):
+        response = _ask(phrase)
+        assert response.status_code == 200, phrase
+        assert response.json()["intent"]["selectionMode"] == "highest_value", phrase
+        assert response.json()["result"]["recommendation"]["displayId"] == "2026-00011", phrase
+
+
+@respx.mock
+def test_highest_value_and_highest_confidence_return_different_picks():
+    """Direct proof the two selection modes are not proxies for each
+    other, using the exact same underlying data."""
+    _mock_authenticated_user()
+    _mock_no_runs()
+    _two_products_diverging_confidence_and_value()
+
+    value_response = _ask("highest value pick today")
+    confidence_response = _ask("highest confidence pick today")
+
+    assert value_response.json()["result"]["recommendation"]["displayId"] == "2026-00011"
+    assert confidence_response.json()["result"]["recommendation"]["displayId"] == "2026-00010"
+
+
+@respx.mock
+def test_ask_never_ranks_null_ev_as_zero():
+    """A leg with a null evPerDollar must never be selected as if its
+    value were 0 -- it must simply be skipped."""
+    _mock_authenticated_user()
+    _mock_no_runs()
+    _mock_games(
+        today_ids=["game-1"],
+        by_id={
+            "game-1": {
+                "id": "game-1",
+                "home_team": "A",
+                "away_team": "B",
+                "scheduled_start": "2026-09-09T18:00:00Z",
+                "status": "scheduled",
+            }
+        },
+    )
+    respx.get(f"{SUPABASE_URL}/rest/v1/recommendation_products").mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                {
+                    "id": "prod-null-ev",
+                    "display_id": "2026-00012",
+                    "recommendation_type": "single",
+                    "scope": "game",
+                    "game_id": "game-1",
+                    "status": "active",
+                    "min_required_tier": "free",
+                    "withdrawn_at": None,
+                    "withdrawal_reason": None,
+                    "created_at": "2026-09-09T06:00:00Z",
+                }
+            ],
+        )
+    )
+    respx.get(f"{SUPABASE_URL}/rest/v1/recommendation_legs").mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                {
+                    "recommendation_product_id": "prod-null-ev",
+                    "market_type": "moneyline",
+                    "selection": "A",
+                    "sportsbook": "book",
+                    "american_odds": None,
+                    "point": None,
+                    "decimal_odds": None,
+                    "ev_per_dollar": None,
+                    "final_aggregate_confidence": 0.70,
+                    "leg_order": 1,
+                }
+            ],
+        )
+    )
+    _mock_empty_reads()
+
+    response = _ask("highest value pick today")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["insufficientEvidence"] is True
+    assert body["result"] is None
+
+
+@respx.mock
+def test_ask_never_selects_a_non_positive_ev_leg_as_highest_value():
+    """Defensive proof: a real but non-positive evPerDollar (which
+    should never occur on an active leg per Strategy Engine's own
+    qualification gate, but is defended against anyway) is never
+    presented as MANSA's 'highest value' pick."""
+    _mock_authenticated_user()
+    _mock_no_runs()
+    _mock_games(
+        today_ids=["game-1"],
+        by_id={
+            "game-1": {
+                "id": "game-1",
+                "home_team": "A",
+                "away_team": "B",
+                "scheduled_start": "2026-09-09T18:00:00Z",
+                "status": "scheduled",
+            }
+        },
+    )
+    respx.get(f"{SUPABASE_URL}/rest/v1/recommendation_products").mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                {
+                    "id": "prod-negative-ev",
+                    "display_id": "2026-00013",
+                    "recommendation_type": "single",
+                    "scope": "game",
+                    "game_id": "game-1",
+                    "status": "active",
+                    "min_required_tier": "free",
+                    "withdrawn_at": None,
+                    "withdrawal_reason": None,
+                    "created_at": "2026-09-09T06:00:00Z",
+                }
+            ],
+        )
+    )
+    respx.get(f"{SUPABASE_URL}/rest/v1/recommendation_legs").mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                {
+                    "recommendation_product_id": "prod-negative-ev",
+                    "market_type": "moneyline",
+                    "selection": "A",
+                    "sportsbook": "book",
+                    "american_odds": -110,
+                    "point": None,
+                    "decimal_odds": 1.91,
+                    "ev_per_dollar": -0.04,
+                    "final_aggregate_confidence": 0.70,
+                    "leg_order": 1,
+                }
+            ],
+        )
+    )
+    _mock_empty_reads()
+
+    response = _ask("highest value pick today")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["insufficientEvidence"] is True
+    assert body["result"] is None
+
+
+@respx.mock
+def test_ask_best_pick_remains_unsupported_and_is_never_treated_as_highest_value():
+    """HQ's explicit instruction: 'best pick' must never be treated as
+    a synonym for 'highest value' (or highest confidence)."""
+    _mock_authenticated_user()
+
+    response = _ask("what's the best pick today?")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["intent"]["requestType"] == "unsupported"
+    assert body["intent"]["selectionMode"] is None
+    assert body["result"] is None
+
+
+@respx.mock
+def test_ask_best_value_pick_does_not_collide_with_best_pick_substring():
+    """Substring-matching audit (HQ-required): 'best value pick today'
+    must resolve to highest_value, not the 'best pick' unsupported
+    branch -- proves the two phrase lists don't collide."""
+    _mock_authenticated_user()
+    _mock_no_runs()
+    _two_products_diverging_confidence_and_value()
+
+    response = _ask("show me the best value pick today")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["intent"]["requestType"] == "recommendation_lookup"
+    assert body["intent"]["selectionMode"] == "highest_value"
+
+
+@respx.mock
+def test_ask_highest_value_and_highest_confidence_phrases_do_not_collide():
+    """Further substring-audit proof: the two supported phrase sets
+    never both match the same input in a way that would make ordering
+    in the resolver matter for realistic phrasing."""
+    _mock_authenticated_user()
+    _mock_no_runs()
+    _two_products_diverging_confidence_and_value()
+
+    confidence_response = _ask("what's MANSA's highest confidence pick today")
+    value_response = _ask("what's MANSA's highest value pick today")
+
+    assert confidence_response.json()["intent"]["selectionMode"] == "highest_confidence"
+    assert value_response.json()["intent"]["selectionMode"] == "highest_value"
