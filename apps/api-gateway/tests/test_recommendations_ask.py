@@ -1645,3 +1645,186 @@ def test_ask_top_n_result_always_equals_first_results_entry():
     body = response.json()
     assert len(body["results"]) == 4
     assert body["result"] == body["results"][0]
+
+
+# ---------------------------------------------------------------------------
+# Phase 8.5 Pass 4.1 -- "best-value" phrase normalization cleanup
+# ---------------------------------------------------------------------------
+
+
+@respx.mock
+def test_ask_hyphenated_best_value_pick_resolves_to_highest_value():
+    """Tests 1/2 -- 'best-value pick' resolves identically to the
+    already-supported 'best value pick' end to end."""
+    _mock_authenticated_user()
+    _mock_no_runs()
+    _two_products_diverging_confidence_and_value()
+
+    response = _ask("best-value pick today")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["intent"]["selectionMode"] == "highest_value"
+    assert body["result"]["recommendation"]["displayId"] == "2026-00011"
+
+
+@respx.mock
+def test_ask_top_3_best_value_spreads():
+    """Test 3 -- 'top 3 best-value spreads' resolves count=3,
+    market=spread, value ranking, and filters before ranking exactly
+    like the equivalent 'highest value spread' phrasing (Pass 3/4)."""
+    _mock_authenticated_user()
+    _mock_no_runs()
+    _mock_products_and_legs(
+        [
+            {
+                "id": "prod-f1",
+                "display_id": "2026-00300",
+                "game_id": "game-f1",
+                "scheduled_start": "2026-09-09T13:00:00Z",
+                "market_type": "moneyline",
+                "confidence": 0.99,
+                "ev": 0.60,
+            },
+            {
+                "id": "prod-f2",
+                "display_id": "2026-00301",
+                "game_id": "game-f2",
+                "scheduled_start": "2026-09-09T14:00:00Z",
+                "market_type": "spread",
+                "confidence": 0.80,
+                "ev": 0.30,
+                "point": -3.5,
+            },
+            {
+                "id": "prod-f3",
+                "display_id": "2026-00302",
+                "game_id": "game-f3",
+                "scheduled_start": "2026-09-09T15:00:00Z",
+                "market_type": "spread",
+                "confidence": 0.75,
+                "ev": 0.20,
+                "point": -2.5,
+            },
+            {
+                "id": "prod-f4",
+                "display_id": "2026-00303",
+                "game_id": "game-f4",
+                "scheduled_start": "2026-09-09T16:00:00Z",
+                "market_type": "spread",
+                "confidence": 0.70,
+                "ev": 0.10,
+                "point": 1.5,
+            },
+        ]
+    )
+
+    response = _ask("give me the top 3 best-value spreads")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["intent"]["count"] == 3
+    assert body["intent"]["marketType"] == "spread"
+    assert body["intent"]["selectionMode"] == "highest_value"
+    display_ids = [r["recommendation"]["displayId"] for r in body["results"]]
+    assert display_ids == ["2026-00301", "2026-00302", "2026-00303"]
+    for r in body["results"]:
+        assert r["recommendation"]["legs"][0]["marketType"] == "spread"
+
+
+@respx.mock
+def test_ask_hyphenated_best_value_total():
+    """Test 4 -- 'best-value total' works end to end."""
+    _mock_authenticated_user()
+    _mock_no_runs()
+    _mock_products_and_legs(
+        [
+            {
+                "id": "prod-g1",
+                "display_id": "2026-00310",
+                "game_id": "game-g1",
+                "scheduled_start": "2026-09-09T13:00:00Z",
+                "market_type": "moneyline",
+                "confidence": 0.90,
+                "ev": 0.40,
+            },
+            {
+                "id": "prod-g2",
+                "display_id": "2026-00311",
+                "game_id": "game-g2",
+                "scheduled_start": "2026-09-09T14:00:00Z",
+                "market_type": "total",
+                "confidence": 0.60,
+                "ev": 0.10,
+            },
+        ]
+    )
+
+    response = _ask("give me the best-value total")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["intent"]["marketType"] == "total"
+    assert body["intent"]["selectionMode"] == "highest_value"
+    assert body["result"]["recommendation"]["displayId"] == "2026-00311"
+
+
+@respx.mock
+def test_ask_best_pick_still_unsupported_after_best_value_cleanup():
+    """Test 5 -- 'best pick' remains unsupported."""
+    _mock_authenticated_user()
+
+    response = _ask("what's the best pick today?")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["intent"]["requestType"] == "unsupported"
+    assert body["result"] is None
+    assert body["results"] is None
+
+
+@respx.mock
+def test_ask_hyphenated_best_pick_does_not_become_supported():
+    """Test 6 -- 'best-pick' (hyphenated) must not accidentally
+    resolve as a supported highest-value request. Registers zero
+    recommendation-table mocks: if this ever became RECOMMENDATION_LOOKUP,
+    respx would fail the test by trying to reach an unmocked host."""
+    _mock_authenticated_user()
+
+    response = _ask("what's the best-pick today?")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["intent"]["requestType"] != "recommendation_lookup"
+    assert body["intent"]["selectionMode"] is None
+
+
+@respx.mock
+def test_ask_existing_highest_value_and_best_value_phrasing_unchanged():
+    """Tests 7/8 -- existing 'highest value' and 'best value' (space)
+    phrasing behavior is byte-identical after this cleanup."""
+    _mock_authenticated_user()
+    _mock_no_runs()
+    _two_products_diverging_confidence_and_value()
+
+    for phrase in ("what's the highest value?", "show me the best value pick today", "highest value today"):
+        response = _ask(phrase)
+        assert response.status_code == 200, phrase
+        assert response.json()["intent"]["selectionMode"] == "highest_value", phrase
+        assert response.json()["result"]["recommendation"]["displayId"] == "2026-00011", phrase
+
+
+@respx.mock
+def test_ask_hyphenated_best_value_never_calls_unmocked_host():
+    """Test 9/10 -- proves no provider/worker/recomputation call
+    occurs for a 'best-value' request: only the mocks this test itself
+    registers (auth, games, products, legs, empty-read tables) are
+    ever contacted -- respx fails on any unmatched request, so this
+    test's mere success is the proof."""
+    _mock_authenticated_user()
+    _mock_no_runs()
+    _two_products_diverging_confidence_and_value()
+
+    response = _ask("best-value pick today")
+
+    assert response.status_code == 200

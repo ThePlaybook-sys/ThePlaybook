@@ -335,3 +335,65 @@ def test_build_execution_plan_count_defaults_to_one_for_unsupported_and_ambiguou
     ambiguous_plan = build_execution_plan(_resolve("what should I eat for lunch"))
     assert unsupported_plan.count == 1
     assert ambiguous_plan.count == 1
+
+
+# ---------------------------------------------------------------------------
+# Phase 8.5 Pass 4.1 -- "best-value" phrase normalization cleanup
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_intent_best_value_and_hyphenated_variant_are_identical():
+    """Test 1/7/8 -- 'best-value' must resolve exactly like the
+    already-supported 'best value' and 'highest value', and neither of
+    those two must have changed."""
+    space_intent = _resolve("show me the best value pick today")
+    hyphen_intent = _resolve("show me the best-value pick today")
+    highest_intent = _resolve("what's MANSA's highest-value pick today?")
+
+    assert hyphen_intent.request_type == space_intent.request_type == RequestType.RECOMMENDATION_LOOKUP
+    assert hyphen_intent.selection_mode == space_intent.selection_mode == SelectionMode.HIGHEST_VALUE
+    assert highest_intent.selection_mode == SelectionMode.HIGHEST_VALUE
+
+
+def test_resolve_intent_best_value_pick_hyphenated_resolves_to_highest_value():
+    """Test 2 -- 'best-value pick' resolves to highest-value."""
+    intent = _resolve("best-value pick")
+    assert intent.request_type == RequestType.RECOMMENDATION_LOOKUP
+    assert intent.selection_mode == SelectionMode.HIGHEST_VALUE
+
+
+def test_resolve_intent_top_3_best_value_spreads():
+    """Test 3 -- count=3, market=spread, value ranking, using the
+    hyphenated phrasing."""
+    intent = _resolve("top 3 best-value spreads")
+    assert intent.request_type == RequestType.RECOMMENDATION_LOOKUP
+    assert intent.count == 3
+    assert intent.market_type == MarketType.SPREAD
+    assert intent.selection_mode == SelectionMode.HIGHEST_VALUE
+
+
+def test_resolve_intent_best_value_total_hyphenated():
+    """Test 4 -- 'best-value total' resolves market=total, value
+    ranking."""
+    intent = _resolve("give me the best-value total")
+    assert intent.request_type == RequestType.RECOMMENDATION_LOOKUP
+    assert intent.market_type == MarketType.TOTAL
+    assert intent.selection_mode == SelectionMode.HIGHEST_VALUE
+
+
+def test_resolve_intent_best_pick_remains_unsupported_after_best_value_cleanup():
+    """Test 5 -- 'best pick' (the space form) must still be
+    unsupported; the 'best-value' addition must not touch it."""
+    intent = _resolve("what's the best pick today")
+    assert intent.request_type == RequestType.UNSUPPORTED
+    assert intent.selection_mode is None
+
+
+def test_resolve_intent_hyphenated_best_pick_does_not_become_supported():
+    """Test 6 -- 'best-pick' (hyphenated) must NOT accidentally become
+    a supported HIGHEST_VALUE request just because 'best-value' now
+    is. 'best-pick' contains neither 'best value' nor 'best-value' as
+    a substring, so it must not resolve to RECOMMENDATION_LOOKUP."""
+    intent = _resolve("what's the best-pick today")
+    assert intent.request_type != RequestType.RECOMMENDATION_LOOKUP
+    assert intent.selection_mode is None
