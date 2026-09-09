@@ -45,23 +45,40 @@ when this resolution itself ran, always far in the future of the other
 two for a genuine historical reconstruction. All three are carried on
 `PointInTimeProvenance`, never collapsed into one field.
 
-**`completeness`, defined precisely, not just named:**
+**`completeness`, defined precisely, not just named (corrected 2026-09-09
+per HQ's Point-in-Time Completeness Semantics Correction -- an earlier
+version of this module made `completeness` depend on whether a later,
+correctly-excluded observation also existed; that was wrong and has been
+removed):**
+
+This generic resolver determines exactly one thing: whether an eligible
+historical observation was resolved. It never infers evidence
+completeness from the mere existence of *later* observations -- a later
+observation is normal (providers keep observing after any given moment)
+and must simply remain ineligible for this lookup, with no effect on
+`completeness` whatsoever.
+
 - `UNAVAILABLE`: zero rows satisfy `captured_at <= target_event_
   timestamp` for this entity -- whether because no rows exist for the
   entity at all, or every row that exists postdates the target. `data`
   is always `None` in this case -- there is never a silent fallback to
   the globally-latest (possibly future) row.
-- `JOINED`: at least one eligible row exists, AND no row for this same
-  entity postdates the target either -- the resolved observation is
-  unambiguously the last known state; nothing newer was ever recorded
-  that had to be excluded.
-- `PARTIAL`: at least one eligible row exists (real data IS returned),
-  but at least one OTHER row for this same entity postdates the target
-  too. The resolved answer is still the correct "as of `target_event_
-  timestamp`" answer -- the future row is never used -- but this is
-  disclosed rather than silently indistinguishable from the `JOINED`
-  case, since a reader may want to know a later observation existed
-  that this lookup correctly did not use.
+- `JOINED`: at least one eligible row exists. The resolved observation
+  is the correct "as of `target_event_timestamp`" answer, full stop --
+  whether or not a later observation *also* exists elsewhere in the same
+  entity's history is irrelevant to this result and is not tracked here.
+
+`PARTIAL` is a real, reserved value in this vocabulary but is **never
+produced by this module**. It belongs to a dimension-specific layer this
+pass does not build -- one that knows a dimension's *required evidence
+components* (e.g. "this dimension needs both a confirmed status AND a
+description field, and only the status resolved") and can determine that
+some, but not all, of them are available. That is a different kind of
+judgment than this module makes, and must not be collapsed into it. A
+future dimension-specific caller may itself decide to report `partial`
+by composing multiple `resolve_point_in_time()` results (or other
+signals) -- this module's own job stops at "was one eligible historical
+observation found."
 """
 from __future__ import annotations
 
@@ -76,8 +93,9 @@ class PointInTimeProvenance:
     """Event time / observation time / retrieval time, kept distinct --
     see module docstring. `candidate_row_count` is every row that exists
     for this entity, regardless of timing; `eligible_row_count` is the
-    subset satisfying `captured_at <= target_event_timestamp` -- the
-    honest denominator/numerator pair behind `completeness`."""
+    subset satisfying `captured_at <= target_event_timestamp`. Both are
+    plain, informational counts -- neither one drives `completeness`,
+    which depends only on whether `eligible_row_count > 0`."""
 
     table: str
     entity_id_field: str
@@ -91,7 +109,11 @@ class PointInTimeProvenance:
 
 @dataclass(frozen=True)
 class PointInTimeResult:
-    completeness: str  # "joined" | "partial" | "unavailable"
+    #: "joined" | "unavailable" -- this module never produces "partial";
+    #: see module docstring. "partial" remains a valid, reserved value in
+    #: the wider vocabulary for a future dimension-specific layer that
+    #: knows required evidence components, not this generic resolver.
+    completeness: str
     data: dict | None  # the resolved row, verbatim, never a fabricated/merged value
     reason: str | None  # set iff completeness == "unavailable"
     provenance: PointInTimeProvenance
@@ -114,12 +136,14 @@ def resolve_point_in_time(
     entity_id` itself, exactly like `compute_weather_context` filtering
     `all_weather_rows` down to one `game_id`.
 
+    Determines exactly one thing: whether an eligible historical
+    observation (`captured_at <= target_event_timestamp`) was resolved.
     Never falls back to the globally-latest row when no eligible one
-    exists: candidates are built ONLY from rows satisfying `captured_at
-    <= target_event_timestamp`; a row that postdates the target is
-    tracked (for the `PARTIAL` disclosure and `candidate_row_count`) but
-    is never eligible to be selected, under any code path in this
-    function."""
+    exists: candidates are built ONLY from eligible rows. A row that
+    postdates the target is excluded from selection entirely and has NO
+    effect on `completeness` -- later observations are normal (a
+    provider keeps observing after any given moment) and must simply
+    remain ineligible, never treated as evidence of a "partial" result."""
     now = now or datetime.now(timezone.utc)
     target_ts = parse_ts(target_event_timestamp)
 
@@ -127,13 +151,10 @@ def resolve_point_in_time(
     candidate_row_count = len(entity_rows)
 
     eligible: list[tuple[datetime, dict]] = []
-    has_future_row = False
     for row in entity_rows:
         observed_ts = parse_ts(row[timestamp_field])
         if observed_ts <= target_ts:
             eligible.append((observed_ts, row))
-        else:
-            has_future_row = True
 
     eligible_row_count = len(eligible)
 
@@ -160,7 +181,7 @@ def resolve_point_in_time(
     observed_ts, resolved_row = max(eligible, key=lambda pair: pair[0])
 
     return PointInTimeResult(
-        completeness="partial" if has_future_row else "joined",
+        completeness="joined",
         data=resolved_row,
         reason=None,
         provenance=PointInTimeProvenance(

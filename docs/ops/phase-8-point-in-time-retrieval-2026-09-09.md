@@ -21,31 +21,34 @@ All three delegate to the one generic core function — the ordering rule
 (`captured_at <= target_event_timestamp`, latest eligible row wins) is
 written exactly once, never duplicated per dimension.
 
-## `completeness` semantics — the one judgment call this pass required
+## `completeness` semantics — corrected 2026-09-09
 
-HQ asked for `joined | partial | unavailable` without defining `partial`
-precisely, and none of the five required test names imply a specific
-`partial` scenario. Resolved as follows, recorded here since it's a
-judgment call rather than a literal instruction:
+**This section replaces an earlier, incorrect version of this document.**
+The first implementation made `completeness` depend on whether a later
+(correctly-excluded) observation also existed for the same entity —
+`joined` when nothing postdated the target, `partial` when something
+did. HQ corrected this: a later post-event observation is normal
+(providers keep observing after any given moment) and must never make a
+correctly resolved historical observation `partial`. The generic
+resolver's job is narrower than that: determine only whether an eligible
+historical observation was resolved.
 
 - **`unavailable`**: zero rows satisfy `captured_at <= target_event_
   timestamp` for the entity — whether no rows exist at all, or every row
   that exists postdates the target. `data` is always `None`.
-- **`joined`**: at least one eligible row exists, and no row for the same
-  entity postdates the target either — the resolved observation is
-  unambiguously the last known state.
-- **`partial`**: at least one eligible row exists (real data IS
-  returned) **and** at least one other row for the same entity postdates
-  the target too. The future row is never selected — the resolved data
-  is still exactly the correct "as of" answer — but this is disclosed
-  rather than left indistinguishable from the clean `joined` case, since
-  a reader may want to know a later (correctly unused) observation
-  exists.
+- **`joined`**: at least one eligible row exists. The resolved
+  observation is the correct "as of" answer, full stop — whether or not
+  a later observation *also* exists elsewhere in the entity's history is
+  irrelevant to this result and is no longer tracked as a distinct
+  signal.
 
-This makes `partial` a genuinely informative, non-arbitrary signal rather
-than a guessed freshness threshold (no numeric "how stale is too stale"
-constant was invented, matching this project's own "disclosed-
-conservative policy constants only where truly needed" discipline).
+**`partial` is a real, reserved value in the wider vocabulary but is
+never produced by this generic module.** It is reserved for a future,
+dimension-specific layer (not built in this pass) that knows a
+dimension's *required evidence components* and can determine that some,
+but not all, of them are available — a genuinely different kind of
+judgment than "was one eligible historical observation found," which is
+all this module answers.
 
 ## Historical correctness
 
@@ -60,17 +63,16 @@ conservative policy constants only where truly needed" discipline).
   collapsed — proven by a dedicated test asserting all three are
   genuinely different values in the same scenario.
 - No silent fallback to the latest/current row: candidates are built
-  *only* from rows satisfying the audited rule; a future-only row is
-  tracked (for `candidate_row_count` and the `partial` disclosure) but is
-  structurally never eligible for selection — proven directly by
-  `test_only_a_future_observation_exists_never_leaks_backward`.
+  *only* from rows satisfying the audited rule; a future row is counted
+  in `candidate_row_count` (an informational total, not a completeness
+  signal) but is structurally never eligible for selection — proven
+  directly by `test_only_a_future_observation_exists_never_leaks_backward`.
 
 ## Tests
 
-**13 new tests**, `apps/ai-orchestrator/tests/context_intelligence/
-test_point_in_time.py`, covering every HQ-required scenario plus the
-`partial`/`joined` contrast and each dimension-specific wrapper's own
-field wiring:
+**13 tests**, `apps/ai-orchestrator/tests/context_intelligence/
+test_point_in_time.py`, covering every HQ-required scenario and each
+dimension-specific wrapper's own field wiring:
 - exact prior observation → `joined`.
 - multiple observations, deliberately out of chronological input order →
   the latest eligible one wins, never the earliest or an input-order
@@ -79,12 +81,14 @@ field wiring:
   entity) → honest `unavailable`, never an exception or a fabricated
   result.
 - future observation must not leak backward — tested in its purest form
-  (only a future row exists) and in combination with a real eligible row
-  (the future row's payload never appears in `data`, `completeness`
-  becomes `partial`).
-- a contrast case (multiple eligible rows, nothing future) proving
-  `partial` is driven specifically by an excluded future row, not merely
-  by there being more than one row.
+  (only a future row exists, `completeness` is `unavailable`) and in
+  combination with a real eligible row (the future row's payload never
+  appears in `data`, and `completeness` resolves `joined` — corrected
+  2026-09-09; a prior version of this test asserted `partial` here,
+  which was wrong).
+- a paired test proving `completeness` is identically `joined` whether
+  or not a later observation exists elsewhere in the entity's history —
+  the corrected semantics stated directly, not just implied.
 - timestamp/provenance preservation on both the `joined` and
   `unavailable` paths.
 - an ISO-string `target_event_timestamp` input (not only a `datetime`).
@@ -93,7 +97,8 @@ field wiring:
   game-scoped row entirely, since it keys on `team_id`).
 
 **Full ai-orchestrator suite: 855/855 passing** (842 pre-existing + 13
-new), zero regressions.
+in this module), zero regressions, both before and after the semantics
+correction.
 
 ## Out of scope, exactly as specified
 
