@@ -17,14 +17,26 @@ AUTH_URL = f"{SUPABASE_URL}/auth/v1/user"
 USER_ID = "22222222-2222-2222-2222-222222222222"
 
 
+#: Mirrors the real `resolve_permitted_tiers` Postgres function's own
+#: ladder (`supabase/migrations/20260909200400_entitlement_grants_
+#: foundation.sql`) -- the one authoritative resolution this endpoint's
+#: real code now calls via RPC instead of computing itself.
+_TIER_LADDER = {
+    None: ["free"],
+    "free": ["free"],
+    "pro": ["free", "pro"],
+    "elite": ["free", "pro", "elite"],
+    "syndicate": ["free", "pro", "elite", "syndicate"],
+}
+
+
 def _mock_authenticated_user(*, tier: str | None = None) -> None:
     respx.get(AUTH_URL).mock(return_value=httpx.Response(200, json={"id": USER_ID}))
     respx.get(f"{SUPABASE_URL}/rest/v1/user_profiles").mock(
         return_value=httpx.Response(200, json=[{"id": USER_ID, "jurisdiction_state": "NJ"}])
     )
-    subscription_rows = [{"tier": tier}] if tier else []
-    respx.get(f"{SUPABASE_URL}/rest/v1/subscriptions").mock(
-        return_value=httpx.Response(200, json=subscription_rows)
+    respx.post(f"{SUPABASE_URL}/rest/v1/rpc/resolve_permitted_tiers").mock(
+        return_value=httpx.Response(200, json=_TIER_LADDER[tier])
     )
 
 
@@ -292,6 +304,66 @@ def test_tier_gated_product_visible_to_elite_subscriber():
                     "game_id": "game-1",
                     "status": "active",
                     "min_required_tier": "elite",
+                    "withdrawn_at": None,
+                    "withdrawal_reason": None,
+                    "created_at": "2026-08-28T06:00:00Z",
+                }
+            ],
+        )
+    )
+    _mock_empty_reads()
+
+    response = client.get("/v1/recommendations/today", headers={"Authorization": "Bearer validtoken"})
+
+    assert response.status_code == 200
+    assert len(response.json()) == 1
+
+
+@respx.mock
+def test_product_grant_unlocks_syndicate_gated_product_with_zero_subscription():
+    """Centralized Product Entitlement Foundation (2026-09-09): a user
+    with NO subscription at all, but a real `entitlement_grants` row
+    (e.g. `product:*`, `source='owner'`), must reach a syndicate-gated
+    product exactly like a real syndicate subscriber would -- proving
+    the application layer's `read_permitted_tiers`/`tier_permits` genuinely
+    defers to `resolve_permitted_tiers`'s resolved set rather than any
+    locally-reimplemented tier check. Mocks the RPC directly (not via
+    `_mock_authenticated_user`'s `tier=` param, which models a
+    subscription -- this test models a grant instead, at the one
+    boundary the application actually depends on: the RPC's return
+    value)."""
+    respx.get(AUTH_URL).mock(return_value=httpx.Response(200, json={"id": USER_ID}))
+    respx.get(f"{SUPABASE_URL}/rest/v1/user_profiles").mock(
+        return_value=httpx.Response(200, json=[{"id": USER_ID, "jurisdiction_state": "NJ"}])
+    )
+    respx.post(f"{SUPABASE_URL}/rest/v1/rpc/resolve_permitted_tiers").mock(
+        return_value=httpx.Response(200, json=["free", "pro", "elite", "syndicate"])
+    )
+    _mock_games(
+        today_ids=["game-1"],
+        by_id={
+            "game-1": {
+                "id": "game-1",
+                "home_team": "A",
+                "away_team": "B",
+                "scheduled_start": "2026-08-28T18:00:00Z",
+                "status": "scheduled",
+            }
+        },
+    )
+    respx.get(f"{SUPABASE_URL}/rest/v1/master_refresh_runs").mock(return_value=httpx.Response(200, json=[]))
+    respx.get(f"{SUPABASE_URL}/rest/v1/recommendation_products").mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                {
+                    "id": "prod-syndicate",
+                    "display_id": "2026-00005",
+                    "recommendation_type": "single",
+                    "scope": "game",
+                    "game_id": "game-1",
+                    "status": "active",
+                    "min_required_tier": "syndicate",
                     "withdrawn_at": None,
                     "withdrawal_reason": None,
                     "created_at": "2026-08-28T06:00:00Z",

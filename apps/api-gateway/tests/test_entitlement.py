@@ -1,63 +1,61 @@
-"""Unit tests for app.entitlement.tier_permits -- mirrors
-recommendation_products_tier_gated_select exactly.
+"""Unit tests for app.entitlement.tier_permits.
 
-**Hotfix regression coverage (HQ-authorized, 2026-09-02, DEV only):**
-the 'syndicate' gap this module's docstring used to describe as a
-deliberately-mirrored, unfixed policy defect is now corrected in both
-this function and the SQL policy
-(`supabase/migrations/20260902020000_fix_recommendation_products_syndicate_entitlement.sql`).
-The cases below are organized to prove each property HQ's hotfix
-authorization required: lower tiers are unchanged, syndicate can now
-reach syndicate-gated content, no tier gained MORE access than before,
-and an unrecognized tier string still safely denies."""
+**Centralized Product Entitlement Foundation (2026-09-09):** `tier_permits`
+is now a plain membership test against an already-resolved
+`permitted_tiers` list (from `resolve_permitted_tiers`, the one
+authoritative Postgres function) -- it contains no ordering/hierarchy
+logic of its own any more. These cases are the exact same scenarios the
+old two-copy (`tier_permits` + inline RLS subquery) design covered,
+rewritten against the new signature to prove behavior is unchanged --
+Requirement 1 of the foundation's own test list ("current free/pro/
+elite/syndicate behavior is unchanged")."""
 from __future__ import annotations
 
 import pytest
 
 from app.entitlement import tier_permits
 
+_FREE = ["free"]
+_PRO = ["free", "pro"]
+_ELITE = ["free", "pro", "elite"]
+_SYNDICATE = ["free", "pro", "elite", "syndicate"]
+_NONE: list[str] = []
+
 
 @pytest.mark.parametrize(
-    "min_required_tier,user_tier,expected",
+    "min_required_tier,permitted_tiers,expected",
     [
-        # -- free: unchanged --
-        ("free", None, True),
-        ("free", "free", True),
-        ("free", "pro", True),
-        ("free", "elite", True),
-        ("free", "syndicate", True),
-        # -- pro: unchanged (a syndicate subscriber could already reach
-        # pro-gated content before this hotfix; still can, nothing wider) --
-        ("pro", None, False),
-        ("pro", "free", False),
-        ("pro", "pro", True),
-        ("pro", "elite", True),
-        ("pro", "syndicate", True),
-        # -- elite: unchanged, same reasoning --
-        ("elite", None, False),
-        ("elite", "free", False),
-        ("elite", "pro", False),
-        ("elite", "elite", True),
-        ("elite", "syndicate", True),
-        # -- syndicate: THE FIX. A syndicate-gated product is now
-        # reachable by a syndicate subscriber (was False before the
-        # hotfix -- this is the corrected behavior, not a regression)
-        # and still correctly denied to every lower tier and to no
-        # subscription at all -- no broader access was accidentally
-        # granted beyond exactly the syndicate tier itself.
-        ("syndicate", "syndicate", True),
-        ("syndicate", "elite", False),
-        ("syndicate", "pro", False),
-        ("syndicate", "free", False),
-        ("syndicate", None, False),
-        # -- unknown/unrecognized tier strings: safe by default, both
-        # as a min_required_tier value (falls through to False, same
-        # as before the hotfix) and as a user_tier value (never
-        # special-cased anywhere, so it simply fails every `in (...)`
-        # membership check) --
-        ("unknown_future_tier", "syndicate", False),
-        ("pro", "unknown_future_tier", False),
+        # -- free: every real resolved set (even the empty/no-access one,
+        # which never actually occurs since resolve_permitted_tiers
+        # always includes 'free' -- tested here anyway as a defensive
+        # case) --
+        ("free", _NONE, False),
+        ("free", _FREE, True),
+        ("free", _PRO, True),
+        ("free", _ELITE, True),
+        ("free", _SYNDICATE, True),
+        # -- pro --
+        ("pro", _FREE, False),
+        ("pro", _PRO, True),
+        ("pro", _ELITE, True),
+        ("pro", _SYNDICATE, True),
+        # -- elite --
+        ("elite", _FREE, False),
+        ("elite", _PRO, False),
+        ("elite", _ELITE, True),
+        ("elite", _SYNDICATE, True),
+        # -- syndicate: the exact case the 2026-09-02 hotfix corrected
+        # (a syndicate-gated product must be reachable by a syndicate-
+        # equivalent resolved set, and only that set) --
+        ("syndicate", _SYNDICATE, True),
+        ("syndicate", _ELITE, False),
+        ("syndicate", _PRO, False),
+        ("syndicate", _FREE, False),
+        ("syndicate", _NONE, False),
+        # -- unknown/unrecognized tier strings: safe by default --
+        ("unknown_future_tier", _SYNDICATE, False),
+        ("pro", ["unknown_future_tier"], False),
     ],
 )
-def test_tier_permits_mirrors_the_real_rls_policy(min_required_tier, user_tier, expected):
-    assert tier_permits(min_required_tier, user_tier) is expected
+def test_tier_permits_is_a_plain_membership_test(min_required_tier, permitted_tiers, expected):
+    assert tier_permits(min_required_tier, permitted_tiers) is expected

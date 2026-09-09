@@ -57,7 +57,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from app.auth import CurrentUser, get_current_user
-from app.entitlement import read_active_subscription_tier, tier_permits
+from app.entitlement import read_permitted_tiers, tier_permits
 from app.internal_client import InternalServiceError, call_ai_orchestrator
 from app.request_intent import (
     ExecutionAction,
@@ -242,13 +242,13 @@ def _serialize_product(
 
 
 async def _visible_products_with_context(
-    client: httpx.AsyncClient, *, products: list[dict], user_tier: str | None
+    client: httpx.AsyncClient, *, products: list[dict], permitted_tiers: list[str]
 ) -> list[dict]:
     """Applies tier-gating (app.entitlement), then fetches and attaches
     every product's game, activation timestamp, legs, and top-level
     explanation, returning fully serialized cards ordered per the
     module docstring's neutral ordering rule."""
-    visible = [p for p in products if tier_permits(p["min_required_tier"], user_tier)]
+    visible = [p for p in products if tier_permits(p["min_required_tier"], permitted_tiers)]
     if not visible:
         return []
 
@@ -304,7 +304,7 @@ def _utc_day_window(now: datetime) -> tuple[datetime, datetime]:
     return day_start, day_start + timedelta(days=1)
 
 
-async def _todays_visible_products(client: httpx.AsyncClient, *, user_tier: str | None) -> list[dict]:
+async def _todays_visible_products(client: httpx.AsyncClient, *, permitted_tiers: list[str]) -> list[dict]:
     """Shared by `/today` and `POST /ask` (Phase 8.5 Pass 1) -- extracted
     verbatim from the original `/today` route body, no behavior change,
     so both callers see byte-identical results for "today". Today's
@@ -359,7 +359,7 @@ async def _todays_visible_products(client: httpx.AsyncClient, *, user_tier: str 
     )
     products_response.raise_for_status()
 
-    return await _visible_products_with_context(client, products=products_response.json(), user_tier=user_tier)
+    return await _visible_products_with_context(client, products=products_response.json(), permitted_tiers=permitted_tiers)
 
 
 @router.get("/today")
@@ -369,8 +369,8 @@ async def get_todays_recommendations(current_user: CurrentUser = Depends(get_cur
     `POST /ask` can reuse it without duplicating the day-window/OR-query
     logic. This route's own behavior is unchanged."""
     async with new_client() as client:
-        user_tier = await read_active_subscription_tier(client, user_id=current_user.id)
-        return await _todays_visible_products(client, user_tier=user_tier)
+        permitted_tiers = await read_permitted_tiers(client, user_id=current_user.id)
+        return await _todays_visible_products(client, permitted_tiers=permitted_tiers)
 
 
 class AskRequest(BaseModel):
@@ -571,8 +571,8 @@ async def ask_recommendation(
     market_prefix = f"{market_value} " if market_value else ""
 
     async with new_client() as client:
-        user_tier = await read_active_subscription_tier(client, user_id=current_user.id)
-        cards = await _todays_visible_products(client, user_tier=user_tier)
+        permitted_tiers = await read_permitted_tiers(client, user_id=current_user.id)
+        cards = await _todays_visible_products(client, permitted_tiers=permitted_tiers)
 
     selected = mode["select"](cards, market_type=market_value, count=plan.count)
     if not selected:
@@ -627,7 +627,7 @@ async def list_recommendations(
     since_dt = datetime.fromisoformat(since) if since else now - timedelta(days=30)
 
     async with new_client() as client:
-        user_tier = await read_active_subscription_tier(client, user_id=current_user.id)
+        permitted_tiers = await read_permitted_tiers(client, user_id=current_user.id)
 
         products_response = await client.get(
             "/rest/v1/recommendation_products",
@@ -643,7 +643,7 @@ async def list_recommendations(
         products_response.raise_for_status()
 
         return await _visible_products_with_context(
-            client, products=products_response.json(), user_tier=user_tier
+            client, products=products_response.json(), permitted_tiers=permitted_tiers
         )
 
 
@@ -658,7 +658,7 @@ async def _read_product_by_display_id(client: httpx.AsyncClient, *, display_id: 
     return rows[0] if rows else None
 
 
-async def _authorize_product_for_display_id(client: httpx.AsyncClient, *, display_id: str, user_tier: str | None) -> dict:
+async def _authorize_product_for_display_id(client: httpx.AsyncClient, *, display_id: str, permitted_tiers: list[str]) -> dict:
     """Shared by the detail and reconstruction routes: resolve
     display_id -> row, 404 if absent, 404 (never 403 -- see module
     docstring on not inferring locked content) if the caller's tier
@@ -666,7 +666,7 @@ async def _authorize_product_for_display_id(client: httpx.AsyncClient, *, displa
     product = await _read_product_by_display_id(client, display_id=display_id)
     if product is None:
         raise HTTPException(status_code=404, detail="Recommendation not found")
-    if not tier_permits(product["min_required_tier"], user_tier):
+    if not tier_permits(product["min_required_tier"], permitted_tiers):
         raise HTTPException(status_code=404, detail="Recommendation not found")
     return product
 
@@ -733,8 +733,8 @@ async def get_recommendation_detail(
     come from a plain `agents` join, nothing here calls a model or
     recomputes consensus math."""
     async with new_client() as client:
-        user_tier = await read_active_subscription_tier(client, user_id=current_user.id)
-        product = await _authorize_product_for_display_id(client, display_id=display_id, user_tier=user_tier)
+        permitted_tiers = await read_permitted_tiers(client, user_id=current_user.id)
+        product = await _authorize_product_for_display_id(client, display_id=display_id, permitted_tiers=permitted_tiers)
 
         game = await _read_game(client, game_id=product["game_id"]) if product.get("game_id") else None
         snapshots = await _read_activation_snapshots_by_product_ids(client, [product["id"]])
@@ -813,8 +813,8 @@ async def get_recommendation_reconstruction(
     display_id -> internal id and applying the same tier gate every
     other route in this module applies."""
     async with new_client() as client:
-        user_tier = await read_active_subscription_tier(client, user_id=current_user.id)
-        product = await _authorize_product_for_display_id(client, display_id=display_id, user_tier=user_tier)
+        permitted_tiers = await read_permitted_tiers(client, user_id=current_user.id)
+        product = await _authorize_product_for_display_id(client, display_id=display_id, permitted_tiers=permitted_tiers)
 
     try:
         response = await call_ai_orchestrator(
