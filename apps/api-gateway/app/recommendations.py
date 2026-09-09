@@ -381,78 +381,84 @@ class AskRequest(BaseModel):
     question: str = Field(min_length=1, max_length=500)
 
 
-def _select_highest_confidence_card(cards: list[dict], *, market_type: str | None = None) -> tuple[dict, dict] | None:
-    """Among *active* cards' legs, returns `(card, leg)` for the real
-    leg with the highest `finalAggregateConfidence`, or `None` if no
-    active card has any qualifying leg carrying a confidence value at
-    all (e.g. only `no_bet`/`bankroll_preservation` products exist
-    today, nothing exists today, or -- Pass 3 -- no leg matches the
-    requested `market_type`). Withdrawn products are deliberately
-    excluded here -- `/today` shows withdrawn history for transparency,
-    but presenting a withdrawn product as "the pick" would misrepresent
-    it as a live recommendation, which this endpoint must never do.
+def _rank_and_limit(
+    cards: list[dict],
+    *,
+    market_type: str | None = None,
+    metric_field: str,
+    count: int,
+    require_positive: bool = False,
+) -> list[tuple[dict, dict]]:
+    """Phase 8.5 Pass 4 -- the one shared FILTER -> RANK -> LIMIT
+    implementation behind both selection modes (mandatory order per
+    HQ). Among *active* cards' legs, returns up to `count` `(card,
+    leg)` pairs ranked by `metric_field` descending, or `[]` if none
+    qualifies. Withdrawn products are deliberately excluded -- `/today`
+    shows withdrawn history for transparency, but presenting a
+    withdrawn product as "a pick" would misrepresent it as a live
+    recommendation, which this endpoint must never do.
 
-    **Filter-before-rank (Pass 3, mandatory per HQ):** the
-    `market_type` check happens inside the same loop that finds the
-    max, BEFORE any comparison against the running best -- a
-    globally-stronger leg in a different market is never even
-    considered a candidate, let alone allowed to win. `market_type=None`
-    (no constraint) preserves Pass 1/2 behavior exactly -- every leg is
-    considered, unchanged."""
-    best: tuple[float, dict, dict] | None = None
+    **Order (mandatory, HQ Pass 4 Step 4):**
+    1. iterate only *active* cards' legs
+    2. apply the `market_type` filter, if present, INSIDE this same
+       loop -- a leg from a different market is never even considered
+       a candidate, let alone allowed to win by being globally
+       stronger (Pass 3's filter-before-rank rule, unchanged)
+    3. skip a leg whose metric is `None` (never treated as 0 or as the
+       worst-but-comparable value), or -- for `evPerDollar`, via
+       `require_positive` -- non-positive (defensive: `app.features.
+       strategy.qualifies()` in ai-orchestrator already requires
+       `ev_per_dollar > 0` before a candidate becomes an active,
+       persisted leg, but this function does not trust that invariant
+       blindly)
+    4. sort the SURVIVING candidates by the metric descending, with a
+       deterministic stable tiebreak (Pass 4 Step 6): Strategy
+       Engine's own `rank_key` (`ai-orchestrator/app/features/
+       strategy.py`) uses `candidate_key` ASC as its final, purely
+       deterministic (never a quality signal) tiebreak -- but
+       `candidate_key` is a generation-time field that is never
+       persisted to `recommendation_legs` or exposed by
+       `_serialize_leg`, so it is not available on this already-
+       serialized card/leg data without adding a new field to the
+       response contract, which Pass 4 does not authorize. The minimum
+       equivalent available here is used instead: `displayId` ASC
+       (globally unique per product, already present on every
+       serialized card) then `legOrder` ASC (already present per leg)
+       -- pure determinism, never a quality signal, mirroring Strategy
+       Engine's own design intent without inventing new ranking logic.
+    5. return only the first `count` entries -- never more, and never
+       fewer than actually qualify padded with filler; an empty or
+       short list is returned as-is (Pass 4 Step 5 -- no fabrication,
+       no market fallback)."""
+    ranked: list[tuple[float, str, int, dict, dict]] = []
     for card in cards:
         if card["status"] != "active":
             continue
         for leg in card["legs"]:
             if market_type is not None and leg["marketType"] != market_type:
                 continue
-            confidence = leg["finalAggregateConfidence"]
-            if confidence is None:
+            value = leg[metric_field]
+            if value is None:
                 continue
-            if best is None or confidence > best[0]:
-                best = (confidence, card, leg)
-    if best is None:
-        return None
-    _confidence, card, leg = best
-    return card, leg
+            if require_positive and value <= 0:
+                continue
+            ranked.append((value, card["displayId"], leg["legOrder"], card, leg))
+    ranked.sort(key=lambda row: (-row[0], row[1], row[2]))
+    return [(card, leg) for _value, _display_id, _leg_order, card, leg in ranked[:count]]
 
 
-def _select_highest_value_card(cards: list[dict], *, market_type: str | None = None) -> tuple[dict, dict] | None:
-    """Phase 8.5 Pass 2 (value) / Pass 3 (market filter) -- among
-    *active* cards' legs, returns `(card, leg)` for the real leg with
-    the highest `evPerDollar`, or `None` if none qualifies. Mirrors
-    `_select_highest_confidence_card` exactly, including its
-    filter-before-rank market check, with two further deliberate,
-    defensive checks per HQ's explicit "never treat NULL as zero" /
-    "do not silently rank missing metrics" instruction:
+def _select_highest_confidence(
+    cards: list[dict], *, market_type: str | None = None, count: int = 1
+) -> list[tuple[dict, dict]]:
+    return _rank_and_limit(cards, market_type=market_type, metric_field="finalAggregateConfidence", count=count)
 
-    - `evPerDollar is None` is skipped, never treated as 0 or as the
-      worst-but-comparable value.
-    - `evPerDollar <= 0` is also skipped. Architecturally this should
-      never occur on an active leg -- `app.features.strategy.
-      qualifies()` (ai-orchestrator) requires `ev_per_dollar > 0`
-      before a candidate can ever become an active, persisted leg
-      (verified, see `docs/ops/phase-8.5-pass2-ev-per-dollar-metric-
-      verification-2026-09-09.md`) -- but this function does not trust
-      that invariant blindly: presenting a non-positive number as
-      MANSA's "highest value" pick would be dishonest regardless of
-      how it got there."""
-    best: tuple[float, dict, dict] | None = None
-    for card in cards:
-        if card["status"] != "active":
-            continue
-        for leg in card["legs"]:
-            if market_type is not None and leg["marketType"] != market_type:
-                continue
-            ev = leg["evPerDollar"]
-            if ev is None or ev <= 0:
-                continue
-            if best is None or ev > best[0]:
-                best = (ev, card, leg)
-    if best is None:
-        return None
-    _ev, card, leg = best
-    return card, leg
+
+def _select_highest_value(
+    cards: list[dict], *, market_type: str | None = None, count: int = 1
+) -> list[tuple[dict, dict]]:
+    return _rank_and_limit(
+        cards, market_type=market_type, metric_field="evPerDollar", count=count, require_positive=True
+    )
 
 
 #: Phase 8.5 Pass 2/3: per-`ExecutionAction` response shape for the
@@ -464,7 +470,7 @@ def _select_highest_value_card(cards: list[dict], *, market_type: str | None = N
 #: unchanged "MANSA's highest-confidence pick today".
 _RETRIEVAL_MODES: dict[ExecutionAction, dict] = {
     ExecutionAction.RETRIEVE_HIGHEST_CONFIDENCE_TODAY: {
-        "select": _select_highest_confidence_card,
+        "select": _select_highest_confidence,
         "label_template": "MANSA's highest-confidence {market}pick today",
         "metric": "finalAggregateConfidence",
         "disclosure": (
@@ -474,7 +480,7 @@ _RETRIEVAL_MODES: dict[ExecutionAction, dict] = {
         "no_result_reason_template": "No eligible MANSA {market}recommendation with a confidence score exists for today yet.",
     },
     ExecutionAction.RETRIEVE_HIGHEST_VALUE_TODAY: {
-        "select": _select_highest_value_card,
+        "select": _select_highest_value,
         "label_template": "MANSA's highest-value {market}pick today",
         "metric": "evPerDollar",
         "disclosure": (
@@ -491,9 +497,10 @@ _RETRIEVAL_MODES: dict[ExecutionAction, dict] = {
 async def ask_recommendation(
     body: AskRequest, current_user: CurrentUser = Depends(get_current_user)
 ) -> dict:
-    """Phase 8.5 Pass 1/2/3 (HQ-authorized): the first real user-request
-    entry point, now supporting two selection modes and an optional
-    market constraint. Pipeline, each stage kept separate per the
+    """Phase 8.5 Pass 1/2/3/4 (HQ-authorized): the first real user-request
+    entry point, now supporting two selection modes, an optional market
+    constraint, and an optional Top-N count (Pass 4 -- "top 3 highest-
+    confidence spreads"). Pipeline, each stage kept separate per the
     Phase 8.5 audit's explicit instruction not to collapse them into
     one opaque function:
 
@@ -541,6 +548,7 @@ async def ask_recommendation(
         "selectionMode": intent.selection_mode.value if intent.selection_mode else None,
         "marketType": intent.market_type.value if intent.market_type else None,
         "timeScope": intent.time_scope,
+        "count": intent.count,
     }
 
     mode = _RETRIEVAL_MODES.get(plan.action)
@@ -548,11 +556,15 @@ async def ask_recommendation(
         # ExecutionAction.REJECT_UNSUPPORTED / REJECT_AMBIGUOUS -- no
         # retrieval attempted at all, per HQ's instruction that a
         # rejected request must never touch recommendation data.
+        # `results: None` mirrors `result: None`'s existing meaning
+        # ("nothing was even attempted"), distinct from `results: []`
+        # below ("attempted, nothing qualified") -- see Pass 4 ops doc.
         return {
             "intent": intent_payload,
             "insufficientEvidence": False,
             "reason": plan.reason,
             "result": None,
+            "results": None,
         }
 
     market_value = plan.market_type.value if plan.market_type else None
@@ -562,26 +574,41 @@ async def ask_recommendation(
         user_tier = await read_active_subscription_tier(client, user_id=current_user.id)
         cards = await _todays_visible_products(client, user_tier=user_tier)
 
-    selected = mode["select"](cards, market_type=market_value)
-    if selected is None:
+    selected = mode["select"](cards, market_type=market_value, count=plan.count)
+    if not selected:
         return {
             "intent": intent_payload,
             "insufficientEvidence": True,
             "reason": mode["no_result_reason_template"].format(market=market_prefix),
             "result": None,
+            "results": [],
         }
 
-    card, _leg = selected
+    label = mode["label_template"].format(market=market_prefix)
+    results_payload = [
+        {
+            "label": label,
+            "selectionMetric": mode["metric"],
+            "disclosure": mode["disclosure"],
+            "recommendation": card,
+        }
+        for card, _leg in selected
+    ]
+
     return {
         "intent": intent_payload,
         "insufficientEvidence": False,
         "reason": None,
-        "result": {
-            "label": mode["label_template"].format(market=market_prefix),
-            "selectionMetric": mode["metric"],
-            "disclosure": mode["disclosure"],
-            "recommendation": card,
-        },
+        # `result` (Pass 1-3, unchanged meaning): the single top-ranked
+        # pick -- always `results[0]` when anything qualified, so a
+        # client that only ever read `result` (default count=1, or any
+        # count) keeps working unmodified. `results` (Pass 4, new,
+        # additive): the full ranked list actually returned, length
+        # `min(requested count, number that qualified)` -- see Pass 4
+        # ops doc Step 5 for why a short list (never a fabricated one)
+        # is the chosen "fewer than N" behavior.
+        "result": results_payload[0],
+        "results": results_payload,
     }
 
 

@@ -238,3 +238,100 @@ def test_build_execution_plan_market_type_none_when_unconstrained():
     intent = _resolve("highest confidence pick today")
     plan = build_execution_plan(intent)
     assert plan.market_type is None
+
+
+# ---------------------------------------------------------------------------
+# Phase 8.5 Pass 4 -- Top-N request count
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_intent_defaults_count_to_one_when_unspecified():
+    """Test A -- Pass 1-3 behavior unchanged: no 'top N' phrase means
+    count=1, exactly as every prior pass's own tests assumed."""
+    for phrase in ("highest confidence pick today", "highest value pick today", "highest confidence spread"):
+        intent = _resolve(phrase)
+        assert intent.count == 1, phrase
+
+
+def test_resolve_intent_recognizes_digit_top_n():
+    intent = _resolve("top 3 highest confidence picks")
+    assert intent.request_type == RequestType.RECOMMENDATION_LOOKUP
+    assert intent.count == 3
+
+
+def test_resolve_intent_recognizes_word_top_n():
+    """'top three' must resolve identically to 'top 3'."""
+    digit_intent = _resolve("give me your top 3 highest-confidence picks")
+    word_intent = _resolve("give me your top three highest-confidence picks")
+    assert digit_intent.count == 3
+    assert word_intent.count == 3
+
+
+def test_resolve_intent_recognizes_top_n_with_market_and_value():
+    intent = _resolve("give me the top 2 best value totals")
+    assert intent.request_type == RequestType.RECOMMENDATION_LOOKUP
+    assert intent.count == 2
+    assert intent.selection_mode == SelectionMode.HIGHEST_VALUE
+    assert intent.market_type == MarketType.TOTAL
+
+
+def test_resolve_intent_bare_number_does_not_auto_resolve_count():
+    """HQ's explicit instruction: 'give me 5' must NOT auto-resolve a
+    count -- only an explicit 'top N' phrase does. A bare number
+    elsewhere in the sentence is ignored; count stays the default."""
+    intent = _resolve("give me 5 highest confidence picks")
+    assert intent.request_type == RequestType.RECOMMENDATION_LOOKUP
+    assert intent.count == 1
+
+
+def test_resolve_intent_rejects_over_max_digit_count():
+    """Test over-max digit: 'top 6' exceeds the ceiling of 5 -- must be
+    UNSUPPORTED with an honest reason, never silently clamped."""
+    intent = _resolve("top 6 highest confidence picks")
+    assert intent.request_type == RequestType.UNSUPPORTED
+    assert intent.selection_mode is None
+    assert "5" in intent.unresolved_reason
+
+
+def test_resolve_intent_rejects_over_max_word_count():
+    intent = _resolve("give me the top ten highest confidence picks")
+    assert intent.request_type == RequestType.UNSUPPORTED
+    assert "5" in intent.unresolved_reason
+
+
+def test_resolve_intent_accepts_exactly_the_max_count():
+    intent = _resolve("top 5 highest confidence picks")
+    assert intent.request_type == RequestType.RECOMMENDATION_LOOKUP
+    assert intent.count == 5
+
+
+def test_resolve_intent_top_n_never_shadows_unsupported_terminology():
+    """'safest'/'best pick'/etc. must stay UNSUPPORTED even when a
+    'top N' phrase is also present -- the terminology guardrail is
+    checked first, unaffected by Pass 4."""
+    for phrase in ("top 3 safest picks", "give me the top 3 best picks", "build me a top 3 parlay"):
+        intent = _resolve(phrase)
+        assert intent.request_type == RequestType.UNSUPPORTED, phrase
+        assert intent.count == 1, phrase
+
+
+def test_resolve_intent_unsupported_market_wording_ignores_count():
+    intent = _resolve("top 3 highest confidence player props")
+    assert intent.request_type == RequestType.UNSUPPORTED
+    assert intent.market_type is None
+    assert intent.count == 1
+
+
+def test_build_execution_plan_carries_count_through():
+    intent = _resolve("top 3 highest confidence spreads")
+    plan = build_execution_plan(intent)
+    assert plan.action == ExecutionAction.RETRIEVE_HIGHEST_CONFIDENCE_TODAY
+    assert plan.market_type == MarketType.SPREAD
+    assert plan.count == 3
+
+
+def test_build_execution_plan_count_defaults_to_one_for_unsupported_and_ambiguous():
+    unsupported_plan = build_execution_plan(_resolve("what's the safest pick"))
+    ambiguous_plan = build_execution_plan(_resolve("what should I eat for lunch"))
+    assert unsupported_plan.count == 1
+    assert ambiguous_plan.count == 1

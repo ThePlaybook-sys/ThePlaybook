@@ -40,9 +40,25 @@ the audit found no basis to defer moneyline. A market constraint is
 only ever recognized alongside a recognized selection-mode phrase
 (never as a standalone request type -- that would expand this pass's
 own scope); its absence preserves Pass 1/2 behavior exactly.
+
+**Top-N retrieval (Pass 4, added 2026-09-09).** `count` is a small,
+deterministic, bounded request for "how many ranked results" -- never
+a full natural-language number parser. Recognized ONLY via a `top <N>`
+phrase (digit or a fixed, bounded word-number lookup, `one`..`ten`) --
+a bare number elsewhere in the sentence ("give me 5 picks") is
+deliberately NOT recognized, per HQ's explicit "must NOT auto-resolve
+unless it clearly expresses count in the current deterministic
+grammar" instruction. Default is 1 when no `top <N>` phrase is
+present, preserving every Pass 1-3 outcome exactly (`count` did not
+exist before this pass; every existing `ResolvedIntent`/`ExecutionPlan`
+construction that doesn't pass it now gets `1` via the field default).
+Ceiling is 5 (`_MAX_SUPPORTED_COUNT`) -- a request for more than that
+resolves to UNSUPPORTED with an honest reason, never a silently
+truncated subset presented as if it were the full request.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from enum import Enum
 
@@ -122,6 +138,47 @@ _MARKET_TYPE_PHRASES: tuple[tuple[str, str], ...] = (
     ("total", "total"),
 )
 
+#: Top-N (Pass 4). Maximum number of ranked results this endpoint will
+#: ever return in one response. Preferred initial ceiling per HQ --
+#: not derived from any architectural limit, a deliberate product
+#: bound to keep "top N" requests small and honestly answerable.
+_MAX_SUPPORTED_COUNT = 5
+
+#: The count used whenever no `top <N>` phrase is recognized at all --
+#: byte-identical to every Pass 1-3 request's implicit behavior (one
+#: single best pick).
+_DEFAULT_COUNT = 1
+
+#: Bounded word-number lookup for `top <word>` phrasing ("top three").
+#: Deliberately NOT a general number parser -- a fixed 10-entry table,
+#: one..ten, so both in-range word phrasing ("top three") and the more
+#: common over-ceiling word phrasing ("top ten") resolve honestly
+#: (either a real count or a clear over-max rejection) instead of
+#: falling through to an unrelated AMBIGUOUS response. Any word above
+#: "ten" is simply not recognized as a count phrase -- out of scope by
+#: design, not a parsing gap silently swallowed.
+_COUNT_WORD_TO_INT: dict[str, int] = {
+    "one": 1,
+    "two": 2,
+    "three": 3,
+    "four": 4,
+    "five": 5,
+    "six": 6,
+    "seven": 7,
+    "eight": 8,
+    "nine": 9,
+    "ten": 10,
+}
+
+#: `top <digits>` -- any positive integer, range-checked afterward
+#: against `_MAX_SUPPORTED_COUNT` rather than being limited by the
+#: regex itself, so an over-ceiling digit request ("top 12") is
+#: recognized and honestly rejected rather than silently ignored.
+_TOP_N_DIGIT_RE = re.compile(r"\btop\s+(\d+)\b")
+
+#: `top <word-number>`, word drawn from the bounded lookup above.
+_TOP_N_WORD_RE = re.compile(r"\btop\s+(" + "|".join(_COUNT_WORD_TO_INT) + r")\b")
+
 
 class RequestType(str, Enum):
     RECOMMENDATION_LOOKUP = "recommendation_lookup"
@@ -177,13 +234,17 @@ class ResolvedIntent:
     distinct from whether MANSA can actually honor it (that's the
     execution plan's job, immediately below). `market_type` is `None`
     whenever no market constraint was recognized -- preserving Pass
-    1/2 behavior exactly for every request that doesn't name one."""
+    1/2 behavior exactly for every request that doesn't name one.
+    `count` (Pass 4) is always `_DEFAULT_COUNT` (1) unless a `top <N>`
+    phrase was recognized -- preserving Pass 1-3 behavior exactly for
+    every request that doesn't name one."""
 
     request_type: RequestType
     selection_mode: SelectionMode | None
     market_type: MarketType | None
     time_scope: str
     unresolved_reason: str | None = None
+    count: int = _DEFAULT_COUNT
 
 
 @dataclass(frozen=True)
@@ -196,6 +257,7 @@ class ExecutionPlan:
     action: ExecutionAction
     market_type: MarketType | None = None
     reason: str | None = None
+    count: int = _DEFAULT_COUNT
 
 
 def normalize_request(raw: RawUserInput) -> NormalizedRequest:
@@ -229,6 +291,46 @@ def _match_market_type(text: str) -> tuple[MarketType | None, str | None]:
         if phrase in text:
             return MarketType(market_type), None
     return None, None
+
+
+def _match_requested_count(text: str) -> tuple[int | None, str | None]:
+    """Returns `(requested_count, over_max_reason)` -- Pass 4. Exactly
+    one meaningful outcome:
+
+    - `(None, None)`: no `top <N>` phrase found at all -- caller
+      defaults to `_DEFAULT_COUNT` (1), preserving Pass 1-3 behavior.
+    - `(N, None)`: a `top <N>` phrase was recognized and `1 <= N <=
+      _MAX_SUPPORTED_COUNT`.
+    - `(None, reason)`: a `top <N>` phrase was recognized but `N`
+      exceeds `_MAX_SUPPORTED_COUNT` -- the caller must reject the
+      request honestly (never silently clamp to the max and pretend
+      the full request was satisfied, per HQ's explicit instruction).
+
+    Digit form (`top 12`) accepts any positive integer, so an
+    over-ceiling digit request is recognized and honestly rejected
+    rather than silently falling through as unrecognized text. Word
+    form is deliberately bounded to the fixed one..ten lookup table --
+    not a general number parser."""
+    match = _TOP_N_DIGIT_RE.search(text)
+    if match is not None:
+        requested = int(match.group(1))
+    else:
+        word_match = _TOP_N_WORD_RE.search(text)
+        if word_match is None:
+            return None, None
+        requested = _COUNT_WORD_TO_INT[word_match.group(1)]
+
+    if requested < 1:
+        # "top 0" is not a meaningful count request -- treat as if no
+        # count phrase were present rather than inventing a new error
+        # shape for a degenerate input no real user sends.
+        return None, None
+    if requested > _MAX_SUPPORTED_COUNT:
+        return None, (
+            f"MANSA supports up to the top {_MAX_SUPPORTED_COUNT} recommendations per "
+            f"request. Try asking for {_MAX_SUPPORTED_COUNT} or fewer."
+        )
+    return requested, None
 
 
 def resolve_intent(normalized: NormalizedRequest) -> ResolvedIntent:
@@ -291,11 +393,22 @@ def resolve_intent(normalized: NormalizedRequest) -> ResolvedIntent:
             unresolved_reason=market_unsupported_reason,
         )
 
+    requested_count, count_over_max_reason = _match_requested_count(text)
+    if count_over_max_reason is not None:
+        return ResolvedIntent(
+            request_type=RequestType.UNSUPPORTED,
+            selection_mode=None,
+            market_type=None,
+            time_scope="today",
+            unresolved_reason=count_over_max_reason,
+        )
+
     return ResolvedIntent(
         request_type=RequestType.RECOMMENDATION_LOOKUP,
         selection_mode=selection_mode,
         market_type=market_type,
         time_scope="today",
+        count=requested_count if requested_count is not None else _DEFAULT_COUNT,
     )
 
 
@@ -309,9 +422,17 @@ def build_execution_plan(intent: ResolvedIntent) -> ExecutionPlan:
     through unchanged onto the plan -- filtering happens at retrieval
     time (`app.recommendations`), never here (this module has no I/O)."""
     if intent.request_type == RequestType.RECOMMENDATION_LOOKUP and intent.selection_mode == SelectionMode.HIGHEST_CONFIDENCE:
-        return ExecutionPlan(action=ExecutionAction.RETRIEVE_HIGHEST_CONFIDENCE_TODAY, market_type=intent.market_type)
+        return ExecutionPlan(
+            action=ExecutionAction.RETRIEVE_HIGHEST_CONFIDENCE_TODAY,
+            market_type=intent.market_type,
+            count=intent.count,
+        )
     if intent.request_type == RequestType.RECOMMENDATION_LOOKUP and intent.selection_mode == SelectionMode.HIGHEST_VALUE:
-        return ExecutionPlan(action=ExecutionAction.RETRIEVE_HIGHEST_VALUE_TODAY, market_type=intent.market_type)
+        return ExecutionPlan(
+            action=ExecutionAction.RETRIEVE_HIGHEST_VALUE_TODAY,
+            market_type=intent.market_type,
+            count=intent.count,
+        )
     if intent.request_type == RequestType.UNSUPPORTED:
         return ExecutionPlan(action=ExecutionAction.REJECT_UNSUPPORTED, reason=intent.unresolved_reason)
     return ExecutionPlan(action=ExecutionAction.REJECT_AMBIGUOUS, reason=intent.unresolved_reason)

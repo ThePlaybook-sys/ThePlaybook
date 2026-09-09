@@ -195,6 +195,7 @@ def test_ask_returns_highest_confidence_pick():
         "selectionMode": "highest_confidence",
         "marketType": None,
         "timeScope": "today",
+        "count": 1,
     }
     assert body["insufficientEvidence"] is False
     assert body["reason"] is None
@@ -204,6 +205,10 @@ def test_ask_returns_highest_confidence_pick():
     recommendation = body["result"]["recommendation"]
     assert recommendation["displayId"] == "2026-00002"
     assert recommendation["legs"][0]["finalAggregateConfidence"] == 0.91
+    # Pass 4: default count=1 must leave `results` a single-item list
+    # identical to `result` -- the existing single-pick behavior,
+    # unchanged, just also exposed through the new plural field.
+    assert body["results"] == [body["result"]]
 
 
 @respx.mock
@@ -454,6 +459,7 @@ def test_ask_returns_highest_value_pick():
         "selectionMode": "highest_value",
         "marketType": None,
         "timeScope": "today",
+        "count": 1,
     }
     assert body["result"]["label"] == "MANSA's highest-value pick today"
     assert body["result"]["selectionMetric"] == "evPerDollar"
@@ -461,6 +467,7 @@ def test_ask_returns_highest_value_pick():
     recommendation = body["result"]["recommendation"]
     assert recommendation["displayId"] == "2026-00011"
     assert recommendation["legs"][0]["evPerDollar"] == 0.35
+    assert body["results"] == [body["result"]]
 
 
 @respx.mock
@@ -1083,3 +1090,558 @@ def test_ask_market_filtered_unsupported_request_never_queries_recommendation_ta
     response = _ask("what's MANSA's highest-confidence player prop?")
 
     assert response.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# Phase 8.5 Pass 4 -- Top-N retrieval
+# ---------------------------------------------------------------------------
+
+
+def _mock_products_and_legs(specs: list[dict]) -> None:
+    """Generic Pass 4 fixture builder: each spec is
+    `{id, display_id, game_id, scheduled_start, market_type,
+    confidence, ev, [status], [point], [selection], [leg_order]}`.
+    Replaces one bespoke fixture function per scenario (the Pass 1-3
+    pattern) with a single reusable builder, since Pass 4's tests need
+    many small variations (5 products, ties, mixed null/negative EV,
+    mixed markets) that would otherwise duplicate the same
+    games/products/legs mocking boilerplate a dozen times over. IDs
+    must not be substrings of one another (`_legs_respond` matches by
+    substring against the raw PostgREST `in.(...)` param, exactly as
+    every prior fixture in this file already does)."""
+    games_by_id: dict[str, dict] = {}
+    game_ids: list[str] = []
+    for spec in specs:
+        gid = spec["game_id"]
+        if gid not in games_by_id:
+            games_by_id[gid] = {
+                "id": gid,
+                "home_team": f"{gid}-home",
+                "away_team": f"{gid}-away",
+                "scheduled_start": spec["scheduled_start"],
+                "status": "scheduled",
+            }
+            game_ids.append(gid)
+    _mock_games(today_ids=game_ids, by_id=games_by_id)
+
+    products = [
+        {
+            "id": spec["id"],
+            "display_id": spec["display_id"],
+            "recommendation_type": "single",
+            "scope": "game",
+            "game_id": spec["game_id"],
+            "status": spec.get("status", "active"),
+            "min_required_tier": "free",
+            "withdrawn_at": None,
+            "withdrawal_reason": None,
+            "created_at": "2026-09-09T06:00:00Z",
+        }
+        for spec in specs
+    ]
+    respx.get(f"{SUPABASE_URL}/rest/v1/recommendation_products").mock(
+        return_value=httpx.Response(200, json=products)
+    )
+
+    def _legs_respond(request: httpx.Request) -> httpx.Response:
+        product_ids = request.url.params.get("recommendation_product_id", "")
+        legs = []
+        for spec in specs:
+            if spec["id"] in product_ids:
+                legs.append(
+                    {
+                        "recommendation_product_id": spec["id"],
+                        "market_type": spec["market_type"],
+                        "selection": spec.get("selection", "A"),
+                        "sportsbook": "book",
+                        "american_odds": -110,
+                        "point": spec.get("point"),
+                        "decimal_odds": 1.91,
+                        "ev_per_dollar": spec.get("ev"),
+                        "final_aggregate_confidence": spec.get("confidence"),
+                        "leg_order": spec.get("leg_order", 1),
+                    }
+                )
+        return httpx.Response(200, json=legs)
+
+    respx.get(f"{SUPABASE_URL}/rest/v1/recommendation_legs").mock(side_effect=_legs_respond)
+    _mock_empty_reads()
+
+
+def _five_moneyline_confidences() -> None:
+    """Five active moneyline products, distinct confidences,
+    deliberately NOT in chronological/creation order -- proves Top-N
+    ranks by confidence, not by any neutral ordering. Test B/Q."""
+    _mock_products_and_legs(
+        [
+            {
+                "id": "prod-a1",
+                "display_id": "2026-00101",
+                "game_id": "game-a1",
+                "scheduled_start": "2026-09-09T20:00:00Z",
+                "market_type": "moneyline",
+                "confidence": 0.90,
+                "ev": 0.10,
+            },
+            {
+                "id": "prod-a2",
+                "display_id": "2026-00102",
+                "game_id": "game-a2",
+                "scheduled_start": "2026-09-09T13:00:00Z",
+                "market_type": "moneyline",
+                "confidence": 0.85,
+                "ev": 0.30,
+            },
+            {
+                "id": "prod-a3",
+                "display_id": "2026-00103",
+                "game_id": "game-a3",
+                "scheduled_start": "2026-09-09T16:00:00Z",
+                "market_type": "moneyline",
+                "confidence": 0.80,
+                "ev": 0.20,
+            },
+            {
+                "id": "prod-a4",
+                "display_id": "2026-00104",
+                "game_id": "game-a4",
+                "scheduled_start": "2026-09-09T18:00:00Z",
+                "market_type": "moneyline",
+                "confidence": 0.75,
+                "ev": 0.05,
+            },
+            {
+                "id": "prod-a5",
+                "display_id": "2026-00105",
+                "game_id": "game-a5",
+                "scheduled_start": "2026-09-09T22:00:00Z",
+                "market_type": "moneyline",
+                "confidence": 0.70,
+                "ev": 0.01,
+            },
+        ]
+    )
+
+
+@respx.mock
+def test_ask_count_defaults_to_one_result_unchanged():
+    """Test A -- default count=1 leaves `result`/`results` byte-
+    identical to Pass 1-3 single-pick behavior (already asserted in
+    `test_ask_returns_highest_confidence_pick`; this re-proves it on
+    the Pass 4 five-product fixture as an independent check)."""
+    _mock_authenticated_user()
+    _mock_no_runs()
+    _five_moneyline_confidences()
+
+    response = _ask("highest confidence pick today")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["intent"]["count"] == 1
+    assert len(body["results"]) == 1
+    assert body["result"] == body["results"][0]
+    assert body["result"]["recommendation"]["displayId"] == "2026-00101"
+
+
+@respx.mock
+def test_ask_top_3_highest_confidence_ordered_correctly():
+    """Test B -- top 3 of 5 by confidence descending: 0.90, 0.85, 0.80."""
+    _mock_authenticated_user()
+    _mock_no_runs()
+    _five_moneyline_confidences()
+
+    response = _ask("give me your top 3 highest-confidence picks")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["intent"]["count"] == 3
+    assert body["insufficientEvidence"] is False
+    display_ids = [r["recommendation"]["displayId"] for r in body["results"]]
+    assert display_ids == ["2026-00101", "2026-00102", "2026-00103"]
+    assert body["result"] == body["results"][0]
+
+
+@respx.mock
+def test_ask_top_3_highest_value_ordered_correctly():
+    """Test C -- top 3 of 5 by evPerDollar descending: 0.30, 0.20, 0.10
+    -- proves the value ranking is genuinely independent of the
+    confidence ranking proven above, using the same underlying data."""
+    _mock_authenticated_user()
+    _mock_no_runs()
+    _five_moneyline_confidences()
+
+    response = _ask("give me your top 3 highest-value picks")
+
+    assert response.status_code == 200
+    body = response.json()
+    display_ids = [r["recommendation"]["displayId"] for r in body["results"]]
+    assert display_ids == ["2026-00102", "2026-00103", "2026-00101"]
+
+
+@respx.mock
+def test_ask_top_n_word_and_digit_forms_are_equivalent():
+    """Test Q -- 'top three' and 'top 3' must produce identical
+    results."""
+    _mock_authenticated_user()
+    _mock_no_runs()
+    _five_moneyline_confidences()
+    digit_response = _ask("give me your top 3 highest-confidence picks")
+
+    _mock_no_runs()
+    _five_moneyline_confidences()
+    word_response = _ask("give me your top three highest-confidence picks")
+
+    digit_ids = [r["recommendation"]["displayId"] for r in digit_response.json()["results"]]
+    word_ids = [r["recommendation"]["displayId"] for r in word_response.json()["results"]]
+    assert digit_ids == word_ids == ["2026-00101", "2026-00102", "2026-00103"]
+
+
+@respx.mock
+def test_ask_market_scoped_top_3_filters_before_ranking_never_admits_stronger_other_market_leg():
+    """Test D/E -- extends the Pass 3 fixture design: a globally-
+    dominant moneyline leg (confidence 0.99) plus three spread legs and
+    one total leg. A 'top 3 highest-confidence spread' request must
+    return exactly the three spread legs, ranked among themselves --
+    the far stronger moneyline leg must never enter the result no
+    matter how strong, and the request must not fall back to filling
+    the third slot from the total market either."""
+    _mock_authenticated_user()
+    _mock_no_runs()
+    _mock_products_and_legs(
+        [
+            {
+                "id": "prod-b1",
+                "display_id": "2026-00110",
+                "game_id": "game-b1",
+                "scheduled_start": "2026-09-09T13:00:00Z",
+                "market_type": "moneyline",
+                "confidence": 0.99,
+                "ev": 0.60,
+            },
+            {
+                "id": "prod-b2",
+                "display_id": "2026-00111",
+                "game_id": "game-b2",
+                "scheduled_start": "2026-09-09T14:00:00Z",
+                "market_type": "spread",
+                "confidence": 0.80,
+                "ev": 0.10,
+                "point": -3.5,
+            },
+            {
+                "id": "prod-b3",
+                "display_id": "2026-00112",
+                "game_id": "game-b3",
+                "scheduled_start": "2026-09-09T15:00:00Z",
+                "market_type": "spread",
+                "confidence": 0.75,
+                "ev": 0.08,
+                "point": -2.5,
+            },
+            {
+                "id": "prod-b4",
+                "display_id": "2026-00113",
+                "game_id": "game-b4",
+                "scheduled_start": "2026-09-09T16:00:00Z",
+                "market_type": "spread",
+                "confidence": 0.70,
+                "ev": 0.06,
+                "point": 1.5,
+            },
+            {
+                "id": "prod-b5",
+                "display_id": "2026-00114",
+                "game_id": "game-b5",
+                "scheduled_start": "2026-09-09T17:00:00Z",
+                "market_type": "total",
+                "confidence": 0.95,
+                "ev": 0.50,
+            },
+        ]
+    )
+
+    response = _ask("what is MANSA's top 3 highest-confidence spread?")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["intent"]["marketType"] == "spread"
+    assert body["intent"]["count"] == 3
+    display_ids = [r["recommendation"]["displayId"] for r in body["results"]]
+    assert display_ids == ["2026-00111", "2026-00112", "2026-00113"]
+    for r in body["results"]:
+        assert r["recommendation"]["legs"][0]["marketType"] == "spread"
+
+
+@respx.mock
+def test_ask_fewer_than_n_returns_only_what_qualifies_never_fabricates_or_falls_back():
+    """Test F/G -- only 2 legs are eligible (one null EV, one negative
+    EV are correctly excluded by the existing defensive checks), but
+    'top 5' is requested. Must return exactly those 2 -- never padded
+    to 5, never falling back to a different market/metric to fill the
+    gap. `insufficientEvidence` stays False because something real was
+    found (smallest-consistent-behavior decision, Pass 4 ops doc)."""
+    _mock_authenticated_user()
+    _mock_no_runs()
+    _mock_products_and_legs(
+        [
+            {
+                "id": "prod-c1",
+                "display_id": "2026-00120",
+                "game_id": "game-c1",
+                "scheduled_start": "2026-09-09T13:00:00Z",
+                "market_type": "moneyline",
+                "confidence": 0.80,
+                "ev": 0.15,
+            },
+            {
+                "id": "prod-c2",
+                "display_id": "2026-00121",
+                "game_id": "game-c2",
+                "scheduled_start": "2026-09-09T14:00:00Z",
+                "market_type": "moneyline",
+                "confidence": 0.75,
+                "ev": 0.05,
+            },
+            {
+                "id": "prod-c3",
+                "display_id": "2026-00122",
+                "game_id": "game-c3",
+                "scheduled_start": "2026-09-09T15:00:00Z",
+                "market_type": "moneyline",
+                "confidence": 0.70,
+                "ev": None,
+            },
+            {
+                "id": "prod-c4",
+                "display_id": "2026-00123",
+                "game_id": "game-c4",
+                "scheduled_start": "2026-09-09T16:00:00Z",
+                "market_type": "moneyline",
+                "confidence": 0.65,
+                "ev": -0.02,
+            },
+        ]
+    )
+
+    response = _ask("give me your top 5 highest-value picks")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["insufficientEvidence"] is False
+    display_ids = [r["recommendation"]["displayId"] for r in body["results"]]
+    assert display_ids == ["2026-00120", "2026-00121"]
+    assert len(body["results"]) == 2
+
+
+@respx.mock
+def test_ask_market_scoped_top_n_with_zero_qualifying_is_honest_insufficient_evidence():
+    """Test H/I (Pass 4 variant) -- 'top 3 highest-confidence total'
+    with only moneyline/spread products today must return an honest
+    empty result, never a fallback."""
+    _mock_authenticated_user()
+    _mock_no_runs()
+    _mock_products_and_legs(
+        [
+            {
+                "id": "prod-d1",
+                "display_id": "2026-00130",
+                "game_id": "game-d1",
+                "scheduled_start": "2026-09-09T13:00:00Z",
+                "market_type": "moneyline",
+                "confidence": 0.90,
+                "ev": 0.20,
+            },
+            {
+                "id": "prod-d2",
+                "display_id": "2026-00131",
+                "game_id": "game-d2",
+                "scheduled_start": "2026-09-09T14:00:00Z",
+                "market_type": "spread",
+                "confidence": 0.85,
+                "ev": 0.15,
+                "point": -1.5,
+            },
+        ]
+    )
+
+    response = _ask("give me the top 3 highest-confidence totals")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["intent"]["marketType"] == "total"
+    assert body["insufficientEvidence"] is True
+    assert body["result"] is None
+    assert body["results"] == []
+
+
+@respx.mock
+def test_ask_over_max_count_is_rejected_honestly_never_silently_truncated():
+    """Test J (over-max) -- 'top 6' exceeds the ceiling of 5. Must be
+    rejected as UNSUPPORTED with an honest reason, and -- proven by
+    zero recommendation_products/legs/games mocks being registered --
+    must never attempt retrieval at all (a silently truncated top-5
+    response would be dishonest about what was asked for)."""
+    _mock_authenticated_user()
+
+    response = _ask("give me your top 6 highest-confidence picks")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["intent"]["requestType"] == "unsupported"
+    assert body["result"] is None
+    assert body["results"] is None
+    assert "5" in body["reason"]
+
+
+@respx.mock
+def test_ask_over_max_word_count_is_rejected_honestly():
+    _mock_authenticated_user()
+
+    response = _ask("give me the top ten highest-value picks")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["intent"]["requestType"] == "unsupported"
+    assert "5" in body["reason"]
+
+
+@respx.mock
+def test_ask_bare_number_never_auto_resolves_a_count():
+    """Test K -- 'give me 5' must NOT be treated as a count request;
+    only an explicit 'top N' phrase does. This must still return
+    exactly ONE result (Pass 1-3 default), not five."""
+    _mock_authenticated_user()
+    _mock_no_runs()
+    _five_moneyline_confidences()
+
+    response = _ask("give me 5 highest confidence picks today")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["intent"]["count"] == 1
+    assert len(body["results"]) == 1
+
+
+@respx.mock
+def test_ask_top_n_never_shadows_best_pick_unsupported_wording():
+    """Test L -- 'best pick' stays UNSUPPORTED even alongside a 'top N'
+    phrase; count changes must never weaken this terminology guardrail."""
+    _mock_authenticated_user()
+
+    response = _ask("give me the top 3 best picks today")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["intent"]["requestType"] == "unsupported"
+    assert body["result"] is None
+    assert body["results"] is None
+
+
+@respx.mock
+def test_ask_top_n_existing_market_aliases_still_work():
+    """Test M -- moneyline/spread/total aliases (Pass 3) still resolve
+    correctly when combined with a Top-N count (Pass 4)."""
+    _mock_authenticated_user()
+    _mock_no_runs()
+    _five_moneyline_confidences()
+
+    response = _ask("what's MANSA's top 2 highest confidence money line picks?")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["intent"]["marketType"] == "moneyline"
+    assert body["intent"]["count"] == 2
+    assert len(body["results"]) == 2
+
+
+@respx.mock
+def test_ask_top_n_tied_values_produce_deterministic_ordering():
+    """Test N (tiebreak, Pass 4 Step 6) -- two legs share the exact
+    same confidence (0.85). Ordering must be deterministic via the
+    displayId-ascending tiebreak (candidate_key is not available on
+    this serialized data -- see the Pass 4 ops doc / `_rank_and_limit`
+    docstring), regardless of the order the underlying rows arrive in.
+    Products are constructed with the HIGHER displayId listed FIRST in
+    the fixture, to prove the tiebreak isn't just preserving input
+    order by accident."""
+    _mock_authenticated_user()
+    _mock_no_runs()
+    _mock_products_and_legs(
+        [
+            {
+                "id": "prod-e2",
+                "display_id": "2026-00202",
+                "game_id": "game-e2",
+                "scheduled_start": "2026-09-09T14:00:00Z",
+                "market_type": "moneyline",
+                "confidence": 0.85,
+                "ev": 0.10,
+            },
+            {
+                "id": "prod-e1",
+                "display_id": "2026-00201",
+                "game_id": "game-e1",
+                "scheduled_start": "2026-09-09T13:00:00Z",
+                "market_type": "moneyline",
+                "confidence": 0.85,
+                "ev": 0.20,
+            },
+            {
+                "id": "prod-e3",
+                "display_id": "2026-00203",
+                "game_id": "game-e3",
+                "scheduled_start": "2026-09-09T15:00:00Z",
+                "market_type": "moneyline",
+                "confidence": 0.60,
+                "ev": 0.05,
+            },
+        ]
+    )
+
+    response = _ask("give me your top 2 highest-confidence picks")
+
+    assert response.status_code == 200
+    display_ids = [r["recommendation"]["displayId"] for r in response.json()["results"]]
+    assert display_ids == ["2026-00201", "2026-00202"]
+
+
+@respx.mock
+def test_ask_top_n_requires_authentication():
+    """Test O -- auth behavior is unchanged for a Top-N request."""
+    response = client.post(
+        "/v1/recommendations/ask", json={"question": "top 3 highest confidence picks"}
+    )
+    assert response.status_code == 401
+
+
+@respx.mock
+def test_ask_top_n_never_queries_any_unmocked_host():
+    """Test P -- proves no provider/worker/recomputation call occurs
+    for a real, successful Top-N request: only the mocks this test
+    itself registers (auth, games, products, legs, and the three
+    empty-read tables) are ever contacted -- respx fails on any
+    unmatched request, so this test's mere success is the proof."""
+    _mock_authenticated_user()
+    _mock_no_runs()
+    _five_moneyline_confidences()
+
+    response = _ask("top 3 highest confidence picks")
+
+    assert response.status_code == 200
+    assert len(response.json()["results"]) == 3
+
+
+@respx.mock
+def test_ask_top_n_result_always_equals_first_results_entry():
+    """Test S -- for every count, `result` stays exactly `results[0]`
+    (the backward-compatible singular field), never diverging."""
+    _mock_authenticated_user()
+    _mock_no_runs()
+    _five_moneyline_confidences()
+
+    response = _ask("give me your top 4 highest-confidence picks")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["results"]) == 4
+    assert body["result"] == body["results"][0]
