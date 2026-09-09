@@ -55,10 +55,52 @@ def test_resolve_intent_never_treats_safest_as_highest_confidence():
 
 
 def test_resolve_intent_recognizes_other_known_unsupported_requests():
-    for phrase in ("build me a parlay", "give me conservative options", "what's the highest value pick"):
+    for phrase in ("build me a parlay", "give me conservative options", "what's the best pick"):
         intent = _resolve(phrase)
         assert intent.request_type == RequestType.UNSUPPORTED, phrase
         assert intent.unresolved_reason
+
+
+def test_resolve_intent_recognizes_highest_value_phrasing():
+    """Phase 8.5 Pass 2: 'highest value'/'highest-value' were
+    deliberately UNSUPPORTED in Pass 1 -- now genuinely supported,
+    per the verified ev_per_dollar metric."""
+    intent = _resolve("What's MANSA's highest-value pick today?")
+    assert intent.request_type == RequestType.RECOMMENDATION_LOOKUP
+    assert intent.selection_mode == SelectionMode.HIGHEST_VALUE
+    assert intent.time_scope == "today"
+    assert intent.unresolved_reason is None
+
+
+def test_resolve_intent_recognizes_equivalent_value_phrasings():
+    for phrase in ("what's the highest value?", "show me the best value pick today", "highest value today"):
+        intent = _resolve(phrase)
+        assert intent.request_type == RequestType.RECOMMENDATION_LOOKUP, phrase
+        assert intent.selection_mode == SelectionMode.HIGHEST_VALUE, phrase
+
+
+def test_resolve_intent_best_pick_never_treated_as_highest_value_or_confidence():
+    """HQ's explicit instruction: 'best pick' remains unsupported and
+    is never a synonym for either selection mode -- and 'best value
+    pick' must not collide with the 'best pick' substring."""
+    intent = _resolve("what's the best pick today")
+    assert intent.request_type == RequestType.UNSUPPORTED
+    assert intent.selection_mode is None
+
+    # Substring-collision proof: "best value pick" contains "best
+    # value" (matches HIGHEST_VALUE) but never "best pick" as a
+    # contiguous substring, so it must resolve to highest_value, not
+    # unsupported.
+    value_intent = _resolve("show me the best value pick today")
+    assert value_intent.request_type == RequestType.RECOMMENDATION_LOOKUP
+    assert value_intent.selection_mode == SelectionMode.HIGHEST_VALUE
+
+
+def test_resolve_intent_highest_value_and_highest_confidence_do_not_collide():
+    confidence_intent = _resolve("what's MANSA's highest confidence pick today")
+    value_intent = _resolve("what's MANSA's highest value pick today")
+    assert confidence_intent.selection_mode == SelectionMode.HIGHEST_CONFIDENCE
+    assert value_intent.selection_mode == SelectionMode.HIGHEST_VALUE
 
 
 def test_resolve_intent_returns_ambiguous_for_unrecognized_text():
@@ -78,6 +120,13 @@ def test_build_execution_plan_for_recommendation_lookup():
     intent = _resolve("highest confidence pick today")
     plan = build_execution_plan(intent)
     assert plan.action == ExecutionAction.RETRIEVE_HIGHEST_CONFIDENCE_TODAY
+    assert plan.reason is None
+
+
+def test_build_execution_plan_for_highest_value_lookup():
+    intent = _resolve("highest value pick today")
+    plan = build_execution_plan(intent)
+    assert plan.action == ExecutionAction.RETRIEVE_HIGHEST_VALUE_TODAY
     assert plan.reason is None
 
 

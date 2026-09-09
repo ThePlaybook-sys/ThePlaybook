@@ -406,14 +406,80 @@ def _select_highest_confidence_card(cards: list[dict]) -> tuple[dict, dict] | No
     return card, leg
 
 
+def _select_highest_value_card(cards: list[dict]) -> tuple[dict, dict] | None:
+    """Phase 8.5 Pass 2 -- among *active* cards' legs, returns
+    `(card, leg)` for the real leg with the highest `evPerDollar`, or
+    `None` if none qualifies. Mirrors `_select_highest_confidence_card`
+    exactly, with two deliberate, defensive checks beyond it, per HQ's
+    explicit "never treat NULL as zero" / "do not silently rank
+    missing metrics" instruction:
+
+    - `evPerDollar is None` is skipped, never treated as 0 or as the
+      worst-but-comparable value.
+    - `evPerDollar <= 0` is also skipped. Architecturally this should
+      never occur on an active leg -- `app.features.strategy.
+      qualifies()` (ai-orchestrator) requires `ev_per_dollar > 0`
+      before a candidate can ever become an active, persisted leg
+      (verified, see `docs/ops/phase-8.5-pass2-ev-per-dollar-metric-
+      verification-2026-09-09.md`) -- but this function does not trust
+      that invariant blindly: presenting a non-positive number as
+      MANSA's "highest value" pick would be dishonest regardless of
+      how it got there."""
+    best: tuple[float, dict, dict] | None = None
+    for card in cards:
+        if card["status"] != "active":
+            continue
+        for leg in card["legs"]:
+            ev = leg["evPerDollar"]
+            if ev is None or ev <= 0:
+                continue
+            if best is None or ev > best[0]:
+                best = (ev, card, leg)
+    if best is None:
+        return None
+    _ev, card, leg = best
+    return card, leg
+
+
+#: Phase 8.5 Pass 2: per-`ExecutionAction` response shape for the two
+#: supported retrieval modes -- kept as data, not a growing if/elif
+#: chain, so adding a third mode later (once authorized) is one new
+#: entry, not a restructure. Each entry names its own selector
+#: function, the honest label/metric-name/disclosure the terminology
+#: guardrail requires, and the exact no-result reason.
+_RETRIEVAL_MODES: dict[ExecutionAction, dict] = {
+    ExecutionAction.RETRIEVE_HIGHEST_CONFIDENCE_TODAY: {
+        "select": _select_highest_confidence_card,
+        "label": "MANSA's highest-confidence pick today",
+        "metric": "finalAggregateConfidence",
+        "disclosure": (
+            "This reflects MANSA's own model confidence in this selection, "
+            "not a guarantee of outcome or an objective safety rating."
+        ),
+        "no_result_reason": "No eligible MANSA recommendation with a confidence score exists for today yet.",
+    },
+    ExecutionAction.RETRIEVE_HIGHEST_VALUE_TODAY: {
+        "select": _select_highest_value_card,
+        "label": "MANSA's highest-value pick today",
+        "metric": "evPerDollar",
+        "disclosure": (
+            "This reflects MANSA's own modeled expected value per dollar wagered "
+            "at the actual offered price -- not a guarantee of profit and not a "
+            "claim about win probability alone."
+        ),
+        "no_result_reason": "No eligible MANSA recommendation with a positive expected-value score exists for today yet.",
+    },
+}
+
+
 @router.post("/ask")
 async def ask_recommendation(
     body: AskRequest, current_user: CurrentUser = Depends(get_current_user)
 ) -> dict:
-    """Phase 8.5 Pass 1 (HQ-authorized): the first real user-request
-    entry point. Pipeline, each stage kept separate per the Phase 8.5
-    audit's explicit instruction not to collapse them into one opaque
-    function:
+    """Phase 8.5 Pass 1/2 (HQ-authorized): the first real user-request
+    entry point, now supporting two selection modes. Pipeline, each
+    stage kept separate per the Phase 8.5 audit's explicit instruction
+    not to collapse them into one opaque function:
 
     RAW INPUT (`AskRequest.question` -> `RawUserInput`)
       -> NORMALIZED REQUEST (`normalize_request`, pure)
@@ -432,12 +498,13 @@ async def ask_recommendation(
     other route in this module already uses -- confirmed by this
     pass's own tests asserting no additional host is ever contacted.
 
-    Terminology guardrail (HQ-mandated): the one supported request
-    type is presented to the user as "MANSA's highest-confidence pick"
-    -- never "the safest bet," "guaranteed," or "most likely to win."
-    `finalAggregateConfidence` is MANSA's own model output, not an
-    objective claim about the wager -- the response's own `disclosure`
-    field says so explicitly, every time."""
+    Terminology guardrail (HQ-mandated, Pass 2): "highest confidence"
+    and "highest value" are two genuinely distinct, never-interchangeable
+    selection modes (`_RETRIEVAL_MODES` above) -- neither is ever
+    presented as "the safest bet," "guaranteed," or "most likely to
+    win," and the response always names which real metric
+    (`finalAggregateConfidence` or `evPerDollar`) drove the selection,
+    plus an honest disclosure of what that metric actually means."""
     raw = RawUserInput(text=body.question)
     normalized = normalize_request(raw)
     intent = resolve_intent(normalized)
@@ -449,7 +516,11 @@ async def ask_recommendation(
         "timeScope": intent.time_scope,
     }
 
-    if plan.action in (ExecutionAction.REJECT_UNSUPPORTED, ExecutionAction.REJECT_AMBIGUOUS):
+    mode = _RETRIEVAL_MODES.get(plan.action)
+    if mode is None:
+        # ExecutionAction.REJECT_UNSUPPORTED / REJECT_AMBIGUOUS -- no
+        # retrieval attempted at all, per HQ's instruction that a
+        # rejected request must never touch recommendation data.
         return {
             "intent": intent_payload,
             "insufficientEvidence": False,
@@ -457,18 +528,16 @@ async def ask_recommendation(
             "result": None,
         }
 
-    # The only retrieval path this pass implements:
-    # ExecutionAction.RETRIEVE_HIGHEST_CONFIDENCE_TODAY.
     async with new_client() as client:
         user_tier = await read_active_subscription_tier(client, user_id=current_user.id)
         cards = await _todays_visible_products(client, user_tier=user_tier)
 
-    selected = _select_highest_confidence_card(cards)
+    selected = mode["select"](cards)
     if selected is None:
         return {
             "intent": intent_payload,
             "insufficientEvidence": True,
-            "reason": "No eligible MANSA recommendation with a confidence score exists for today yet.",
+            "reason": mode["no_result_reason"],
             "result": None,
         }
 
@@ -478,12 +547,9 @@ async def ask_recommendation(
         "insufficientEvidence": False,
         "reason": None,
         "result": {
-            "label": "MANSA's highest-confidence pick today",
-            "confidenceMetric": "finalAggregateConfidence",
-            "disclosure": (
-                "This reflects MANSA's own model confidence in this selection, "
-                "not a guarantee of outcome or an objective safety rating."
-            ),
+            "label": mode["label"],
+            "selectionMetric": mode["metric"],
+            "disclosure": mode["disclosure"],
             "recommendation": card,
         },
     }

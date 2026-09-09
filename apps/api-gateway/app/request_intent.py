@@ -1,4 +1,4 @@
-"""Phase 8.5 Pass 1 (HQ-authorized): the canonical, deterministic
+"""Phase 8.5 Pass 1/2 (HQ-authorized): the canonical, deterministic
 request-to-answer pipeline for `POST /v1/recommendations/ask` --
 RAW INPUT -> NORMALIZED REQUEST -> RESOLVED INTENT -> EXECUTION PLAN.
 
@@ -15,22 +15,29 @@ discipline) -- no model call anywhere in this module. An unrecognized
 request resolves to AMBIGUOUS or UNSUPPORTED, honestly, rather than
 guessed.
 
-**Terminology guardrail (HQ-mandated, Phase 8.5 Part 14):** this
-module recognizes "highest confidence" phrasing only -- it must never
-treat "safest"/"guaranteed"/"most likely to win" as synonyms for
-`highest_confidence`. Those phrases are recognized explicitly, below,
-specifically so they resolve to UNSUPPORTED with an honest reason
-rather than silently mapping onto the confidence metric.
+**Terminology guardrail (HQ-mandated, Phase 8.5 Part 14, extended
+Pass 2):** this module recognizes "highest confidence" and "highest
+value" phrasing ONLY, as two genuinely distinct selection modes -- it
+must never treat "safest"/"guaranteed"/"most likely to win"/"best
+pick" as a synonym for either. Those phrases are recognized
+explicitly, below, specifically so they resolve to UNSUPPORTED with an
+honest reason rather than silently mapping onto either metric.
+"highest confidence" ranks by `final_aggregate_confidence`; "highest
+value" ranks by `ev_per_dollar` (verified, Pass 2, to be a genuine
+expected-value-per-dollar-staked calculation -- see
+`docs/ops/phase-8.5-pass2-ev-per-dollar-metric-verification-2026-09-09.md`)
+-- these are never interchangeable and the response layer (`app.
+recommendations`) must always say which one was used.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
 
-#: Phrases that deterministically resolve to the one supported request
-#: this pass implements. Matched as case-insensitive substrings against
-#: the normalized text -- intentionally narrow, per HQ's "do not
-#: pretend to support complex requests that are not implemented".
+#: Phrases that deterministically resolve to `HIGHEST_CONFIDENCE`.
+#: Matched as case-insensitive substrings against the normalized text
+#: -- intentionally narrow, per HQ's "do not pretend to support
+#: complex requests that are not implemented".
 _HIGHEST_CONFIDENCE_PHRASES: tuple[str, ...] = (
     "highest confidence",
     "highest-confidence",
@@ -38,10 +45,28 @@ _HIGHEST_CONFIDENCE_PHRASES: tuple[str, ...] = (
     "strongest confidence",
 )
 
-#: Phrases HQ explicitly named as NOT equivalent to highest-confidence
-#: -- recognized on purpose so a user asking for one of these gets an
-#: honest "not yet supported" answer instead of being silently mapped
-#: onto a different metric than the one they asked for.
+#: Phrases that deterministically resolve to `HIGHEST_VALUE` (Pass 2).
+#: "highest value"/"highest-value" were deliberately UNSUPPORTED in
+#: Pass 1 -- moved here now that the underlying `ev_per_dollar` metric
+#: has been verified to support an honest "value" label. "best value"
+#: is included (HQ's own example phrasing, "show me the best value
+#: pick today") -- checked against `_KNOWN_UNSUPPORTED_PHRASES`'s own
+#: "best pick" entry below and confirmed non-colliding: "best value
+#: pick" never contains "best pick" as a contiguous substring, proven
+#: by `test_request_intent.py`'s own collision test.
+_HIGHEST_VALUE_PHRASES: tuple[str, ...] = (
+    "highest value",
+    "highest-value",
+    "best value",
+)
+
+#: Phrases HQ explicitly named as NOT equivalent to either supported
+#: selection mode -- recognized on purpose so a user asking for one of
+#: these gets an honest "not yet supported" answer instead of being
+#: silently mapped onto a different metric than the one they asked
+#: for. "best pick" stays here even after Pass 2, per HQ's explicit
+#: instruction: "'Best' remains a broader product decision and should
+#: remain unsupported."
 _KNOWN_UNSUPPORTED_PHRASES: tuple[str, ...] = (
     "safest",
     "safe bet",
@@ -49,8 +74,6 @@ _KNOWN_UNSUPPORTED_PHRASES: tuple[str, ...] = (
     "guaranteed",
     "most likely to win",
     "best pick",
-    "highest value",
-    "highest-value",
     "conservative",
     "aggressive",
     "parlay",
@@ -66,10 +89,12 @@ class RequestType(str, Enum):
 
 class SelectionMode(str, Enum):
     HIGHEST_CONFIDENCE = "highest_confidence"
+    HIGHEST_VALUE = "highest_value"
 
 
 class ExecutionAction(str, Enum):
     RETRIEVE_HIGHEST_CONFIDENCE_TODAY = "retrieve_highest_confidence_today"
+    RETRIEVE_HIGHEST_VALUE_TODAY = "retrieve_highest_value_today"
     REJECT_UNSUPPORTED = "reject_unsupported"
     REJECT_AMBIGUOUS = "reject_ambiguous"
 
@@ -145,6 +170,13 @@ def resolve_intent(normalized: NormalizedRequest) -> ResolvedIntent:
             time_scope="today",
         )
 
+    if any(phrase in text for phrase in _HIGHEST_VALUE_PHRASES):
+        return ResolvedIntent(
+            request_type=RequestType.RECOMMENDATION_LOOKUP,
+            selection_mode=SelectionMode.HIGHEST_VALUE,
+            time_scope="today",
+        )
+
     matched_unsupported = next((phrase for phrase in _KNOWN_UNSUPPORTED_PHRASES if phrase in text), None)
     if matched_unsupported is not None:
         return ResolvedIntent(
@@ -153,9 +185,10 @@ def resolve_intent(normalized: NormalizedRequest) -> ResolvedIntent:
             time_scope="today",
             unresolved_reason=(
                 f"MANSA does not yet support '{matched_unsupported}' requests. "
-                "This endpoint currently supports only 'highest-confidence pick' "
-                "requests -- MANSA's own model confidence metric, not a claim about "
-                "objective safety, value, or win likelihood."
+                "This endpoint currently supports only 'highest-confidence pick' and "
+                "'highest-value pick' requests -- MANSA's own model confidence and "
+                "expected-value metrics, not claims about objective safety, guarantees, "
+                "or win likelihood."
             ),
         )
 
@@ -177,6 +210,8 @@ def build_execution_plan(intent: ResolvedIntent) -> ExecutionPlan:
     without restructuring this module."""
     if intent.request_type == RequestType.RECOMMENDATION_LOOKUP and intent.selection_mode == SelectionMode.HIGHEST_CONFIDENCE:
         return ExecutionPlan(action=ExecutionAction.RETRIEVE_HIGHEST_CONFIDENCE_TODAY)
+    if intent.request_type == RequestType.RECOMMENDATION_LOOKUP and intent.selection_mode == SelectionMode.HIGHEST_VALUE:
+        return ExecutionPlan(action=ExecutionAction.RETRIEVE_HIGHEST_VALUE_TODAY)
     if intent.request_type == RequestType.UNSUPPORTED:
         return ExecutionPlan(action=ExecutionAction.REJECT_UNSUPPORTED, reason=intent.unresolved_reason)
     return ExecutionPlan(action=ExecutionAction.REJECT_AMBIGUOUS, reason=intent.unresolved_reason)
