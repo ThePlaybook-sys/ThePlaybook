@@ -120,30 +120,32 @@ def test_only_a_future_observation_exists_never_leaks_backward():
     assert result.provenance.eligible_row_count == 0
 
 
-def test_future_observation_alongside_a_real_eligible_one_is_disclosed_as_partial():
-    """A real eligible observation exists AND a later one also exists.
-    The resolved data must be the eligible one (the future row's payload
-    must never appear) -- but this is disclosed as `partial`, not
-    silently indistinguishable from the clean `joined` case, since a
-    reader may want to know a newer (correctly unused) observation
-    exists."""
+def test_future_observation_alongside_a_real_eligible_one_still_resolves_joined():
+    """Point-in-Time Completeness Semantics Correction (2026-09-09): a
+    real eligible observation exists AND a later one also exists. The
+    resolved data must be the eligible one (the future row's payload
+    must never appear) -- and this must resolve `joined`, exactly like
+    the case with no later observation at all. A later, correctly-
+    excluded observation existing elsewhere in the entity's history is
+    normal and must have NO effect on `completeness` -- it must never
+    be inferred as `partial`."""
     eligible = _row("game_id", "game-1", captured_at=KICKOFF - timedelta(hours=1), payload={"temp": 35})
     future_row = _row("game_id", "game-1", captured_at=KICKOFF + timedelta(hours=1), payload={"temp": 999})
     result = _resolve([eligible, future_row])
 
-    assert result.completeness == "partial"
+    assert result.completeness == "joined"
     assert result.data == eligible
     assert result.data != future_row
     assert result.provenance.candidate_row_count == 2
     assert result.provenance.eligible_row_count == 1
 
 
-def test_multiple_eligible_rows_with_no_future_row_stays_joined():
-    """Contrast case for the partial test above: several eligible rows,
-    but nothing postdating the target -- must resolve `joined`, not
-    `partial`. Proves `partial` is driven specifically by the presence
-    of an excluded future row, not merely by there being more than one
-    row."""
+def test_multiple_eligible_rows_with_no_future_row_also_stays_joined():
+    """Contrast case for the test above: several eligible rows, nothing
+    postdating the target -- also resolves `joined`. Together the two
+    tests prove `completeness` is identical (`joined`) whether or not a
+    later observation exists -- exactly the corrected semantics: later
+    observations never affect completeness either way."""
     earlier = _row("game_id", "game-1", captured_at=KICKOFF - timedelta(days=1))
     later_but_still_eligible = _row("game_id", "game-1", captured_at=KICKOFF - timedelta(minutes=5))
     result = _resolve([earlier, later_but_still_eligible])
