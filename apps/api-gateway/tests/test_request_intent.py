@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from app.request_intent import (
     ExecutionAction,
+    MarketType,
     RawUserInput,
     RequestType,
     SelectionMode,
@@ -142,3 +143,98 @@ def test_build_execution_plan_for_ambiguous():
     plan = build_execution_plan(intent)
     assert plan.action == ExecutionAction.REJECT_AMBIGUOUS
     assert plan.reason == intent.unresolved_reason
+
+
+# ---------------------------------------------------------------------------
+# Phase 8.5 Pass 3 -- market-specific filtering
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_intent_recognizes_spread_market():
+    for phrase in ("highest confidence spread", "highest confidence point spread"):
+        intent = _resolve(phrase)
+        assert intent.request_type == RequestType.RECOMMENDATION_LOOKUP, phrase
+        assert intent.market_type == MarketType.SPREAD, phrase
+
+
+def test_resolve_intent_recognizes_total_market():
+    for phrase in ("highest value total", "highest value totals", "highest confidence over/under", "highest confidence over under"):
+        intent = _resolve(phrase)
+        assert intent.request_type == RequestType.RECOMMENDATION_LOOKUP, phrase
+        assert intent.market_type == MarketType.TOTAL, phrase
+
+
+def test_resolve_intent_recognizes_moneyline_market():
+    """Moneyline gate: the Pass 3 audit found moneyline equally clean
+    as spread/total (same DB-CHECK-enforced canonical value, same
+    ingestion-time normalization) -- included, not deferred."""
+    for phrase in ("highest confidence moneyline", "highest confidence money line"):
+        intent = _resolve(phrase)
+        assert intent.request_type == RequestType.RECOMMENDATION_LOOKUP, phrase
+        assert intent.market_type == MarketType.MONEYLINE, phrase
+
+
+def test_resolve_intent_no_market_constraint_preserves_pass1_pass2_behavior():
+    """A request naming no market must resolve `market_type=None` --
+    Pass 1/2's exact behavior, unchanged."""
+    intent = _resolve("highest confidence pick today")
+    assert intent.market_type is None
+    intent2 = _resolve("highest value pick today")
+    assert intent2.market_type is None
+
+
+def test_resolve_intent_unsupported_market_wording_does_not_silently_resolve():
+    """Test J (pure-function level): 'player prop'/'prop'/'props' are
+    market-shaped words that are NOT one of the three supported
+    markets -- must resolve to UNSUPPORTED, never silently drop the
+    constraint and fall through to an unfiltered result."""
+    for phrase in ("highest confidence player prop", "highest value prop", "highest confidence props"):
+        intent = _resolve(phrase)
+        assert intent.request_type == RequestType.UNSUPPORTED, phrase
+        assert intent.selection_mode is None, phrase
+        assert intent.market_type is None, phrase
+        assert "moneyline, spread, and total" in intent.unresolved_reason, phrase
+
+
+def test_resolve_intent_market_words_alone_without_selection_mode_stay_ambiguous():
+    """A market word with no recognized selection-mode phrase must not
+    be treated as a new, unauthorized 'market-only' request type --
+    falls through to the exact same AMBIGUOUS behavior as any other
+    unrecognized text, per HQ's 'do not expand beyond this objective'."""
+    intent = _resolve("what about the spread")
+    assert intent.request_type == RequestType.AMBIGUOUS
+    assert intent.market_type is None
+
+
+def test_resolve_intent_reordering_does_not_change_any_pass1_pass2_outcome():
+    """Pass 3 moved the unsupported-phrase check before selection-mode
+    matching -- this test proves that reordering changed nothing for
+    every previously-tested Pass 1/2 phrase."""
+    still_supported = [
+        ("highest confidence pick today", SelectionMode.HIGHEST_CONFIDENCE),
+        ("give me your most confident pick", SelectionMode.HIGHEST_CONFIDENCE),
+        ("highest value pick today", SelectionMode.HIGHEST_VALUE),
+        ("show me the best value pick today", SelectionMode.HIGHEST_VALUE),
+    ]
+    for phrase, expected_mode in still_supported:
+        intent = _resolve(phrase)
+        assert intent.request_type == RequestType.RECOMMENDATION_LOOKUP, phrase
+        assert intent.selection_mode == expected_mode, phrase
+
+    still_unsupported = ("what's the safest bet today", "give me a guaranteed win", "what's the best pick")
+    for phrase in still_unsupported:
+        intent = _resolve(phrase)
+        assert intent.request_type == RequestType.UNSUPPORTED, phrase
+
+
+def test_build_execution_plan_carries_market_type_through():
+    intent = _resolve("highest confidence spread")
+    plan = build_execution_plan(intent)
+    assert plan.action == ExecutionAction.RETRIEVE_HIGHEST_CONFIDENCE_TODAY
+    assert plan.market_type == MarketType.SPREAD
+
+
+def test_build_execution_plan_market_type_none_when_unconstrained():
+    intent = _resolve("highest confidence pick today")
+    plan = build_execution_plan(intent)
+    assert plan.market_type is None

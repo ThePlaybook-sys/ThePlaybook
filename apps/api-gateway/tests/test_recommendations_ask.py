@@ -193,6 +193,7 @@ def test_ask_returns_highest_confidence_pick():
     assert body["intent"] == {
         "requestType": "recommendation_lookup",
         "selectionMode": "highest_confidence",
+        "marketType": None,
         "timeScope": "today",
     }
     assert body["insufficientEvidence"] is False
@@ -451,6 +452,7 @@ def test_ask_returns_highest_value_pick():
     assert body["intent"] == {
         "requestType": "recommendation_lookup",
         "selectionMode": "highest_value",
+        "marketType": None,
         "timeScope": "today",
     }
     assert body["result"]["label"] == "MANSA's highest-value pick today"
@@ -669,3 +671,415 @@ def test_ask_highest_value_and_highest_confidence_phrases_do_not_collide():
 
     assert confidence_response.json()["intent"]["selectionMode"] == "highest_confidence"
     assert value_response.json()["intent"]["selectionMode"] == "highest_value"
+
+
+# ---------------------------------------------------------------------------
+# Phase 8.5 Pass 3 -- market-specific filtering (moneyline/spread/total)
+# ---------------------------------------------------------------------------
+
+
+def _three_products_three_markets() -> None:
+    """One active product per market, deliberately engineered so the
+    moneyline product is globally strongest on BOTH metrics -- proves
+    a market-specific request can never be won by a stronger
+    recommendation from a different market (HQ test G)."""
+    _mock_games(
+        today_ids=["game-ml", "game-spread", "game-total"],
+        by_id={
+            "game-ml": {
+                "id": "game-ml",
+                "home_team": "A",
+                "away_team": "B",
+                "scheduled_start": "2026-09-09T13:00:00Z",
+                "status": "scheduled",
+            },
+            "game-spread": {
+                "id": "game-spread",
+                "home_team": "C",
+                "away_team": "D",
+                "scheduled_start": "2026-09-09T16:00:00Z",
+                "status": "scheduled",
+            },
+            "game-total": {
+                "id": "game-total",
+                "home_team": "E",
+                "away_team": "F",
+                "scheduled_start": "2026-09-09T20:00:00Z",
+                "status": "scheduled",
+            },
+        },
+    )
+    respx.get(f"{SUPABASE_URL}/rest/v1/recommendation_products").mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                {
+                    "id": "prod-moneyline",
+                    "display_id": "2026-00020",
+                    "recommendation_type": "single",
+                    "scope": "game",
+                    "game_id": "game-ml",
+                    "status": "active",
+                    "min_required_tier": "free",
+                    "withdrawn_at": None,
+                    "withdrawal_reason": None,
+                    "created_at": "2026-09-09T06:00:00Z",
+                },
+                {
+                    "id": "prod-spread",
+                    "display_id": "2026-00021",
+                    "recommendation_type": "single",
+                    "scope": "game",
+                    "game_id": "game-spread",
+                    "status": "active",
+                    "min_required_tier": "free",
+                    "withdrawn_at": None,
+                    "withdrawal_reason": None,
+                    "created_at": "2026-09-09T06:00:00Z",
+                },
+                {
+                    "id": "prod-total",
+                    "display_id": "2026-00022",
+                    "recommendation_type": "single",
+                    "scope": "game",
+                    "game_id": "game-total",
+                    "status": "active",
+                    "min_required_tier": "free",
+                    "withdrawn_at": None,
+                    "withdrawal_reason": None,
+                    "created_at": "2026-09-09T06:00:00Z",
+                },
+            ],
+        )
+    )
+
+    def _legs_respond(request: httpx.Request) -> httpx.Response:
+        product_ids = request.url.params.get("recommendation_product_id", "")
+        legs = []
+        if "prod-moneyline" in product_ids:
+            legs.append(
+                {
+                    "recommendation_product_id": "prod-moneyline",
+                    "market_type": "moneyline",
+                    "selection": "A",
+                    "sportsbook": "book",
+                    "american_odds": -110,
+                    "point": None,
+                    "decimal_odds": 1.91,
+                    "ev_per_dollar": 0.50,
+                    "final_aggregate_confidence": 0.99,
+                    "leg_order": 1,
+                }
+            )
+        if "prod-spread" in product_ids:
+            legs.append(
+                {
+                    "recommendation_product_id": "prod-spread",
+                    "market_type": "spread",
+                    "selection": "C -3.5",
+                    "sportsbook": "book",
+                    "american_odds": -110,
+                    "point": -3.5,
+                    "decimal_odds": 1.91,
+                    "ev_per_dollar": 0.10,
+                    "final_aggregate_confidence": 0.65,
+                    "leg_order": 1,
+                }
+            )
+        if "prod-total" in product_ids:
+            legs.append(
+                {
+                    "recommendation_product_id": "prod-total",
+                    "market_type": "total",
+                    "selection": "Over 47.5",
+                    "sportsbook": "book",
+                    "american_odds": -110,
+                    "point": 47.5,
+                    "decimal_odds": 1.91,
+                    "ev_per_dollar": 0.08,
+                    "final_aggregate_confidence": 0.60,
+                    "leg_order": 1,
+                }
+            )
+        return httpx.Response(200, json=legs)
+
+    respx.get(f"{SUPABASE_URL}/rest/v1/recommendation_legs").mock(side_effect=_legs_respond)
+    _mock_empty_reads()
+
+
+@respx.mock
+def test_ask_unfiltered_highest_confidence_behavior_is_unchanged():
+    """Test A -- proves Pass 3 doesn't alter the unfiltered case: the
+    globally strongest (moneyline) leg still wins with no market
+    named."""
+    _mock_authenticated_user()
+    _mock_no_runs()
+    _three_products_three_markets()
+
+    response = _ask("highest confidence pick today")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["intent"]["marketType"] is None
+    assert body["result"]["recommendation"]["displayId"] == "2026-00020"
+    assert body["result"]["label"] == "MANSA's highest-confidence pick today"
+
+
+@respx.mock
+def test_ask_unfiltered_highest_value_behavior_is_unchanged():
+    """Test B -- same proof for highest-value."""
+    _mock_authenticated_user()
+    _mock_no_runs()
+    _three_products_three_markets()
+
+    response = _ask("highest value pick today")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["intent"]["marketType"] is None
+    assert body["result"]["recommendation"]["displayId"] == "2026-00020"
+    assert body["result"]["label"] == "MANSA's highest-value pick today"
+
+
+@respx.mock
+def test_ask_highest_confidence_spread_filters_before_ranking():
+    """Test C + G -- the globally-strongest moneyline leg (0.99
+    confidence) must NOT win a spread-scoped request; the spread leg
+    (0.65) must, even though it's weaker globally."""
+    _mock_authenticated_user()
+    _mock_no_runs()
+    _three_products_three_markets()
+
+    response = _ask("what is MANSA's highest-confidence spread?")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["intent"]["marketType"] == "spread"
+    assert body["result"]["recommendation"]["displayId"] == "2026-00021"
+    assert body["result"]["recommendation"]["legs"][0]["marketType"] == "spread"
+    assert body["result"]["label"] == "MANSA's highest-confidence spread pick today"
+
+
+@respx.mock
+def test_ask_highest_value_spread_filters_before_ranking():
+    """Test D + G -- same proof for highest-value."""
+    _mock_authenticated_user()
+    _mock_no_runs()
+    _three_products_three_markets()
+
+    response = _ask("what's the highest-value spread?")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["intent"]["marketType"] == "spread"
+    assert body["result"]["recommendation"]["displayId"] == "2026-00021"
+    assert body["result"]["label"] == "MANSA's highest-value spread pick today"
+
+
+@respx.mock
+def test_ask_highest_confidence_total_filters_before_ranking():
+    """Test E + G."""
+    _mock_authenticated_user()
+    _mock_no_runs()
+    _three_products_three_markets()
+
+    response = _ask("what's MANSA's highest-confidence total?")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["intent"]["marketType"] == "total"
+    assert body["result"]["recommendation"]["displayId"] == "2026-00022"
+
+
+@respx.mock
+def test_ask_highest_value_total_filters_before_ranking():
+    """Test F + G."""
+    _mock_authenticated_user()
+    _mock_no_runs()
+    _three_products_three_markets()
+
+    response = _ask("give me the best value total")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["intent"]["marketType"] == "total"
+    assert body["result"]["recommendation"]["displayId"] == "2026-00022"
+
+
+@respx.mock
+def test_ask_highest_confidence_moneyline_filters_before_ranking():
+    """Moneyline gate: the Pass 3 audit found moneyline equally clean
+    as spread/total -- included, not deferred. Here moneyline happens
+    to also be the global winner, so this proves the filter path is
+    genuinely exercised (matches, not merely coincides)."""
+    _mock_authenticated_user()
+    _mock_no_runs()
+    _three_products_three_markets()
+
+    response = _ask("what's MANSA's highest confidence moneyline?")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["intent"]["marketType"] == "moneyline"
+    assert body["result"]["recommendation"]["displayId"] == "2026-00020"
+    assert body["result"]["recommendation"]["legs"][0]["marketType"] == "moneyline"
+
+
+@respx.mock
+def test_ask_market_specific_request_with_no_qualifying_recommendation_is_honest():
+    """Test H + I -- only a moneyline and a spread product exist today;
+    a total-scoped request must return an honest no-result, NEVER
+    falling back to the moneyline or spread product no matter how
+    strong either is."""
+    _mock_authenticated_user()
+    _mock_no_runs()
+    _mock_games(
+        today_ids=["game-ml", "game-spread"],
+        by_id={
+            "game-ml": {
+                "id": "game-ml",
+                "home_team": "A",
+                "away_team": "B",
+                "scheduled_start": "2026-09-09T13:00:00Z",
+                "status": "scheduled",
+            },
+            "game-spread": {
+                "id": "game-spread",
+                "home_team": "C",
+                "away_team": "D",
+                "scheduled_start": "2026-09-09T16:00:00Z",
+                "status": "scheduled",
+            },
+        },
+    )
+    respx.get(f"{SUPABASE_URL}/rest/v1/recommendation_products").mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                {
+                    "id": "prod-moneyline",
+                    "display_id": "2026-00023",
+                    "recommendation_type": "single",
+                    "scope": "game",
+                    "game_id": "game-ml",
+                    "status": "active",
+                    "min_required_tier": "free",
+                    "withdrawn_at": None,
+                    "withdrawal_reason": None,
+                    "created_at": "2026-09-09T06:00:00Z",
+                },
+                {
+                    "id": "prod-spread",
+                    "display_id": "2026-00024",
+                    "recommendation_type": "single",
+                    "scope": "game",
+                    "game_id": "game-spread",
+                    "status": "active",
+                    "min_required_tier": "free",
+                    "withdrawn_at": None,
+                    "withdrawal_reason": None,
+                    "created_at": "2026-09-09T06:00:00Z",
+                },
+            ],
+        )
+    )
+
+    def _legs_respond(request: httpx.Request) -> httpx.Response:
+        product_ids = request.url.params.get("recommendation_product_id", "")
+        legs = []
+        if "prod-moneyline" in product_ids:
+            legs.append(
+                {
+                    "recommendation_product_id": "prod-moneyline",
+                    "market_type": "moneyline",
+                    "selection": "A",
+                    "sportsbook": "book",
+                    "american_odds": -110,
+                    "point": None,
+                    "decimal_odds": 1.91,
+                    "ev_per_dollar": 0.50,
+                    "final_aggregate_confidence": 0.99,
+                    "leg_order": 1,
+                }
+            )
+        if "prod-spread" in product_ids:
+            legs.append(
+                {
+                    "recommendation_product_id": "prod-spread",
+                    "market_type": "spread",
+                    "selection": "C -3.5",
+                    "sportsbook": "book",
+                    "american_odds": -110,
+                    "point": -3.5,
+                    "decimal_odds": 1.91,
+                    "ev_per_dollar": 0.30,
+                    "final_aggregate_confidence": 0.90,
+                    "leg_order": 1,
+                }
+            )
+        return httpx.Response(200, json=legs)
+
+    respx.get(f"{SUPABASE_URL}/rest/v1/recommendation_legs").mock(side_effect=_legs_respond)
+    _mock_empty_reads()
+
+    response = _ask("what's MANSA's highest-confidence total?")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["intent"]["marketType"] == "total"
+    assert body["insufficientEvidence"] is True
+    assert body["result"] is None
+    assert "total" in body["reason"]
+
+
+@respx.mock
+def test_ask_unsupported_market_wording_does_not_silently_resolve():
+    """Test J -- 'player prop' is a market-shaped word but not a
+    supported market; it must resolve to UNSUPPORTED, never silently
+    fall through to an unfiltered (or wrongly-filtered) result."""
+    _mock_authenticated_user()
+
+    response = _ask("what's MANSA's highest-confidence player prop?")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["intent"]["requestType"] == "unsupported"
+    assert body["intent"]["selectionMode"] is None
+    assert body["intent"]["marketType"] is None
+    assert body["result"] is None
+    assert "player prop" in body["reason"]
+
+
+@respx.mock
+def test_ask_existing_unsupported_phrases_remain_unsupported():
+    """Test K -- Pass 1/2's own unsupported vocabulary is unaffected
+    by the Pass 3 reordering (unsupported-check-first)."""
+    _mock_authenticated_user()
+
+    for phrase in ("what's the safest bet", "build me a parlay", "what's the best pick"):
+        response = _ask(phrase)
+        assert response.status_code == 200, phrase
+        assert response.json()["intent"]["requestType"] == "unsupported", phrase
+
+
+@respx.mock
+def test_ask_market_filtered_request_requires_authentication():
+    """Test L -- authentication behavior is unchanged for market-scoped
+    requests."""
+    response = client.post(
+        "/v1/recommendations/ask", json={"question": "highest confidence spread today"}
+    )
+    assert response.status_code == 401
+
+
+@respx.mock
+def test_ask_market_filtered_unsupported_request_never_queries_recommendation_tables():
+    """Tests M/N -- proves no provider/worker/recommendation-table call
+    occurs for a rejected (unsupported-market) request: zero mocks are
+    registered for recommendation_products/legs/games, so respx would
+    fail this test if the endpoint tried to reach any of them."""
+    _mock_authenticated_user()
+
+    response = _ask("what's MANSA's highest-confidence player prop?")
+
+    assert response.status_code == 200
