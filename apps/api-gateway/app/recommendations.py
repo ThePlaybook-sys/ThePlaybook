@@ -54,10 +54,18 @@ from datetime import datetime, timedelta, timezone
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
 
 from app.auth import CurrentUser, get_current_user
 from app.entitlement import read_active_subscription_tier, tier_permits
 from app.internal_client import InternalServiceError, call_ai_orchestrator
+from app.request_intent import (
+    ExecutionAction,
+    RawUserInput,
+    build_execution_plan,
+    normalize_request,
+    resolve_intent,
+)
 from app.supabase_client import new_client, postgrest_headers
 
 router = APIRouter(prefix="/v1/recommendations", tags=["recommendations"])
@@ -291,63 +299,194 @@ async def _read_explanations_by_product_ids(client: httpx.AsyncClient, product_i
     return {row["recommendation_product_id"]: row for row in response.json()}
 
 
-@router.get("/today")
-async def get_todays_recommendations(current_user: CurrentUser = Depends(get_current_user)) -> list[dict]:
-    """Today's recommendation_products -- game-scoped products whose
-    game kicks off today (UTC calendar day), plus slate-scoped products
+def _utc_day_window(now: datetime) -> tuple[datetime, datetime]:
+    day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    return day_start, day_start + timedelta(days=1)
+
+
+async def _todays_visible_products(client: httpx.AsyncClient, *, user_tier: str | None) -> list[dict]:
+    """Shared by `/today` and `POST /ask` (Phase 8.5 Pass 1) -- extracted
+    verbatim from the original `/today` route body, no behavior change,
+    so both callers see byte-identical results for "today". Today's
+    recommendation_products -- game-scoped products whose game kicks
+    off today (UTC calendar day), plus slate-scoped products
     (multiple_singles/bankroll_preservation) whose Master Refresh run
     started today. Includes withdrawn products (the frontend renders
-    the withdrawn treatment, this route never hides history) -- only
-    `deleted_at is null` rows are excluded, matching every other
-    Phase 5 read path's own convention."""
+    the withdrawn treatment, this function never hides history) --
+    only `deleted_at is null` rows are excluded, matching every other
+    Phase 5 read path's own convention. `/ask` filters further to
+    `status == 'active'` itself, after this shared read, since "browse
+    today's history" and "give me your current best pick" have
+    different honesty requirements over the exact same rows."""
     now = datetime.now(timezone.utc)
-    day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    day_end = day_start + timedelta(days=1)
+    day_start, day_end = _utc_day_window(now)
 
+    games_today = await client.get(
+        "/rest/v1/games",
+        params={
+            "scheduled_start": [f"gte.{day_start.isoformat()}", f"lt.{day_end.isoformat()}"],
+            "select": "id",
+        },
+        headers=postgrest_headers(),
+    )
+    games_today.raise_for_status()
+    game_ids_today = [row["id"] for row in games_today.json()]
+
+    runs_today = await client.get(
+        "/rest/v1/master_refresh_runs",
+        params={
+            "started_at": [f"gte.{day_start.isoformat()}", f"lt.{day_end.isoformat()}"],
+            "select": "id",
+        },
+        headers=postgrest_headers(),
+    )
+    runs_today.raise_for_status()
+    run_ids_today = [row["id"] for row in runs_today.json()]
+
+    if not game_ids_today and not run_ids_today:
+        return []
+
+    or_clauses = []
+    if game_ids_today:
+        or_clauses.append(f"game_id.in.({','.join(game_ids_today)})")
+    if run_ids_today:
+        or_clauses.append(f"master_refresh_run_id.in.({','.join(run_ids_today)})")
+
+    products_response = await client.get(
+        "/rest/v1/recommendation_products",
+        params={"deleted_at": "is.null", "or": f"({','.join(or_clauses)})", "select": "*"},
+        headers=postgrest_headers(),
+    )
+    products_response.raise_for_status()
+
+    return await _visible_products_with_context(client, products=products_response.json(), user_tier=user_tier)
+
+
+@router.get("/today")
+async def get_todays_recommendations(current_user: CurrentUser = Depends(get_current_user)) -> list[dict]:
+    """Today's recommendation_products -- see `_todays_visible_products`
+    for the real logic, extracted verbatim (Phase 8.5 Pass 1) so
+    `POST /ask` can reuse it without duplicating the day-window/OR-query
+    logic. This route's own behavior is unchanged."""
     async with new_client() as client:
         user_tier = await read_active_subscription_tier(client, user_id=current_user.id)
+        return await _todays_visible_products(client, user_tier=user_tier)
 
-        games_today = await client.get(
-            "/rest/v1/games",
-            params={
-                "scheduled_start": [f"gte.{day_start.isoformat()}", f"lt.{day_end.isoformat()}"],
-                "select": "id",
-            },
-            headers=postgrest_headers(),
-        )
-        games_today.raise_for_status()
-        game_ids_today = [row["id"] for row in games_today.json()]
 
-        runs_today = await client.get(
-            "/rest/v1/master_refresh_runs",
-            params={
-                "started_at": [f"gte.{day_start.isoformat()}", f"lt.{day_end.isoformat()}"],
-                "select": "id",
-            },
-            headers=postgrest_headers(),
-        )
-        runs_today.raise_for_status()
-        run_ids_today = [row["id"] for row in runs_today.json()]
+class AskRequest(BaseModel):
+    """Phase 8.5 Pass 1: the RAW USER INPUT envelope. `question` is
+    stored/normalized verbatim (`app.request_intent.RawUserInput`) --
+    nothing here is interpreted yet."""
 
-        if not game_ids_today and not run_ids_today:
-            return []
+    question: str = Field(min_length=1, max_length=500)
 
-        or_clauses = []
-        if game_ids_today:
-            or_clauses.append(f"game_id.in.({','.join(game_ids_today)})")
-        if run_ids_today:
-            or_clauses.append(f"master_refresh_run_id.in.({','.join(run_ids_today)})")
 
-        products_response = await client.get(
-            "/rest/v1/recommendation_products",
-            params={"deleted_at": "is.null", "or": f"({','.join(or_clauses)})", "select": "*"},
-            headers=postgrest_headers(),
-        )
-        products_response.raise_for_status()
+def _select_highest_confidence_card(cards: list[dict]) -> tuple[dict, dict] | None:
+    """Among *active* cards' legs, returns `(card, leg)` for the real
+    leg with the highest `finalAggregateConfidence`, or `None` if no
+    active card has any leg carrying a confidence value at all (e.g.
+    only `no_bet`/`bankroll_preservation` products exist today, or
+    nothing exists today). Withdrawn products are deliberately
+    excluded here -- `/today` shows withdrawn history for transparency,
+    but presenting a withdrawn product as "the pick" would misrepresent
+    it as a live recommendation, which this endpoint must never do."""
+    best: tuple[float, dict, dict] | None = None
+    for card in cards:
+        if card["status"] != "active":
+            continue
+        for leg in card["legs"]:
+            confidence = leg["finalAggregateConfidence"]
+            if confidence is None:
+                continue
+            if best is None or confidence > best[0]:
+                best = (confidence, card, leg)
+    if best is None:
+        return None
+    _confidence, card, leg = best
+    return card, leg
 
-        return await _visible_products_with_context(
-            client, products=products_response.json(), user_tier=user_tier
-        )
+
+@router.post("/ask")
+async def ask_recommendation(
+    body: AskRequest, current_user: CurrentUser = Depends(get_current_user)
+) -> dict:
+    """Phase 8.5 Pass 1 (HQ-authorized): the first real user-request
+    entry point. Pipeline, each stage kept separate per the Phase 8.5
+    audit's explicit instruction not to collapse them into one opaque
+    function:
+
+    RAW INPUT (`AskRequest.question` -> `RawUserInput`)
+      -> NORMALIZED REQUEST (`normalize_request`, pure)
+      -> RESOLVED INTENT (`resolve_intent`, pure, deterministic, no LLM)
+      -> EXECUTION PLAN (`build_execution_plan`, pure)
+      -> EXISTING RECOMMENDATION RETRIEVAL (`_todays_visible_products`,
+         reused verbatim from `/today` -- no new query logic)
+      -> EXISTING CARD SERIALIZATION (`_serialize_product`/
+         `_serialize_leg`, via `_visible_products_with_context`,
+         completely untouched by this route)
+
+    **This route never computes a recommendation, never calls
+    ai-orchestrator, never calls a provider, and never triggers Master
+    Refresh or any worker.** Every code path below only ever reads
+    already-persisted rows through the same PostgREST client every
+    other route in this module already uses -- confirmed by this
+    pass's own tests asserting no additional host is ever contacted.
+
+    Terminology guardrail (HQ-mandated): the one supported request
+    type is presented to the user as "MANSA's highest-confidence pick"
+    -- never "the safest bet," "guaranteed," or "most likely to win."
+    `finalAggregateConfidence` is MANSA's own model output, not an
+    objective claim about the wager -- the response's own `disclosure`
+    field says so explicitly, every time."""
+    raw = RawUserInput(text=body.question)
+    normalized = normalize_request(raw)
+    intent = resolve_intent(normalized)
+    plan = build_execution_plan(intent)
+
+    intent_payload = {
+        "requestType": intent.request_type.value,
+        "selectionMode": intent.selection_mode.value if intent.selection_mode else None,
+        "timeScope": intent.time_scope,
+    }
+
+    if plan.action in (ExecutionAction.REJECT_UNSUPPORTED, ExecutionAction.REJECT_AMBIGUOUS):
+        return {
+            "intent": intent_payload,
+            "insufficientEvidence": False,
+            "reason": plan.reason,
+            "result": None,
+        }
+
+    # The only retrieval path this pass implements:
+    # ExecutionAction.RETRIEVE_HIGHEST_CONFIDENCE_TODAY.
+    async with new_client() as client:
+        user_tier = await read_active_subscription_tier(client, user_id=current_user.id)
+        cards = await _todays_visible_products(client, user_tier=user_tier)
+
+    selected = _select_highest_confidence_card(cards)
+    if selected is None:
+        return {
+            "intent": intent_payload,
+            "insufficientEvidence": True,
+            "reason": "No eligible MANSA recommendation with a confidence score exists for today yet.",
+            "result": None,
+        }
+
+    card, _leg = selected
+    return {
+        "intent": intent_payload,
+        "insufficientEvidence": False,
+        "reason": None,
+        "result": {
+            "label": "MANSA's highest-confidence pick today",
+            "confidenceMetric": "finalAggregateConfidence",
+            "disclosure": (
+                "This reflects MANSA's own model confidence in this selection, "
+                "not a guarantee of outcome or an objective safety rating."
+            ),
+            "recommendation": card,
+        },
+    }
 
 
 @router.get("")
