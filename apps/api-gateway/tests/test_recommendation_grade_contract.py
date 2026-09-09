@@ -19,14 +19,26 @@ AUTH_URL = f"{SUPABASE_URL}/auth/v1/user"
 USER_ID = "22222222-2222-2222-2222-222222222222"
 
 
+#: Mirrors the real `resolve_permitted_tiers` Postgres function's own
+#: ladder (`supabase/migrations/20260909200400_entitlement_grants_
+#: foundation.sql`) -- the one authoritative resolution this endpoint's
+#: real code now calls via RPC instead of computing itself.
+_TIER_LADDER = {
+    None: ["free"],
+    "free": ["free"],
+    "pro": ["free", "pro"],
+    "elite": ["free", "pro", "elite"],
+    "syndicate": ["free", "pro", "elite", "syndicate"],
+}
+
+
 def _mock_authenticated_user(*, tier: str | None = None) -> None:
     respx.get(AUTH_URL).mock(return_value=httpx.Response(200, json={"id": USER_ID}))
     respx.get(f"{SUPABASE_URL}/rest/v1/user_profiles").mock(
         return_value=httpx.Response(200, json=[{"id": USER_ID, "jurisdiction_state": "NJ"}])
     )
-    subscription_rows = [{"tier": tier}] if tier else []
-    respx.get(f"{SUPABASE_URL}/rest/v1/subscriptions").mock(
-        return_value=httpx.Response(200, json=subscription_rows)
+    respx.post(f"{SUPABASE_URL}/rest/v1/rpc/resolve_permitted_tiers").mock(
+        return_value=httpx.Response(200, json=_TIER_LADDER[tier])
     )
 
 

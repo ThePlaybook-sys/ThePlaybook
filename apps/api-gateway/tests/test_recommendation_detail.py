@@ -20,7 +20,9 @@ def _mock_authenticated_user() -> None:
     respx.get(f"{SUPABASE_URL}/rest/v1/user_profiles").mock(
         return_value=httpx.Response(200, json=[{"id": USER_ID, "jurisdiction_state": "NJ"}])
     )
-    respx.get(f"{SUPABASE_URL}/rest/v1/subscriptions").mock(return_value=httpx.Response(200, json=[]))
+    respx.post(f"{SUPABASE_URL}/rest/v1/rpc/resolve_permitted_tiers").mock(
+        return_value=httpx.Response(200, json=["free"])
+    )
 
 
 _PRODUCT = {

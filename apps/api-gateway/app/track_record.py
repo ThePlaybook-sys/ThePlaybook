@@ -32,7 +32,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends
 
 from app.auth import CurrentUser, get_current_user
-from app.entitlement import read_active_subscription_tier, tier_permits
+from app.entitlement import read_permitted_tiers, tier_permits
 from app.supabase_client import new_client, postgrest_headers
 
 router = APIRouter(prefix="/v1/track-record", tags=["track-record"])
@@ -69,7 +69,7 @@ def _sample_status(sample_size: int) -> str:
 @router.get("")
 async def get_track_record(current_user: CurrentUser = Depends(get_current_user)) -> dict:
     async with new_client() as client:
-        user_tier = await read_active_subscription_tier(client, user_id=current_user.id)
+        permitted_tiers = await read_permitted_tiers(client, user_id=current_user.id)
 
         response = await client.get(
             "/rest/v1/recommendation_product_grade_events",
@@ -88,7 +88,7 @@ async def get_track_record(current_user: CurrentUser = Depends(get_current_user)
         product = row.get("recommendation_products")
         if product is None or product.get("deleted_at") is not None:
             continue
-        if not tier_permits(product["min_required_tier"], user_tier):
+        if not tier_permits(product["min_required_tier"], permitted_tiers):
             continue
         # `order=computed_at.desc` means the first row seen per product
         # is its current, most-recent outcome (a correction supersedes
