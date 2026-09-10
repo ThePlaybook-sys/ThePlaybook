@@ -47,6 +47,15 @@ _GNEWS_BASE_URL = "https://gnews.io"
 #: fixture's respx mock target.
 _WEATHERAPI_BASE_URL = "https://api.weatherapi.com"
 
+#: The real, production MySportsFeeds v2.1 base URL, diagnostic use only
+#: (MANSA Gate B Railway Diagnostic Build, 2026-09-10 -- see
+#: `app.diagnostics.msf_game_boxscore_diagnostic`). CONFIRMED from the
+#: official `mysportsfeeds-node` npm package source (`API_v2_1.js`),
+#: identical to every prior MSF diagnostic's own value (all since
+#: reverted, e.g. Phase 8.3C).
+_MYSPORTSFEEDS_BASE_URL = "https://api.mysportsfeeds.com/v2.1/pull"
+
+
 class MissingCredentialError(Exception):
     """Raised when a required provider credential is absent from this
     process's environment. Deliberately distinct from a bare `KeyError` --
@@ -167,3 +176,20 @@ def build_real_weather_worker_clients() -> tuple[httpx.AsyncClient, httpx.AsyncC
     supabase_client = httpx.AsyncClient(base_url=os.environ["SUPABASE_URL"], timeout=60.0)
     weatherapi_client = httpx.AsyncClient(base_url=_WEATHERAPI_BASE_URL, timeout=60.0)
     return supabase_client, weatherapi_client, api_key
+
+
+def build_msf_game_boxscore_diagnostic_client() -> tuple[httpx.AsyncClient, str] | None:
+    """MANSA Gate B Railway Diagnostic Build (2026-09-10, diagnostic
+    only -- see `app.diagnostics.msf_game_boxscore_diagnostic`): returns
+    `(client, api_key)` bound to `MYSPORTSFEEDS_API_KEY`, or `None` if
+    that credential isn't configured. 120.0s timeout from the start --
+    Phase 8.3B/8.3C's own proven lesson (a 30.0s timeout was too short
+    for at least one other MySportsFeeds v2.1 feed) applied immediately,
+    not re-learned the hard way. `MYSPORTSFEEDS_API_KEY` is never read
+    anywhere outside this function, matching the isolation convention
+    every other provider credential in this module already follows. The
+    caller owns closing the returned client."""
+    api_key = os.environ.get("MYSPORTSFEEDS_API_KEY")
+    if not api_key:
+        return None
+    return httpx.AsyncClient(base_url=_MYSPORTSFEEDS_BASE_URL, timeout=120.0), api_key
