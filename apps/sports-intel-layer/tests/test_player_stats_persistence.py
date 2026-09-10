@@ -142,6 +142,37 @@ async def test_raises_on_insert_failure(monkeypatch):
 
 @pytest.mark.asyncio
 @respx.mock
+async def test_provider_name_defaults_to_sportsdataio_and_is_threaded_through_when_overridden(monkeypatch):
+    """MANSA Phase 8 Player-Game Persistence Pass (2026-09-10):
+    persist_player_stats gained a provider_name parameter so a second
+    real provider (MySportsFeeds) can reuse this same idempotent write
+    logic. Proves both halves: the default preserves the exact existing
+    sportsdataio behavior (no caller update required), and passing a
+    different provider_name genuinely changes which provider's identity
+    mappings get queried -- not just accepted and ignored."""
+    _headers_env(monkeypatch)
+    game_route = respx.get(f"{SUPABASE_URL}/rest/v1/game_provider_ids").mock(
+        return_value=httpx.Response(200, json=[{"game_id": GAME_ID, "provider_game_id": "202510104"}])
+    )
+    player_route = respx.get(f"{SUPABASE_URL}/rest/v1/player_provider_ids").mock(
+        return_value=httpx.Response(200, json=[{"player_id": PLAYER_ID, "provider_player_id": "19801"}])
+    )
+    respx.get(f"{SUPABASE_URL}/rest/v1/player_stats").mock(return_value=httpx.Response(200, json=[]))
+    respx.post(f"{SUPABASE_URL}/rest/v1/player_stats").mock(return_value=httpx.Response(201))
+
+    await persist_player_stats(AdapterResponse(value=[_line(250)], source="sportsdataio"))
+    assert "eq.sportsdataio" in str(game_route.calls.last.request.url)
+    assert "eq.sportsdataio" in str(player_route.calls.last.request.url)
+
+    await persist_player_stats(
+        AdapterResponse(value=[_line(250)], source="mysportsfeeds"), provider_name="mysportsfeeds"
+    )
+    assert "eq.mysportsfeeds" in str(game_route.calls.last.request.url)
+    assert "eq.mysportsfeeds" in str(player_route.calls.last.request.url)
+
+
+@pytest.mark.asyncio
+@respx.mock
 async def test_module_never_issues_an_update_to_player_stats(monkeypatch):
     """Phase 3F-3: player_stats now carries a DB-level append-only trigger
     (block_snapshot_updates(), live-proven against real dev Supabase to

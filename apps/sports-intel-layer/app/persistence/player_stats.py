@@ -2,6 +2,19 @@
 §4.0, Phase 3E-8) -- the persistence half of the Postgame Ingestion
 Worker's "final player stats" responsibility.
 
+**Provider-parameterized since MANSA Phase 8 Player-Game Persistence
+Design + Implementation Pass (2026-09-10).** `persist_player_stats` was
+originally hardcoded to `sportsdataio` (this module's only caller at the
+time, Postgame Ingestion Worker). Resolving identity is already fully
+provider-neutral one layer down (`resolve_game_ids`/`resolve_player_ids`
+both take `provider_name` as a parameter) -- the hardcoding here was the
+only real barrier to reuse for a second provider (MySportsFeeds' real,
+proven `game_boxscore` payload, Gate B 2026-09-10). `provider_name`
+defaults to `"sportsdataio"` so the existing Postgame Worker call site
+(`persist_player_stats(player_response)`, no provider_name passed) is
+unaffected -- this is a strict widening, not a behavior change for any
+existing caller.
+
 Same idempotent, correction-aware persistence design as
 `app.persistence.team_stats` -- see that module's docstring for the full
 reasoning (no uniqueness constraint or append-only trigger on
@@ -36,7 +49,7 @@ from app.adapters.models import AdapterResponse, PlayerStatLine
 from app.persistence.game_identity import resolve_game_ids
 from app.persistence.player_identity import resolve_player_ids
 
-_PROVIDER_NAME = "sportsdataio"
+_DEFAULT_PROVIDER_NAME = "sportsdataio"
 
 
 class PersistenceError(Exception):
@@ -87,12 +100,21 @@ async def _latest_player_stats_row(
 
 async def persist_player_stats(
     response: AdapterResponse[list[PlayerStatLine]],
+    *,
+    provider_name: str = _DEFAULT_PROVIDER_NAME,
 ) -> PlayerStatsPersistResult:
     """Writes each PlayerStatLine as a player_stats row, but only when it
     differs from the existing latest row for that (game, player) pair. A
     line whose game can't be resolved, or whose player has no
     player_provider_ids mapping yet, is skipped and reported -- never
-    guessed, never auto-created (see module docstring)."""
+    guessed, never auto-created (see module docstring).
+
+    `provider_name` selects which provider's `game_provider_ids`/
+    `player_provider_ids` mappings to resolve against -- defaults to
+    `"sportsdataio"` for the existing Postgame Worker call site. Pass
+    `"mysportsfeeds"` (or any other already-provisioned provider_name) for
+    a different real source; the idempotent/correction-aware write logic
+    below is identical regardless of provider."""
     lines = response.value
     if not lines:
         return PlayerStatsPersistResult()
@@ -102,11 +124,11 @@ async def persist_player_stats(
 
     async with httpx.AsyncClient(base_url=supabase_url, timeout=5.0) as client:
         game_ids = await resolve_game_ids(
-            client, headers, provider_name=_PROVIDER_NAME,
+            client, headers, provider_name=provider_name,
             provider_game_ids=sorted({line.game_external_id for line in lines}),
         )
         player_ids = await resolve_player_ids(
-            client, headers, provider_name=_PROVIDER_NAME,
+            client, headers, provider_name=provider_name,
             provider_player_ids=sorted({line.player_external_id for line in lines}),
         )
 
