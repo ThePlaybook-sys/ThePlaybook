@@ -492,3 +492,50 @@ if os.environ.get("RAILWAY_ENVIRONMENT_NAME", "dev") == "dev":
     @app.get("/sentry-debug")
     async def trigger_error():
         division_by_zero = 1 / 0
+
+    if os.environ.get("RUN_MSF_GAME_BOXSCORE_DIAGNOSTIC") == "1":
+        import json
+        import logging
+
+        _msf_game_boxscore_diag_logger = logging.getLogger(
+            "sports-intel-layer.diagnostics.msf_game_boxscore_diagnostic"
+        )
+
+        @app.on_event("startup")
+        async def _run_msf_game_boxscore_diagnostic_once() -> None:
+            """TEMPORARY, one-shot diagnostic hook for MANSA Gate B's
+            HQ-authorized game_boxscore diagnostic (2026-09-10, see
+            `app.diagnostics.msf_game_boxscore_diagnostic`'s own module
+            docstring). Exactly ONE real MySportsFeeds call, guarded by
+            the same `activation_run_markers` mechanism every prior MSF
+            diagnostic pass has used (a new dedicated run_key). Diagnostic
+            only -- persists a raw evidence envelope to `game_events`
+            (the existing raw-capture table), never to canonical
+            `player_stats`/`team_stats`, and never touches recommendation
+            logic or Context Intelligence.
+
+            Logs only a REDACTED summary (`redact_for_logging`) -- never
+            the full response body, never any response header value,
+            never the credential -- per Gate B's explicit "do not print
+            the full raw payload or credential into logs" requirement.
+            The durable record of this call lives in the `game_events`
+            row this diagnostic writes, not in Railway's own log
+            retention."""
+            from app.diagnostics.msf_game_boxscore_diagnostic import (
+                redact_for_logging,
+                run_msf_game_boxscore_diagnostic,
+            )
+
+            _msf_game_boxscore_diag_logger.warning("MSF_GAME_BOXSCORE_DIAGNOSTIC_START")
+            try:
+                result = await run_msf_game_boxscore_diagnostic()
+            except Exception as exc:  # last-resort guard -- a diagnostic must never crash startup
+                _msf_game_boxscore_diag_logger.error(
+                    "MSF_GAME_BOXSCORE_DIAGNOSTIC_UNEXPECTED_FAILURE %s", exc, exc_info=True
+                )
+            else:
+                _msf_game_boxscore_diag_logger.warning(
+                    "MSF_GAME_BOXSCORE_DIAGNOSTIC_RESULT %s",
+                    json.dumps(redact_for_logging(result), default=str),
+                )
+            _msf_game_boxscore_diag_logger.warning("MSF_GAME_BOXSCORE_DIAGNOSTIC_DONE")
