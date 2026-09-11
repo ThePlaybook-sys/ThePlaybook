@@ -235,3 +235,12 @@ class PlayerStatLine(BaseModel):
     player_name: str
     team: str
     stats: dict
+    #: Provider-reported player position, when the source payload actually
+    #: carries one (e.g. MySportsFeeds' `game_boxscore` feed, Phase 8
+    #: Automatic Player Identity pass, 2026-09-11) -- `None` when genuinely
+    #: absent from the response, never a default/invented value. Optional,
+    #: added after this model's original fields: not every PlayerStatLine
+    #: producer (e.g. SportsDataIO's player-stats adapters) populates it,
+    #: and every existing caller that constructs a PlayerStatLine without
+    #: this keyword argument is unaffected.
+    position: str | None = None

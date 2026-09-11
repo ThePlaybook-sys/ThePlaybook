@@ -104,3 +104,72 @@ async def write_raw_game_events(
                 f"failed to insert game_events: {insert_response.status_code} {insert_response.text}"
             )
         return len(rows)
+
+
+async def write_raw_game_event(
+    *,
+    game_id: str,
+    provider_name: str,
+    raw_response: Any,
+    now: datetime | None = None,
+) -> str:
+    """Writes exactly ONE `game_events` row (never fragmented -- see
+    `write_raw_game_events`' own list-fragmenting behavior above, which
+    this function deliberately does not replicate) and returns its `id`.
+
+    Added for the Permanent Box Score Worker Build (2026-09-11): a
+    completed-game boxscore response is inherently one document per game,
+    and the new MSF postgame ingestion path needs the freshly-written
+    row's own id (`game_postgame_ingestion_state.raw_capture_id`) to link
+    back to it -- `write_raw_game_events`' existing `int` (row-count)
+    return contract is unchanged, since at least one other caller
+    (`app.diagnostics.msf_game_boxscore_diagnostic`) already depends on
+    it staying a plain count. This is an additive sibling function, not a
+    modification of that one."""
+    now = now or datetime.now(timezone.utc)
+    supabase_url = os.environ["SUPABASE_URL"]
+    headers = _auth_headers()
+
+    row = {
+        "game_id": game_id,
+        "provider_name": provider_name,
+        "raw_payload": raw_response,
+        "captured_at": now.isoformat(),
+    }
+
+    async with httpx.AsyncClient(base_url=supabase_url, timeout=10.0) as client:
+        insert_response = await client.post(
+            "/rest/v1/game_events",
+            json=row,
+            headers={**headers, "Prefer": "return=representation"},
+        )
+        if insert_response.status_code not in (200, 201):
+            raise PersistenceError(
+                f"failed to insert game_events: {insert_response.status_code} {insert_response.text}"
+            )
+        return insert_response.json()[0]["id"]
+
+
+async def read_game_event(*, event_id: str) -> dict | None:
+    """Reads back one `game_events` row by id -- the read half of
+    `write_raw_game_event` above, added for the same Permanent Box Score
+    Worker Build pass. Lets a worker resume processing a previously
+    captured, already-preserved raw payload (e.g. after a persistence
+    failure left `game_postgame_ingestion_state.state='validated'`)
+    without ever making a second provider call -- the whole point of
+    preserving raw evidence durably in the first place."""
+    supabase_url = os.environ["SUPABASE_URL"]
+    headers = _auth_headers()
+
+    async with httpx.AsyncClient(base_url=supabase_url, timeout=10.0) as client:
+        response = await client.get(
+            "/rest/v1/game_events",
+            params={"id": f"eq.{event_id}", "select": "*"},
+            headers=headers,
+        )
+        if response.status_code != 200:
+            raise PersistenceError(
+                f"failed to read game_events row {event_id}: {response.status_code} {response.text}"
+            )
+        rows = response.json()
+        return rows[0] if rows else None

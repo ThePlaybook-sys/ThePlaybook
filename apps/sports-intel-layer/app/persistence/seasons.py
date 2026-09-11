@@ -71,14 +71,18 @@ def resolve_current_season_year(today: date, seasons: list[dict]) -> int:
     return matches[0]
 
 
-async def fetch_current_season_string(
+async def fetch_current_season_year(
     client: httpx.AsyncClient, headers: dict, *, league_code: str, today: date
-) -> str:
+) -> int:
     """DB-backed wrapper: resolves `league_code` (e.g. "nfl") to a
     `leagues.id`, reads that league's `seasons` rows, and returns the
-    SportsDataIO season string ("{year}REG") for `today` via
-    `resolve_current_season_year`.
-    """
+    current season's plain `year` for `today` via
+    `resolve_current_season_year`. Extracted (2026-09-11, Permanent Box
+    Score Worker Build) from `fetch_current_season_string` below so a
+    second provider whose own season-string format differs from
+    SportsDataIO's ("{year}REG") -- MySportsFeeds uses
+    "{year}-{year+1}-regular" -- can reuse the identical league/season
+    resolution without also inheriting SportsDataIO's formatting."""
     league_response = await client.get(
         "/rest/v1/leagues",
         params={"code": f"eq.{league_code}", "select": "id"},
@@ -104,5 +108,14 @@ async def fetch_current_season_string(
             f"failed to read seasons for league {league_code!r}: "
             f"{seasons_response.status_code} {seasons_response.text}"
         )
-    year = resolve_current_season_year(today, seasons_response.json())
+    return resolve_current_season_year(today, seasons_response.json())
+
+
+async def fetch_current_season_string(
+    client: httpx.AsyncClient, headers: dict, *, league_code: str, today: date
+) -> str:
+    """SportsDataIO-formatted wrapper ("{year}REG") over
+    `fetch_current_season_year`. Unchanged behavior/signature -- existing
+    callers (Postgame Worker) are unaffected by the extraction above."""
+    year = await fetch_current_season_year(client, headers, league_code=league_code, today=today)
     return f"{year}REG"

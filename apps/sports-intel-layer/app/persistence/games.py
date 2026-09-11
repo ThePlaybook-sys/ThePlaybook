@@ -57,6 +57,27 @@ async def find_previous_final_game(
     return rows[0] if rows else None
 
 
+async def get_game(client: httpx.AsyncClient, headers: dict, *, game_id: str) -> dict | None:
+    """Reads one `games` row by id, or `None` if it doesn't exist. Added
+    for the Permanent Box Score Worker Build (2026-09-11): the new MSF
+    postgame worker needs a single game's `scheduled_start` (to compute
+    its first completion-check eligibility) given only its `game_id` --
+    every existing read in this module is either windowed
+    (`list_games_in_window`) or team-scoped (`find_previous_final_game`),
+    neither of which fits a single-known-id lookup."""
+    response = await client.get(
+        "/rest/v1/games",
+        params={"id": f"eq.{game_id}", "select": "id,home_team,away_team,scheduled_start,status"},
+        headers=headers,
+    )
+    if response.status_code != 200:
+        raise GamesQueryError(
+            f"failed to read game {game_id}: {response.status_code} {response.text}"
+        )
+    rows = response.json()
+    return rows[0] if rows else None
+
+
 async def list_games_in_window(
     client: httpx.AsyncClient,
     headers: dict,

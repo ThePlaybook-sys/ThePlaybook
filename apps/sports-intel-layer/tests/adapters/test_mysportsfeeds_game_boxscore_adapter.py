@@ -118,6 +118,69 @@ def test_provider_reported_at_is_the_real_lastupdatedon_field():
     assert result.provider_reported_at.isoformat().startswith("2026-09-10T12:45:08")
 
 
+def test_real_player_position_is_extracted_from_the_raw_payload():
+    """Position-contract fix (2026-09-11, Permanent Box Score Worker Build):
+    MySportsFeeds' real player object carries `position` directly (e.g.
+    Julian Ashby, id 166956, "LS") -- this must now surface on
+    `PlayerStatLine.position`, not be silently dropped."""
+    result = parse_game_boxscore(_load_fixture())
+
+    maye = next(line for line in result.value if line.player_external_id == "133837")
+    assert maye.position == "QB"
+
+    ashby = next(line for line in result.value if line.player_external_id == "166956")
+    assert ashby.position == "LS"
+
+
+def test_every_real_player_line_has_a_real_non_empty_position():
+    """All 69 real Gate B players carry a real, non-empty position string
+    in the raw fixture -- proves this isn't a one-player coincidence."""
+    result = parse_game_boxscore(_load_fixture())
+
+    assert all(isinstance(line.position, str) and line.position for line in result.value)
+
+
+def test_missing_position_is_null_never_invented():
+    """A player row that genuinely lacks a `position` key must produce
+    `position=None` -- never a default/guessed value (e.g. never "" or
+    an arbitrary placeholder string)."""
+    fixture = _load_fixture()
+    entry = fixture["stats"]["away"]["players"][0]
+    assert "position" in entry["player"]  # sanity: real fixture always has one
+    del entry["player"]["position"]
+
+    result = parse_game_boxscore(fixture)
+
+    line = next(line for line in result.value if line.player_external_id == str(entry["player"]["id"]))
+    assert line.position is None
+
+
+def test_blank_position_string_is_treated_as_absent_not_invented():
+    """A provider row with an empty-string position is evidence-free, not
+    a real position value -- treated the same as a missing key, never
+    passed through as an empty string."""
+    fixture = _load_fixture()
+    entry = fixture["stats"]["away"]["players"][0]
+    entry["player"]["position"] = ""
+
+    result = parse_game_boxscore(fixture)
+
+    line = next(line for line in result.value if line.player_external_id == str(entry["player"]["id"]))
+    assert line.position is None
+
+
+def test_position_change_does_not_alter_persisted_stats_semantics():
+    """Adding `position` to PlayerStatLine must not change the `stats`
+    dict's own content in any way -- existing persisted stat semantics
+    (Volume 3 `player_stats.stats`) are untouched by this fix."""
+    result = parse_game_boxscore(_load_fixture())
+
+    maye = next(line for line in result.value if line.player_external_id == "133837")
+    assert "position" not in maye.stats
+    assert maye.stats["passing"]["passYards"] == 178
+    assert maye.stats["_unreliable_fields"] == UNRELIABLE_FIELD_PATHS
+
+
 def test_malformed_player_row_is_skipped_not_guessed():
     fixture = _load_fixture()
     fixture["stats"]["away"]["players"] = fixture["stats"]["away"]["players"] + [

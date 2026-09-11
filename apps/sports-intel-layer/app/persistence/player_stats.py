@@ -98,6 +98,37 @@ async def _latest_player_stats_row(
     return rows[0] if rows else None
 
 
+async def upsert_player_stat_row_if_changed(
+    client: httpx.AsyncClient, headers: dict, *, game_id: str, player_id: str, stats: dict
+) -> bool:
+    """Writes one `player_stats` row for (game_id, player_id) only when
+    `stats` differs from the existing latest row for that pair -- the
+    exact idempotent, correction-aware primitive `persist_player_stats`
+    already used inline below, extracted (2026-09-11, Permanent Box Score
+    Worker Build) so a second caller (the new MSF postgame worker, which
+    resolves player identity per-line via `player_identity_activation`
+    rather than `persist_player_stats`' own batch resolve-then-persist
+    shape) can reuse the identical dedup-then-insert logic rather than a
+    second, drifting reimplementation. Returns `True` if a new row was
+    inserted, `False` if the incoming stats matched the latest existing
+    row (no-op)."""
+    latest = await _latest_player_stats_row(client, headers, game_id=game_id, player_id=player_id)
+    if latest is not None and latest["stats"] == stats:
+        return False
+
+    insert_response = await client.post(
+        "/rest/v1/player_stats",
+        json={"game_id": game_id, "player_id": player_id, "stats": stats},
+        headers=headers,
+    )
+    if insert_response.status_code not in (200, 201):
+        raise PersistenceError(
+            f"failed to insert player_stats for game {game_id}/player {player_id}: "
+            f"{insert_response.status_code} {insert_response.text}"
+        )
+    return True
+
+
 async def persist_player_stats(
     response: AdapterResponse[list[PlayerStatLine]],
     *,
@@ -143,21 +174,12 @@ async def persist_player_stats(
                 result.unresolved_players.append(line.player_external_id)
                 continue
 
-            latest = await _latest_player_stats_row(client, headers, game_id=game_id, player_id=player_id)
-            if latest is not None and latest["stats"] == line.stats:
-                result.unchanged += 1
-                continue
-
-            insert_response = await client.post(
-                "/rest/v1/player_stats",
-                json={"game_id": game_id, "player_id": player_id, "stats": line.stats},
-                headers=headers,
+            inserted = await upsert_player_stat_row_if_changed(
+                client, headers, game_id=game_id, player_id=player_id, stats=line.stats
             )
-            if insert_response.status_code not in (200, 201):
-                raise PersistenceError(
-                    f"failed to insert player_stats for game {game_id}/player {player_id}: "
-                    f"{insert_response.status_code} {insert_response.text}"
-                )
-            result.inserted += 1
+            if inserted:
+                result.inserted += 1
+            else:
+                result.unchanged += 1
 
         return result
