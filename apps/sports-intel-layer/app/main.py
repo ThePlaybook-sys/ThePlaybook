@@ -539,3 +539,48 @@ if os.environ.get("RAILWAY_ENVIRONMENT_NAME", "dev") == "dev":
                     json.dumps(redact_for_logging(result), default=str),
                 )
             _msf_game_boxscore_diag_logger.warning("MSF_GAME_BOXSCORE_DIAGNOSTIC_DONE")
+
+    if os.environ.get("RUN_BALLDONTLIE_WEEK1_SCHEDULE_RECOVERY") == "1":
+        import json
+        import logging
+
+        _balldontlie_week1_recovery_logger = logging.getLogger(
+            "sports-intel-layer.diagnostics.balldontlie_week1_schedule_recovery"
+        )
+
+        @app.on_event("startup")
+        async def _run_balldontlie_week1_schedule_recovery_once() -> None:
+            """TEMPORARY, one-shot diagnostic hook for MANSA's HQ-authorized
+            Week 1 Canonical Schedule Recovery (2026-09-11, see
+            `app.diagnostics.balldontlie_week1_schedule_recovery`'s own module
+            docstring). Exactly ONE real BALLDONTLIE call, guarded by the
+            same `activation_run_markers` mechanism every prior diagnostic
+            pass has used. Diagnostic only -- persists a raw evidence
+            envelope to `game_events` (the existing raw-capture table),
+            never to canonical `games`/`game_provider_ids`, and never
+            touches recommendation logic or Context Intelligence.
+
+            Logs only a REDACTED summary (`redact_for_logging`) -- never
+            the full response body, never any response header value, never
+            the credential. The durable record of this call lives in the
+            `game_events` row this diagnostic writes, not in Railway's own
+            log retention -- the exact gap this recovery pass exists to
+            close relative to the 2026-09-07 discovery probe."""
+            from app.diagnostics.balldontlie_week1_schedule_recovery import (
+                redact_for_logging as redact_schedule_recovery_for_logging,
+                run_balldontlie_week1_schedule_recovery,
+            )
+
+            _balldontlie_week1_recovery_logger.warning("BALLDONTLIE_WEEK1_SCHEDULE_RECOVERY_START")
+            try:
+                result = await run_balldontlie_week1_schedule_recovery()
+            except Exception as exc:  # last-resort guard -- a diagnostic must never crash startup
+                _balldontlie_week1_recovery_logger.error(
+                    "BALLDONTLIE_WEEK1_SCHEDULE_RECOVERY_UNEXPECTED_FAILURE %s", exc, exc_info=True
+                )
+            else:
+                _balldontlie_week1_recovery_logger.warning(
+                    "BALLDONTLIE_WEEK1_SCHEDULE_RECOVERY_RESULT %s",
+                    json.dumps(redact_schedule_recovery_for_logging(result), default=str),
+                )
+            _balldontlie_week1_recovery_logger.warning("BALLDONTLIE_WEEK1_SCHEDULE_RECOVERY_DONE")
