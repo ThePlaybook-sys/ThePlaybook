@@ -143,6 +143,12 @@ def parse_game_boxscore(payload: dict[str, Any]) -> AdapterResponse[list[PlayerS
             player = entry["player"]
             provider_player_id = str(player["id"])
             player_name = f"{player.get('firstName', '')} {player.get('lastName', '')}".strip()
+            # Real provider-reported position (Phase 8 Automatic Player
+            # Identity pass, 2026-09-11 -- see PlayerStatLine.position's
+            # own docstring). Confirmed present directly on Gate B's real
+            # `player` object (e.g. {"id": 166956, ..., "position": "LS"}),
+            # never nested, never guessed when a row genuinely lacks it.
+            position = player.get("position")
             stat_blocks = entry["playerStats"]
             if not isinstance(stat_blocks, list) or not stat_blocks:
                 raise TypeError("playerStats was empty or not a list")
@@ -164,6 +170,7 @@ def parse_game_boxscore(payload: dict[str, Any]) -> AdapterResponse[list[PlayerS
                 player_name=player_name,
                 team=team or "",
                 stats=_with_unreliable_marker(raw_stats),
+                position=position if isinstance(position, str) and position else None,
             )
         )
 
