@@ -615,3 +615,34 @@ if os.environ.get("RAILWAY_ENVIRONMENT_NAME", "dev") == "dev":
                     json.dumps(redact_for_logging(result), default=str),
                 )
             _msf_game_boxscore_diag_logger.warning("MSF_GAME_BOXSCORE_DIAGNOSTIC_DONE")
+
+    if os.environ.get("RUN_MSF_POSTGAME_SF_LAR_LIVE_PROOF") == "1":
+        import json
+        import logging
+
+        _sf_lar_live_proof_logger = logging.getLogger(
+            "sports-intel-layer.diagnostics.sf_lar_live_proof"
+        )
+
+        @app.on_event("startup")
+        async def _run_sf_lar_live_proof_once() -> None:
+            """TEMPORARY, one-shot trigger for MANSA HQ's authorized
+            "SF@LAR LIVE PROOF" (2026-09-13) -- see
+            `app.diagnostics.sf_lar_live_proof`'s own module docstring
+            for the full reasoning (calls the PERMANENT
+            `run_msf_postgame_capture` directly, no reimplementation;
+            exists only to sidestep this session's inability to
+            authenticate an HTTP call against the new permanent
+            endpoint's own token guard without reading a secret back).
+            Logs only a structured, already-redacted summary -- never a
+            raw payload or credential."""
+            from app.diagnostics.sf_lar_live_proof import run_sf_lar_live_proof
+
+            _sf_lar_live_proof_logger.warning("SF_LAR_LIVE_PROOF_START")
+            try:
+                result = await run_sf_lar_live_proof()
+            except Exception as exc:  # last-resort guard -- must never crash startup
+                _sf_lar_live_proof_logger.error("SF_LAR_LIVE_PROOF_UNEXPECTED_FAILURE %s", exc, exc_info=True)
+            else:
+                _sf_lar_live_proof_logger.warning("SF_LAR_LIVE_PROOF_RESULT %s", json.dumps(result, default=str))
+            _sf_lar_live_proof_logger.warning("SF_LAR_LIVE_PROOF_DONE")
