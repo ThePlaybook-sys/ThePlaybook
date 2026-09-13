@@ -36,6 +36,31 @@ persistence) retries after a successful capture are a completely
 separate concern this module has no opinion on -- those never touch
 `attempt_count`, and a game resuming from `validated` state makes zero
 new provider calls in the first place.
+
+## Cache/rate-aware scheduling (Pre-Live Worker Hardening, 2026-09-13)
+
+Known real MSF evidence (Gate B's own captured response headers, Sunday
+Ingestion Preflight Correction's own audit): `Cache-Control:
+no-transform, max-age=10800` (a 3-hour CDN edge cache) on every MSF
+boxscore response this project has ever captured. "Do not blindly
+schedule a new provider check one hour later if the previous response
+advertises a longer valid cache interval" -- `cache_aware_next_check_at`
+below extends (never shortens) the default `FOLLOWUP_CHECK_OFFSET` to
+respect a real, provider-advertised `max-age` when it's longer.
+
+A 429 response's own `Retry-After` header gets the identical treatment
+via `retry_after_aware_next_check_at` -- extends, never shortens, the
+default cadence. Both functions are pure extensions of `next_check_at`
+itself: with no signal present, behavior is byte-identical to before
+this pass. **Neither function changes `HARD_CAP_ATTEMPTS` or
+`attempt_count` semantics in any way** -- they only ever affect WHEN the
+next already-budgeted check happens, never whether one happens or how
+many total checks a game gets. 5xx/network failures are deliberately
+untouched by either function -- rule 3's "bounded transient retry policy
+remains separate" is enforced structurally: `_default_fetch_boxscore`
+only ever populates `retry_after_seconds` on an actual 429, and
+`cache_max_age_seconds` only ever on an actual 200 (see
+`app.workers.msf_postgame_worker`'s own `BoxscoreFetchResult`).
 """
 from __future__ import annotations
 
@@ -96,6 +121,76 @@ def hard_cap_reached(attempt_count: int) -> bool:
     return attempt_count >= HARD_CAP_ATTEMPTS
 
 
+def parse_cache_control_max_age(value: str | None) -> int | None:
+    """Parses the `max-age` directive (seconds) out of a `Cache-Control`
+    header value. Tolerant of other directives and whitespace (e.g. the
+    exact real value MSF has been observed to send, `"no-transform,
+    max-age=10800"`), case-insensitive on the directive name. Returns
+    `None` if absent, malformed, or negative -- never fabricated, never
+    guessed."""
+    if not value:
+        return None
+    for part in value.split(","):
+        part = part.strip()
+        if part.lower().startswith("max-age="):
+            raw = part.split("=", 1)[1].strip()
+            try:
+                seconds = int(raw)
+            except ValueError:
+                return None
+            return seconds if seconds >= 0 else None
+    return None
+
+
+def parse_retry_after_seconds(value: str | None, *, now: datetime) -> int | None:
+    """Parses a `Retry-After` header value -- either delta-seconds (the
+    common real-world form) or an HTTP-date (RFC 7231) -- into whole
+    seconds from `now`. Returns `None` if absent, unparseable, or would
+    resolve to a non-positive delay -- never fabricated, never negative."""
+    if not value:
+        return None
+    value = value.strip()
+    if value.isdigit():
+        seconds = int(value)
+        return seconds if seconds > 0 else None
+    try:
+        from email.utils import parsedate_to_datetime
+
+        target = parsedate_to_datetime(value)
+    except (TypeError, ValueError, IndexError):
+        return None
+    if target.tzinfo is None:
+        target = target.replace(tzinfo=timezone.utc)
+    delta_seconds = (target - now.astimezone(timezone.utc)).total_seconds()
+    return int(delta_seconds) if delta_seconds > 0 else None
+
+
+def cache_aware_next_check_at(*, now: datetime, cache_max_age_seconds: int | None) -> datetime:
+    """`next_check_at(now)`, extended (never shortened) to respect a
+    provider-advertised `Cache-Control` `max-age` when it's longer than
+    the default follow-up offset. With `cache_max_age_seconds=None`
+    (no header, or an unparseable one), behavior is identical to
+    `next_check_at`."""
+    default_next = next_check_at(now)
+    if cache_max_age_seconds is None:
+        return default_next
+    cache_based_next = now.astimezone(timezone.utc) + timedelta(seconds=cache_max_age_seconds)
+    return max(default_next, cache_based_next)
+
+
+def retry_after_aware_next_check_at(*, now: datetime, retry_after_seconds: int | None) -> datetime:
+    """`next_check_at(now)`, extended (never shortened) to respect a 429
+    response's own `Retry-After` -- never schedules sooner than the
+    already-approved cadence, but waits longer when the provider
+    explicitly asks for it. With `retry_after_seconds=None`, behavior is
+    identical to `next_check_at`."""
+    default_next = next_check_at(now)
+    if retry_after_seconds is None:
+        return default_next
+    retry_based_next = now.astimezone(timezone.utc) + timedelta(seconds=retry_after_seconds)
+    return max(default_next, retry_based_next)
+
+
 __all__ = [
     "FIRST_CHECK_OFFSET",
     "FOLLOWUP_CHECK_OFFSET",
@@ -104,4 +199,8 @@ __all__ = [
     "first_check_at",
     "next_check_at",
     "hard_cap_reached",
+    "parse_cache_control_max_age",
+    "parse_retry_after_seconds",
+    "cache_aware_next_check_at",
+    "retry_after_aware_next_check_at",
 ]

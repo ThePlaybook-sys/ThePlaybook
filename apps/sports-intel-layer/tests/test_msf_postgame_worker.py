@@ -35,14 +35,21 @@ def _game_row():
     return {"id": GAME_ID, "home_team": "LAR", "away_team": "SF", "scheduled_start": KICKOFF.isoformat(), "status": "scheduled"}
 
 
+#: Real SF/LAR numeric MSF team ids (Sunday Ingestion Foundation Build,
+#: 2026-09-11) -- used here so these synthetic bodies match the real
+#: shape numeric-first team resolution depends on.
+SF_NUMERIC_TEAM_ID = "78"
+LAR_NUMERIC_TEAM_ID = "77"
+
+
 def _boxscore_body(*, played_status="COMPLETED", players=None):
     players = players if players is not None else []
     return {
         "game": {
             "id": int(MSF_GAME_ID),
             "playedStatus": played_status,
-            "awayTeam": {"abbreviation": "SF"},
-            "homeTeam": {"abbreviation": "LAR"},
+            "awayTeam": {"id": int(SF_NUMERIC_TEAM_ID), "abbreviation": "SF"},
+            "homeTeam": {"id": int(LAR_NUMERIC_TEAM_ID), "abbreviation": "LAR"},
         },
         "stats": {"away": {"players": players}, "home": {"players": []}},
         "lastUpdatedOn": "2026-09-14T00:00:00Z",
@@ -198,6 +205,118 @@ async def test_transient_fetch_failure_below_hard_cap_stays_eligible(monkeypatch
     update_body = json.loads(patch_route.calls[-1].request.content)
     assert update_body["error_classification"] == "transient"
     assert update_body["state"] == "eligible_for_postgame_check"
+    assert update_body["next_eligible_attempt_at"] == (now + timedelta(hours=1)).isoformat()
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_429_retry_after_extends_next_check_beyond_default(monkeypatch):
+    """Pre-Live Worker Hardening: a 429's own Retry-After (2 hours, here)
+    is longer than the default 1h follow-up -- the next eligible check
+    must respect the longer wait, not blindly schedule 1h out."""
+    _env(monkeypatch)
+    _mock_ingestion_state_get({"state": "eligible_for_postgame_check", "attempt_count": 0})
+    patch_route = respx.patch(f"{SUPABASE_URL}/rest/v1/game_postgame_ingestion_state").mock(
+        return_value=httpx.Response(200, json=[{"id": "row-1", "attempt_count": 0}])
+    )
+    _mock_msf_game_mapping()
+    _mock_season()
+
+    async def _fake(*, season, msf_game_id):
+        return BoxscoreFetchResult(
+            status="transient_error", http_status=429, error="provider returned 429", retry_after_seconds=7200
+        )
+
+    now = KICKOFF + timedelta(hours=4)
+    async with httpx.AsyncClient(base_url=SUPABASE_URL) as client:
+        result = await run_msf_postgame_capture(supabase_client=client, game_id=GAME_ID, now=now, fetch_boxscore=_fake)
+
+    assert result.outcome == "capture_failed_transient"
+    update_body = json.loads(patch_route.calls[-1].request.content)
+    assert update_body["next_eligible_attempt_at"] == (now + timedelta(hours=2)).isoformat()
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_429_retry_after_never_shortens_below_default_cadence(monkeypatch):
+    """A short Retry-After (30s) never schedules sooner than the
+    already-approved 1h cadence."""
+    _env(monkeypatch)
+    _mock_ingestion_state_get({"state": "eligible_for_postgame_check", "attempt_count": 0})
+    patch_route = respx.patch(f"{SUPABASE_URL}/rest/v1/game_postgame_ingestion_state").mock(
+        return_value=httpx.Response(200, json=[{"id": "row-1", "attempt_count": 0}])
+    )
+    _mock_msf_game_mapping()
+    _mock_season()
+
+    async def _fake(*, season, msf_game_id):
+        return BoxscoreFetchResult(
+            status="transient_error", http_status=429, error="provider returned 429", retry_after_seconds=30
+        )
+
+    now = KICKOFF + timedelta(hours=4)
+    async with httpx.AsyncClient(base_url=SUPABASE_URL) as client:
+        result = await run_msf_postgame_capture(supabase_client=client, game_id=GAME_ID, now=now, fetch_boxscore=_fake)
+
+    assert result.outcome == "capture_failed_transient"
+    update_body = json.loads(patch_route.calls[-1].request.content)
+    assert update_body["next_eligible_attempt_at"] == (now + timedelta(hours=1)).isoformat()
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_not_completed_cache_control_extends_next_check_beyond_default(monkeypatch):
+    """A real Cache-Control max-age of 3h (MSF's own known real value)
+    is longer than the default 1h follow-up -- must not blindly
+    re-check sooner than the provider's own edge cache will refresh."""
+    _env(monkeypatch)
+    _mock_ingestion_state_get({"state": "eligible_for_postgame_check", "attempt_count": 0})
+    patch_route = respx.patch(f"{SUPABASE_URL}/rest/v1/game_postgame_ingestion_state").mock(
+        return_value=httpx.Response(200, json=[{"id": "row-1", "attempt_count": 0}])
+    )
+    _mock_msf_game_mapping()
+    _mock_season()
+    respx.post(f"{SUPABASE_URL}/rest/v1/game_events").mock(return_value=httpx.Response(201, json=[{"id": RAW_EVENT_ID}]))
+
+    async def _fake(*, season, msf_game_id):
+        return BoxscoreFetchResult(
+            status="success", http_status=200, body=_boxscore_body(played_status="LIVE"),
+            cache_max_age_seconds=10800,
+        )
+
+    now = KICKOFF + timedelta(hours=4)
+    async with httpx.AsyncClient(base_url=SUPABASE_URL) as client:
+        result = await run_msf_postgame_capture(supabase_client=client, game_id=GAME_ID, now=now, fetch_boxscore=_fake)
+
+    assert result.outcome == "not_ready"
+    update_body = json.loads(patch_route.calls[-1].request.content)
+    assert update_body["next_eligible_attempt_at"] == (now + timedelta(hours=3)).isoformat()
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_not_completed_cache_control_never_shortens_below_default_cadence(monkeypatch):
+    _env(monkeypatch)
+    _mock_ingestion_state_get({"state": "eligible_for_postgame_check", "attempt_count": 0})
+    patch_route = respx.patch(f"{SUPABASE_URL}/rest/v1/game_postgame_ingestion_state").mock(
+        return_value=httpx.Response(200, json=[{"id": "row-1", "attempt_count": 0}])
+    )
+    _mock_msf_game_mapping()
+    _mock_season()
+    respx.post(f"{SUPABASE_URL}/rest/v1/game_events").mock(return_value=httpx.Response(201, json=[{"id": RAW_EVENT_ID}]))
+
+    async def _fake(*, season, msf_game_id):
+        return BoxscoreFetchResult(
+            status="success", http_status=200, body=_boxscore_body(played_status="LIVE"),
+            cache_max_age_seconds=60,
+        )
+
+    now = KICKOFF + timedelta(hours=4)
+    async with httpx.AsyncClient(base_url=SUPABASE_URL) as client:
+        result = await run_msf_postgame_capture(supabase_client=client, game_id=GAME_ID, now=now, fetch_boxscore=_fake)
+
+    assert result.outcome == "not_ready"
+    update_body = json.loads(patch_route.calls[-1].request.content)
     assert update_body["next_eligible_attempt_at"] == (now + timedelta(hours=1)).isoformat()
 
 
@@ -373,6 +492,61 @@ async def test_completed_all_players_resolve_confirms_complete(monkeypatch):
     # Two 'validated' + one final 'confirmed_complete' state update expected among patch calls.
     states_written = [json.loads(c.request.content).get("state") for c in patch_route.calls if json.loads(c.request.content).get("state")]
     assert "validated" in states_written
+    assert states_written[-1] == "confirmed_complete"
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_completed_unseen_player_resolves_via_numeric_team_id_alone(monkeypatch):
+    """The real SF@LAR hardening proof at the worker level: a genuinely
+    unseen player whose team has ONLY a numeric-scheme `team_provider_ids`
+    row (no abbreviation-scheme row at all -- the exact real state of SF
+    and LAR in dev today) must still be safely CREATED, not quarantined.
+    Before this pass's numeric-first hardening, this exact scenario would
+    have quarantined every such player as team_unresolved."""
+    _env(monkeypatch)
+    _mock_ingestion_state_get({"state": "eligible_for_postgame_check", "attempt_count": 0})
+    patch_route = respx.patch(f"{SUPABASE_URL}/rest/v1/game_postgame_ingestion_state").mock(
+        return_value=httpx.Response(200, json=[{"id": "row-1", "attempt_count": 0}])
+    )
+    _mock_msf_game_mapping()
+    _mock_season()
+    respx.post(f"{SUPABASE_URL}/rest/v1/game_events").mock(return_value=httpx.Response(201, json=[{"id": RAW_EVENT_ID}]))
+    respx.get(f"{SUPABASE_URL}/rest/v1/player_provider_ids").mock(return_value=httpx.Response(200, json=[]))
+    # Only the NUMERIC scheme is mapped -- no row exists for the "SF"
+    # abbreviation at all, matching real dev state exactly.
+    respx.get(f"{SUPABASE_URL}/rest/v1/team_provider_ids").mock(
+        side_effect=lambda request: (
+            httpx.Response(200, json=[{"team_id": "team-sf", "provider_team_id": SF_NUMERIC_TEAM_ID}])
+            if SF_NUMERIC_TEAM_ID in request.url.params.get("provider_team_id", "")
+            else httpx.Response(200, json=[])
+        )
+    )
+    respx.get(f"{SUPABASE_URL}/rest/v1/players").mock(return_value=httpx.Response(200, json=[]))
+    players_insert_route = respx.post(f"{SUPABASE_URL}/rest/v1/players").mock(
+        return_value=httpx.Response(201, json=[{"id": "player-new"}])
+    )
+    respx.post(f"{SUPABASE_URL}/rest/v1/player_provider_ids").mock(return_value=httpx.Response(201))
+    respx.get(f"{SUPABASE_URL}/rest/v1/player_stats").mock(return_value=httpx.Response(200, json=[]))
+    stats_insert_route = respx.post(f"{SUPABASE_URL}/rest/v1/player_stats").mock(return_value=httpx.Response(201))
+
+    body = _boxscore_body(players=[_player_entry("1", "Unseen Player")])
+
+    async def _fake(*, season, msf_game_id):
+        return BoxscoreFetchResult(status="success", http_status=200, body=body)
+
+    now = KICKOFF + timedelta(hours=4)
+    async with httpx.AsyncClient(base_url=SUPABASE_URL) as client:
+        result = await run_msf_postgame_capture(supabase_client=client, game_id=GAME_ID, now=now, fetch_boxscore=_fake)
+
+    assert result.outcome == "confirmed_complete"
+    assert result.resolved_players == 1
+    assert result.quarantined_players == 0
+    assert players_insert_route.called
+    insert_body = json.loads(players_insert_route.calls.last.request.content)
+    assert insert_body["team_id"] == "team-sf"
+    assert stats_insert_route.call_count == 1
+    states_written = [json.loads(c.request.content).get("state") for c in patch_route.calls if json.loads(c.request.content).get("state")]
     assert states_written[-1] == "confirmed_complete"
 
 

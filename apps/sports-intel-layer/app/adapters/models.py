@@ -244,3 +244,14 @@ class PlayerStatLine(BaseModel):
     #: and every existing caller that constructs a PlayerStatLine without
     #: this keyword argument is unaffected.
     position: str | None = None
+    #: Provider's own NUMERIC team identifier (e.g. MySportsFeeds'
+    #: `game.{away,home}Team.id`, stringified) -- Pre-Live Worker
+    #: Hardening pass, 2026-09-13. Distinct from `team` (a provider's
+    #: abbreviation/name representation, e.g. "NE") -- this field is the
+    #: PRIMARY team-identity evidence for providers whose numeric scheme
+    #: has broader `team_provider_ids` coverage than their abbreviation
+    #: scheme does (MySportsFeeds: 32/32 numeric vs. 12/32 abbreviation as
+    #: of this pass). `None` when the source payload genuinely doesn't
+    #: carry one, never invented. Optional, added after this model's
+    #: original fields -- every existing caller unaffected.
+    provider_team_id: str | None = None

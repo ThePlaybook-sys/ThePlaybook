@@ -109,9 +109,12 @@ from app.persistence.player_stats import upsert_player_stat_row_if_changed
 from app.persistence.seasons import SeasonResolutionError, fetch_current_season_year
 from app.workers.msf_call_control import (
     MAX_LOCAL_TRANSIENT_RETRIES,
+    cache_aware_next_check_at,
     first_check_at,
     hard_cap_reached,
-    next_check_at,
+    parse_cache_control_max_age,
+    parse_retry_after_seconds,
+    retry_after_aware_next_check_at,
 )
 
 _PROVIDER_NAME = "mysportsfeeds"
@@ -139,12 +142,24 @@ class MSFPostgameWorkerError(Exception):
 class BoxscoreFetchResult:
     """Outcome of one bounded attempt to fetch a game's boxscore --
     `status` is one of "success" | "transient_error" | "permanent_error".
-    `fetch_boxscore` callables (real or test-injected) return this."""
+    `fetch_boxscore` callables (real or test-injected) return this.
+
+    `cache_max_age_seconds` (Pre-Live Worker Hardening, 2026-09-13): the
+    real `Cache-Control` `max-age`, when a `status="success"` response
+    carried a parseable one -- `None` otherwise, never fabricated. Lets
+    the caller respect provider-advertised cache freshness instead of
+    blindly scheduling the default 1h follow-up. `retry_after_seconds`:
+    the real `Retry-After`, when a `status="transient_error"` came from
+    an actual 429 response and carried a parseable one -- `None` for
+    every other transient cause (5xx, transport error), matching rule
+    3's "5xx/network: bounded transient retry policy remains separate"."""
 
     status: str
     http_status: int | None = None
     body: Any | None = None
     error: str | None = None
+    cache_max_age_seconds: int | None = None
+    retry_after_seconds: int | None = None
 
 
 @dataclass
@@ -255,11 +270,20 @@ async def _default_fetch_boxscore(*, season: str, msf_game_id: str) -> BoxscoreF
     """The ONE place a real MySportsFeeds boxscore call could ever be
     made through this path. NOT invoked anywhere in this pass -- every
     caller (including every test) supplies its own `fetch_boxscore` via
-    dependency injection instead. Bounded local transient retries
-    (`MAX_LOCAL_TRANSIENT_RETRIES`, immediate -- no artificial backoff
-    sleep, see `app.workers.msf_call_control`'s own docstring) on
-    transport errors or 429/5xx; 401/403/400 escalate immediately as
-    permanent, never retried locally."""
+    dependency injection instead.
+
+    Bounded local transient retries (`MAX_LOCAL_TRANSIENT_RETRIES`,
+    immediate -- no artificial backoff sleep, see
+    `app.workers.msf_call_control`'s own docstring) on transport errors
+    or 5xx; 401/403/400 escalate immediately as permanent, never retried
+    locally. **429 is handled separately from the 5xx/network bounded-
+    retry policy (rule 3)** -- it gives up for this tick immediately
+    (retrying instantly into the same rate limit would be pointless) and
+    instead captures the response's own `Retry-After`
+    (`retry_after_seconds`) for the caller to respect when scheduling the
+    next tick. A `status="success"` response's own `Cache-Control`
+    `max-age` is likewise captured (`cache_max_age_seconds`) for the
+    caller's not-COMPLETED scheduling decision."""
     client_and_key = build_msf_game_boxscore_diagnostic_client()
     if client_and_key is None:
         return BoxscoreFetchResult(status="permanent_error", error="MYSPORTSFEEDS_API_KEY is not configured")
@@ -288,7 +312,16 @@ async def _default_fetch_boxscore(*, season: str, msf_game_id: str) -> BoxscoreF
                     status="permanent_error", http_status=response.status_code,
                     error=f"invalid request ({response.status_code}): {response.text}",
                 )
-            if response.status_code == 429 or response.status_code >= 500:
+            if response.status_code == 429:
+                retry_after_seconds = parse_retry_after_seconds(
+                    response.headers.get("Retry-After"), now=datetime.now(timezone.utc)
+                )
+                return BoxscoreFetchResult(
+                    status="transient_error", http_status=response.status_code,
+                    error=f"provider returned {response.status_code}",
+                    retry_after_seconds=retry_after_seconds,
+                )
+            if response.status_code >= 500:
                 last_error = f"provider returned {response.status_code}"
                 continue
             if response.status_code != 200:
@@ -304,7 +337,11 @@ async def _default_fetch_boxscore(*, season: str, msf_game_id: str) -> BoxscoreF
                     status="permanent_error", http_status=response.status_code,
                     error=f"response body was not valid JSON: {exc}",
                 )
-            return BoxscoreFetchResult(status="success", http_status=response.status_code, body=body)
+            cache_max_age_seconds = parse_cache_control_max_age(response.headers.get("Cache-Control"))
+            return BoxscoreFetchResult(
+                status="success", http_status=response.status_code, body=body,
+                cache_max_age_seconds=cache_max_age_seconds,
+            )
 
         return BoxscoreFetchResult(
             status="transient_error", http_status=last_http_status,
@@ -339,7 +376,13 @@ async def _finish_processing_completed_game(
                 headers,
                 game_id=game_id,
                 provider_player_id=line.player_external_id,
-                provider_team_id=line.team,
+                # Numeric-first (Pre-Live Worker Hardening, 2026-09-13):
+                # the numeric MSF team id is now the primary, required
+                # team-identity path (32/32-team coverage); the
+                # abbreviation is passed only as supporting/consistency
+                # evidence.
+                provider_team_id=line.provider_team_id,
+                raw_team_abbreviation=line.team,
                 raw_player_name=line.player_name,
                 raw_position=line.position,
                 raw_capture_id=raw_capture_id,
@@ -484,11 +527,18 @@ async def run_msf_postgame_capture(
                     game_id=game_id, outcome="capture_failed_permanent", state="capture_failed_permanent",
                     attempt_count=new_attempt_count, error=fetch_result.error,
                 )
+            # Rule 3/cache-aware hardening: a 429's own Retry-After (when
+            # `_default_fetch_boxscore` observed one) extends -- never
+            # shortens -- the default follow-up cadence. 5xx/network
+            # transient failures carry no retry_after_seconds, so this is
+            # a no-op for them (identical to next_check_at(now)).
             await update_ingestion_state(
                 supabase_client, headers, game_id=game_id, state="eligible_for_postgame_check",
                 error_classification="transient", attempt_count=new_attempt_count,
                 last_http_status=fetch_result.http_status, last_error=fetch_result.error,
-                next_eligible_attempt_at=next_check_at(now).isoformat(),
+                next_eligible_attempt_at=retry_after_aware_next_check_at(
+                    now=now, retry_after_seconds=fetch_result.retry_after_seconds
+                ).isoformat(),
             )
             return MSFPostgameCaptureResult(
                 game_id=game_id, outcome="capture_failed_transient", state="eligible_for_postgame_check",
@@ -550,9 +600,15 @@ async def run_msf_postgame_capture(
                     attempt_count=new_attempt_count,
                     error=f"not completed after {new_attempt_count} checks",
                 )
+            # Cache-aware hardening: respect a real Cache-Control max-age
+            # when it's longer than the default 1h follow-up -- never
+            # blindly re-check sooner than the provider's own edge cache
+            # will actually refresh.
             await update_ingestion_state(
                 supabase_client, headers, game_id=game_id, state="eligible_for_postgame_check",
-                next_eligible_attempt_at=next_check_at(now).isoformat(),
+                next_eligible_attempt_at=cache_aware_next_check_at(
+                    now=now, cache_max_age_seconds=fetch_result.cache_max_age_seconds
+                ).isoformat(),
             )
             return MSFPostgameCaptureResult(
                 game_id=game_id, outcome="not_ready", state="eligible_for_postgame_check",

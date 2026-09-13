@@ -67,6 +67,44 @@ def test_team_assignment_uses_the_real_abbreviations():
     assert home_count == 35
 
 
+def test_numeric_provider_team_id_is_extracted_from_the_game_side_not_the_player():
+    """Pre-Live Worker Hardening (2026-09-13): the raw payload's numeric
+    team id lives on `game.{away,home}Team.id`, never on the player entry
+    itself -- every player on a side must carry that side's real numeric
+    id (NE=50, SEA=79, confirmed from the raw fixture's own `game` block)."""
+    result = parse_game_boxscore(_load_fixture())
+
+    ne_ids = {line.provider_team_id for line in result.value if line.team == "NE"}
+    sea_ids = {line.provider_team_id for line in result.value if line.team == "SEA"}
+    assert ne_ids == {"50"}
+    assert sea_ids == {"79"}
+
+
+def test_player_entry_itself_has_no_team_field_confirming_side_derivation():
+    """Sanity check against the real fixture, not an assumption: a raw
+    player object carries no team identifier of its own at all -- proves
+    `provider_team_id`/`team` are both necessarily derived from the side
+    array a player sits in, never misread from a nonexistent per-player
+    field."""
+    fixture = _load_fixture()
+    sample_entry = fixture["stats"]["away"]["players"][0]
+    assert "team" not in sample_entry["player"]
+    assert "teamId" not in sample_entry["player"]
+
+
+def test_missing_numeric_team_id_is_null_never_invented():
+    fixture = _load_fixture()
+    del fixture["game"]["awayTeam"]["id"]
+
+    result = parse_game_boxscore(fixture)
+
+    ne_lines = [line for line in result.value if line.team == "NE"]
+    assert ne_lines  # sanity: away players still parsed
+    assert all(line.provider_team_id is None for line in ne_lines)
+    sea_lines = [line for line in result.value if line.team == "SEA"]
+    assert all(line.provider_team_id == "79" for line in sea_lines)  # unaffected
+
+
 def test_real_non_zero_player_stats_are_extracted_correctly():
     """Drake Maye's real, non-zero, single-game stats -- proves this
     adapter extracts genuine performance data, not just identity
