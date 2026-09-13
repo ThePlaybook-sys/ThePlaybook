@@ -1,5 +1,6 @@
 import os
 
+import httpx
 import sentry_sdk
 from fastapi import Depends, FastAPI
 from pydantic import BaseModel
@@ -19,6 +20,7 @@ from app.persistence.odds_snapshots import read_last_polled_at
 from app.persistence.weather_snapshots import read_last_polled_at as read_weather_last_polled_at
 from app.adapters.providers.gnews import GNewsNewsAdapter
 from app.workers.balldontlie_injury_worker import run_balldontlie_injury_worker
+from app.workers.msf_postgame_worker import run_msf_postgame_capture
 from app.workers.news_worker import run_news_worker
 from app.workers.odds_worker import run_odds_worker
 from app.workers.weather_worker import run_weather_worker
@@ -472,6 +474,80 @@ async def internal_run_weather_worker() -> RunWeatherWorkerResponse:
         games_skipped_unresolved_location=result.games_skipped_unresolved_location,
         snapshots_persisted=result.snapshots_persisted,
         failures=result.failures,
+        error=result.error,
+    )
+
+
+class RunMSFPostgameCaptureRequest(BaseModel):
+    game_id: str
+
+
+class RunMSFPostgameCaptureResponse(BaseModel):
+    game_id: str
+    outcome: str
+    state: str | None
+    attempt_count: int | None
+    resolved_players: int
+    quarantined_players: int
+    persisted_rows: int
+    unchanged_rows: int
+    error: str | None
+
+
+@app.post(
+    "/v1/internal/msf-postgame/run",
+    dependencies=[Depends(require_internal_token)],
+    response_model=RunMSFPostgameCaptureResponse,
+)
+async def internal_run_msf_postgame_capture(
+    request: RunMSFPostgameCaptureRequest,
+) -> RunMSFPostgameCaptureResponse:
+    """Permanent Box Score Worker Build (2026-09-11) + SF@LAR Live Proof
+    (2026-09-13, HQ-authorized): the real invocation path for
+    `app.workers.msf_postgame_worker.run_msf_postgame_capture` --
+    `sports-intel-layer` had that worker's own orchestration logic fully
+    built and tested (zero-cost Gate B replay) but no way to actually
+    invoke it against a real game until this endpoint. Deliberately NOT
+    a temporary diagnostic module: this is the permanent worker's own
+    HTTP boundary, reusable for any future canonical `game_id`, not a
+    one-shot script to be reverted after use -- matching the exact
+    established shape of every other `/v1/internal/*/run` endpoint in
+    this file (`internal_run_master_refresh` etc.), never a second,
+    diagnostic-flavored implementation.
+
+    Thin HTTP-to-function adapter only -- never duplicates
+    `run_msf_postgame_capture`'s own logic. `fetch_boxscore` is left at
+    its default (`None`), so a real call to this endpoint constructs and
+    uses the real `_default_fetch_boxscore` -- the one path that can
+    make a genuine, spendable MySportsFeeds call. Real credential/client
+    construction for MySportsFeeds itself stays isolated inside
+    `app.master_refresh.production_clients`/`app.workers.
+    msf_postgame_worker`, never here -- this endpoint only ever reads
+    `SUPABASE_URL` (already read elsewhere in this module's own startup
+    path, not a forbidden name) to construct the plain Supabase HTTP
+    client the worker's own functions expect. Every other credential --
+    the Supabase service-role key, the MySportsFeeds API key -- is read
+    only inside the worker/persistence layer, never here, matching
+    DEMO-1's isolation discipline (this module's own source is scanned
+    for forbidden credential names; deliberately not naming them here
+    either). Reachable only via `INTERNAL_SERVICE_TOKEN`, identical
+    to every other internal endpoint in this project. Processes exactly
+    ONE canonical game per call -- there is no batch/"all eligible
+    games" mode here, so this endpoint cannot itself broaden a single
+    authorized call into a wider slate."""
+    supabase_client = httpx.AsyncClient(base_url=os.environ["SUPABASE_URL"], timeout=120.0)
+    async with supabase_client:
+        result = await run_msf_postgame_capture(supabase_client=supabase_client, game_id=request.game_id)
+
+    return RunMSFPostgameCaptureResponse(
+        game_id=result.game_id,
+        outcome=result.outcome,
+        state=result.state,
+        attempt_count=result.attempt_count,
+        resolved_players=result.resolved_players,
+        quarantined_players=result.quarantined_players,
+        persisted_rows=result.persisted_rows,
+        unchanged_rows=result.unchanged_rows,
         error=result.error,
     )
 
