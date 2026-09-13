@@ -1,5 +1,6 @@
 """Tests for app.persistence.player_identity_activation (2026-09-11,
-HQ-authorized "AUTOMATIC PLAYER IDENTITY + QUARANTINE BUILD").
+HQ-authorized "AUTOMATIC PLAYER IDENTITY + QUARANTINE BUILD"; team
+resolution hardened 2026-09-13, "PRE-LIVE WORKER HARDENING").
 
 Proves every rule (A-J) the module's own docstring names: safe unseen-
 player creation, provider-ID reuse, unresolved-team quarantine,
@@ -9,6 +10,14 @@ repeated calls, and that one quarantined player never blocks a peer's
 resolution. The Gate B 69-real-player replay test lives in a separate
 file (test_player_identity_activation_gate_b_replay.py) since it
 exercises a real fixture rather than synthetic respx mocks.
+
+`provider_team_id` throughout this file is MySportsFeeds' own NUMERIC
+team identifier (the primary, required team-identity path as of the
+2026-09-13 hardening) -- most existing tests below never pass
+`raw_team_abbreviation` at all, exercising the pure numeric-only path
+(the real SF@LAR case: numeric known, abbreviation not yet mapped). The
+consistency-check-specific tests near the end of this file exercise
+`raw_team_abbreviation` directly.
 """
 from __future__ import annotations
 
@@ -388,3 +397,142 @@ async def test_quarantined_player_does_not_block_a_safe_peer():
 
     assert quarantined_result.outcome == "quarantined"
     assert safe_peer_result == ActivationResult(outcome="resolved", player_id=NEW_PLAYER_ID)
+
+
+# ============================================================================
+# Numeric-first team resolution hardening (2026-09-13, "PRE-LIVE WORKER
+# HARDENING") -- proves the abbreviation is genuinely supporting/
+# consistency evidence only, never a primary or overriding resolution
+# path, and that a real disagreement between the two schemes quarantines
+# rather than silently trusting either one.
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_numeric_team_id_alone_resolves_the_real_sf_lar_shape():
+    """The real SF@LAR case: numeric MSF team id known and mapped (32/32
+    coverage), no abbreviation-scheme mapping exists at all for this team
+    -- `raw_team_abbreviation` isn't even supplied. Must resolve cleanly
+    on the numeric id alone, exactly like every other test in this file
+    that never passes an abbreviation."""
+    respx.get(f"{SUPABASE_URL}/rest/v1/player_provider_ids").mock(return_value=httpx.Response(200, json=[]))
+    respx.get(f"{SUPABASE_URL}/rest/v1/team_provider_ids").mock(
+        return_value=httpx.Response(200, json=[{"team_id": TEAM_ID, "provider_team_id": "78"}])
+    )
+    respx.get(f"{SUPABASE_URL}/rest/v1/players").mock(return_value=httpx.Response(200, json=[]))
+    insert_route = respx.post(f"{SUPABASE_URL}/rest/v1/players").mock(
+        return_value=httpx.Response(201, json=[{"id": NEW_PLAYER_ID}])
+    )
+    respx.post(f"{SUPABASE_URL}/rest/v1/player_provider_ids").mock(return_value=httpx.Response(201))
+
+    async with httpx.AsyncClient(base_url=SUPABASE_URL) as client:
+        result = await activate_msf_player(
+            client, _headers(), game_id=GAME_ID,
+            provider_player_id="88001", provider_team_id="78",
+            raw_player_name="SF Player", raw_position="WR",
+        )
+
+    assert result == ActivationResult(outcome="resolved", player_id=NEW_PLAYER_ID)
+    assert insert_route.called
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_unmapped_abbreviation_is_not_a_conflict_numeric_still_resolves():
+    """`raw_team_abbreviation` supplied but has no team_provider_ids row
+    at all (the normal case for 20/32 teams) -- absence of consistency
+    evidence is not itself a conflict; the numeric resolution proceeds
+    unquestioned. Two GET calls to team_provider_ids are made (numeric,
+    then abbreviation) -- both are asserted via the route's own call
+    count."""
+    respx.get(f"{SUPABASE_URL}/rest/v1/player_provider_ids").mock(return_value=httpx.Response(200, json=[]))
+    team_route = respx.get(f"{SUPABASE_URL}/rest/v1/team_provider_ids").mock(
+        side_effect=lambda request: (
+            httpx.Response(200, json=[{"team_id": TEAM_ID, "provider_team_id": "78"}])
+            if "78" in request.url.params.get("provider_team_id", "")
+            else httpx.Response(200, json=[])
+        )
+    )
+    respx.get(f"{SUPABASE_URL}/rest/v1/players").mock(return_value=httpx.Response(200, json=[]))
+    insert_route = respx.post(f"{SUPABASE_URL}/rest/v1/players").mock(
+        return_value=httpx.Response(201, json=[{"id": NEW_PLAYER_ID}])
+    )
+    respx.post(f"{SUPABASE_URL}/rest/v1/player_provider_ids").mock(return_value=httpx.Response(201))
+
+    async with httpx.AsyncClient(base_url=SUPABASE_URL) as client:
+        result = await activate_msf_player(
+            client, _headers(), game_id=GAME_ID,
+            provider_player_id="88002", provider_team_id="78", raw_team_abbreviation="SF",
+            raw_player_name="SF Player Two", raw_position="TE",
+        )
+
+    assert result == ActivationResult(outcome="resolved", player_id=NEW_PLAYER_ID)
+    assert insert_route.called
+    assert team_route.call_count == 2  # numeric lookup, then abbreviation consistency lookup
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_matching_abbreviation_consistency_evidence_changes_nothing():
+    """Both schemes present, both mapped, both agree -- resolution
+    proceeds exactly as if the abbreviation had never been supplied at
+    all. No quarantine, no special-casing."""
+    respx.get(f"{SUPABASE_URL}/rest/v1/player_provider_ids").mock(return_value=httpx.Response(200, json=[]))
+    respx.get(f"{SUPABASE_URL}/rest/v1/team_provider_ids").mock(
+        return_value=httpx.Response(200, json=[{"team_id": TEAM_ID, "provider_team_id": "50"}])
+    )
+    respx.get(f"{SUPABASE_URL}/rest/v1/players").mock(return_value=httpx.Response(200, json=[]))
+    insert_route = respx.post(f"{SUPABASE_URL}/rest/v1/players").mock(
+        return_value=httpx.Response(201, json=[{"id": NEW_PLAYER_ID}])
+    )
+    respx.post(f"{SUPABASE_URL}/rest/v1/player_provider_ids").mock(return_value=httpx.Response(201))
+
+    async with httpx.AsyncClient(base_url=SUPABASE_URL) as client:
+        result = await activate_msf_player(
+            client, _headers(), game_id=GAME_ID,
+            provider_player_id="88003", provider_team_id="50", raw_team_abbreviation="NE",
+            raw_player_name="NE Player", raw_position="LB",
+        )
+
+    assert result == ActivationResult(outcome="resolved", player_id=NEW_PLAYER_ID)
+    assert insert_route.called
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_conflicting_numeric_and_abbreviation_team_ids_quarantine():
+    """Rule H extension: the numeric id resolves to one canonical team,
+    the abbreviation resolves to a DIFFERENT canonical team -- a genuine
+    data-integrity anomaly between the provider's own two schemes. Must
+    quarantine as `team_identity_conflict`, never silently trust either
+    resolution, never create a player."""
+    respx.get(f"{SUPABASE_URL}/rest/v1/player_provider_ids").mock(return_value=httpx.Response(200, json=[]))
+    OTHER_TEAM_ID = "b3000000-0000-0000-0000-000000000099"
+    respx.get(f"{SUPABASE_URL}/rest/v1/team_provider_ids").mock(
+        side_effect=lambda request: (
+            httpx.Response(200, json=[{"team_id": TEAM_ID, "provider_team_id": "78"}])
+            if "78" in request.url.params.get("provider_team_id", "")
+            else httpx.Response(200, json=[{"team_id": OTHER_TEAM_ID, "provider_team_id": "XX"}])
+        )
+    )
+    _mock_empty_quarantine_check()
+    quarantine_insert_route = respx.post(f"{SUPABASE_URL}/rest/v1/player_identity_quarantine").mock(
+        return_value=httpx.Response(201, json=[{"id": QUARANTINE_ID}])
+    )
+    players_insert_route = respx.post(f"{SUPABASE_URL}/rest/v1/players").mock(
+        return_value=httpx.Response(201, json=[{"id": "should-not-be-created"}])
+    )
+
+    async with httpx.AsyncClient(base_url=SUPABASE_URL) as client:
+        result = await activate_msf_player(
+            client, _headers(), game_id=GAME_ID,
+            provider_player_id="88004", provider_team_id="78", raw_team_abbreviation="XX",
+            raw_player_name="Conflicted Player", raw_position="DB",
+        )
+
+    assert result.outcome == "quarantined"
+    assert result.conflict_type == "team_identity_conflict"
+    assert players_insert_route.call_count == 0
+    body = json.loads(quarantine_insert_route.calls.last.request.content)
+    assert body["conflict_type"] == "team_identity_conflict"
+    assert body["provider_team_id"] == "78"  # numeric id recorded, per module docstring

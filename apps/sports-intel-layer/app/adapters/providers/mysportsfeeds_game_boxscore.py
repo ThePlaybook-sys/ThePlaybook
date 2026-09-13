@@ -101,21 +101,42 @@ _UNRELIABLE_FIELDS_REASON = (
 )
 
 
-def _sided_players(payload: dict[str, Any]) -> list[tuple[dict[str, Any], str]]:
-    """Returns (player_entry, team_abbreviation) pairs for both sides.
-    Team abbreviation comes from `game.{away,home}Team.abbreviation` --
-    the same identifier `team_provider_ids` already has real mysportsfeeds
-    mappings for (Phase 8.2), deliberately NOT `stats.{away,home}Team.id`
-    (a different, numeric MSF identifier scheme not currently mapped
-    anywhere -- see this pass's own STOP AND REPORT for why inserting it
-    into `team_provider_ids` is unsafe as a same-provider second mapping)."""
+def _sided_players(payload: dict[str, Any]) -> list[tuple[dict[str, Any], str, str | None]]:
+    """Returns (player_entry, team_abbreviation, team_provider_id) triples
+    for both sides. Neither identifier lives on the player entry itself
+    (confirmed directly against the real Gate B payload -- a player
+    object carries only `id`/`firstName`/`lastName`/`position`/
+    `jerseyNumber`, no team field of any kind); every player's team
+    identity is entirely determined by which side array
+    (`stats.away.players` vs `stats.home.players`) it sits in, so both
+    identifiers are attached here, once per side, from `game.{away,home}Team`.
+
+    `team_abbreviation` (`game.{away,home}Team.abbreviation`, e.g. "NE") --
+    supporting/consistency evidence only as of the Pre-Live Worker
+    Hardening pass (2026-09-13); no longer the primary identity path (see
+    that pass's own report for why: only 12/32 teams ever had an
+    abbreviation-scheme `mysportsfeeds` `team_provider_ids` row, so
+    resolving through it required a piecemeal per-team backfill).
+
+    `team_provider_id` (`game.{away,home}Team.id`, e.g. 50 -- stringified,
+    `None` only if genuinely absent from the payload) -- the PRIMARY team
+    identity path as of the same pass. Real, numeric, and now backed by a
+    complete 32-team `team_provider_ids` mapping (Sunday Ingestion
+    Foundation Build, 2026-09-11) -- safe to trust as primary evidence in
+    a way the abbreviation scheme's 12/32 partial coverage never was."""
     game = payload.get("game", {})
-    away_abbr = game.get("awayTeam", {}).get("abbreviation")
-    home_abbr = game.get("homeTeam", {}).get("abbreviation")
+    away_team = game.get("awayTeam", {}) or {}
+    home_team = game.get("homeTeam", {}) or {}
+    away_abbr = away_team.get("abbreviation")
+    home_abbr = home_team.get("abbreviation")
+    away_provider_team_id = str(away_team["id"]) if away_team.get("id") is not None else None
+    home_provider_team_id = str(home_team["id"]) if home_team.get("id") is not None else None
     stats = payload.get("stats", {})
     away_players = stats.get("away", {}).get("players", []) or []
     home_players = stats.get("home", {}).get("players", []) or []
-    return [(p, away_abbr) for p in away_players] + [(p, home_abbr) for p in home_players]
+    return [(p, away_abbr, away_provider_team_id) for p in away_players] + [
+        (p, home_abbr, home_provider_team_id) for p in home_players
+    ]
 
 
 def _with_unreliable_marker(raw_stats: dict[str, Any]) -> dict[str, Any]:
@@ -138,7 +159,7 @@ def parse_game_boxscore(payload: dict[str, Any]) -> AdapterResponse[list[PlayerS
     `lastUpdatedOn` field, parsed if present, never fabricated if absent
     or unparseable."""
     lines: list[PlayerStatLine] = []
-    for entry, team in _sided_players(payload):
+    for entry, team, provider_team_id in _sided_players(payload):
         try:
             player = entry["player"]
             provider_player_id = str(player["id"])
@@ -171,6 +192,7 @@ def parse_game_boxscore(payload: dict[str, Any]) -> AdapterResponse[list[PlayerS
                 team=team or "",
                 stats=_with_unreliable_marker(raw_stats),
                 position=position if isinstance(position, str) and position else None,
+                provider_team_id=provider_team_id,
             )
         )
 

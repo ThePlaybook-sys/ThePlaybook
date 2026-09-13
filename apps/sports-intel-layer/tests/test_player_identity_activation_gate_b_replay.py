@@ -172,13 +172,18 @@ async def test_all_69_real_gate_b_players_resolve_via_reuse_zero_provider_calls(
                 _headers(),
                 game_id=CANONICAL_GAME_ID,
                 provider_player_id=line.player_external_id,
-                provider_team_id=line.team,
+                # Numeric-first (Pre-Live Worker Hardening, 2026-09-13):
+                # provider_team_id is now the NUMERIC MSF team id, with
+                # the abbreviation passed only as consistency evidence --
+                # matches the real call site's own argument shape. Since
+                # every one of these 69 players resolves via reuse (Rule
+                # B short-circuits before any team lookup at all), this
+                # has no effect on this test's own outcome, but keeps the
+                # call site here honest against the real signature.
+                provider_team_id=line.provider_team_id,
+                raw_team_abbreviation=line.team,
                 raw_player_name=line.player_name,
-                # The adapter's PlayerStatLine does not carry position --
-                # see this pass's own STOP AND REPORT for why that's a
-                # named blocker for the future permanent boxscore worker,
-                # not something this replay can supply from the fixture.
-                raw_position=None,
+                raw_position=line.position,
             )
             results.append((line.player_external_id, result))
 

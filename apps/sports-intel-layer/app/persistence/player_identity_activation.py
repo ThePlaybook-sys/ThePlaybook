@@ -1,5 +1,7 @@
 """Automatic MSF player identity activation + quarantine (2026-09-11,
-HQ-authorized "AUTOMATIC PLAYER IDENTITY + QUARANTINE BUILD").
+HQ-authorized "AUTOMATIC PLAYER IDENTITY + QUARANTINE BUILD"; team
+resolution hardened 2026-09-13, HQ-authorized "PRE-LIVE WORKER
+HARDENING").
 
 This is the permanent wrapper the accepted Sunday ingestion design named
 (Section 3) but never built: a provider-ID-first activation path around
@@ -36,8 +38,33 @@ outcome rather than raising -- a caller looping over a game's roster
 naturally continues to the next player regardless of one player's
 quarantine. The one raised exception (`PlayerIdentityActivationError`)
 is reserved for a genuine infra failure (a non-2xx Supabase response this
-module cannot itself classify into one of the four quarantine cases),
+module cannot itself classify into one of the five quarantine cases),
 never for a normal quarantine outcome.
+
+## Team resolution, numeric-first (Pre-Live Worker Hardening, 2026-09-13)
+
+`provider_team_id` is now MySportsFeeds' own NUMERIC team identifier
+(e.g. `"78"`) -- the PRIMARY and REQUIRED team-identity path. This
+replaced an earlier design that resolved team identity through the
+abbreviation scheme (`"NE"`/`"SEA"`) directly, which only ever had
+12/32 teams mapped in `team_provider_ids` and would have required an
+ongoing, piecemeal per-team backfill to extend. The numeric scheme has
+had a complete 32/32-team `team_provider_ids` mapping since the Sunday
+Ingestion Foundation Build (2026-09-11) -- safe to trust as the sole
+resolution path.
+
+`raw_team_abbreviation` is now SUPPORTING/CONSISTENCY EVIDENCE ONLY: when
+present and itself already mapped in `team_provider_ids`, it is checked
+against the numeric resolution's own result -- agreement changes
+nothing (the numeric resolution already stands), but a genuine
+disagreement (the abbreviation maps to a DIFFERENT canonical team than
+the numeric id did) is a real data-integrity signal and quarantines
+under a new classification, `team_identity_conflict`, rather than being
+silently ignored or allowed to override the numeric result either way.
+An unmapped or absent abbreviation is not a conflict -- it simply means
+no consistency evidence is available (the normal case for any team
+without its own abbreviation-scheme row), and the numeric resolution
+proceeds unquestioned.
 
 No live provider call is made anywhere in this module -- it operates
 entirely on already-resolved provider identity strings its caller
@@ -65,7 +92,7 @@ _PROVIDER_NAME = "mysportsfeeds"
 
 class PlayerIdentityActivationError(Exception):
     """Raised only for a genuine infra/read failure this wrapper cannot
-    itself classify into one of the four documented quarantine cases
+    itself classify into one of the five documented quarantine cases
     (e.g. a non-2xx response reading players/player_identity_quarantine
     itself). Never raised for a normal quarantine outcome -- those are
     always returned as an ActivationResult, per Rule I."""
@@ -138,7 +165,11 @@ async def _quarantine(
     (`idx_player_identity_quarantine_open_identity`) as defense-in-depth
     against a genuine concurrent-caller race -- a 409 from that index is
     caught and resolved by re-reading the now-existing row, never raised
-    past this function."""
+    past this function. `provider_team_id` recorded here is always the
+    NUMERIC MSF identifier (see module docstring) -- the raw abbreviation,
+    when it played a role (`team_identity_conflict`), is not separately
+    persisted; a reviewer can read it directly from the linked raw
+    evidence via `raw_capture_id`."""
     identity_key = _identity_key(provider_player_id, raw_player_name)
 
     existing = await _find_open_quarantine(client, headers, game_id=game_id, identity_key=identity_key)
@@ -242,17 +273,22 @@ async def activate_msf_player(
     game_id: str,
     provider_player_id: str | None,
     provider_team_id: str | None,
+    raw_team_abbreviation: str | None = None,
     raw_player_name: str | None,
     raw_position: str | None,
     raw_capture_id: str | None = None,
 ) -> ActivationResult:
     """Permanent wrapper around the provider-ID-first `ensure_player`
-    behavior, decided player-by-player. `provider_team_id` must be the
-    identifier scheme `team_provider_ids` already has a mysportsfeeds
-    mapping for (the abbreviation scheme, e.g. "NE"/"SEA" -- the scheme
-    `parse_game_boxscore`'s own `PlayerStatLine.team` field carries; the
-    numeric scheme is a different, out-of-scope identifier this module
-    never touches).
+    behavior, decided player-by-player.
+
+    `provider_team_id` is MySportsFeeds' own NUMERIC team identifier
+    (e.g. `"78"`) -- the PRIMARY, REQUIRED team-identity evidence (see
+    module docstring for why: 32/32-team coverage vs. the abbreviation
+    scheme's 12/32). `raw_team_abbreviation` (e.g. `"SF"`), when supplied
+    and itself already mapped, is checked only for CONSISTENCY against
+    the numeric resolution -- it can never resolve a team on its own, and
+    a genuine disagreement between the two quarantines
+    (`team_identity_conflict`) rather than silently trusting either one.
     """
     # Rule H (malformed_identity): the provider payload itself lacks a
     # usable provider_player_id -- nothing else can be checked safely.
@@ -278,9 +314,11 @@ async def activate_msf_player(
     if player_id is not None:
         return ActivationResult(outcome="resolved", player_id=player_id)
 
-    # Rule C/D: a genuinely unseen provider_player_id must resolve team
-    # identity through the persisted MSF team mapping -- never create a
-    # player with unresolved or conflicting team identity.
+    # Rule C/D, numeric-first: a genuinely unseen provider_player_id must
+    # resolve team identity through the NUMERIC MSF team mapping -- never
+    # create a player with unresolved or conflicting team identity, and
+    # never fall back to the abbreviation scheme as a substitute primary
+    # path (see module docstring).
     if not provider_team_id:
         return await _quarantine(
             client,
@@ -294,10 +332,10 @@ async def activate_msf_player(
             raw_capture_id=raw_capture_id,
         )
 
-    team_map = await resolve_team_ids(
+    numeric_team_map = await resolve_team_ids(
         client, headers, provider_name=_PROVIDER_NAME, provider_team_ids=[provider_team_id]
     )
-    team_id = team_map.get(provider_team_id)
+    team_id = numeric_team_map.get(provider_team_id)
     if team_id is None:
         return await _quarantine(
             client,
@@ -310,6 +348,31 @@ async def activate_msf_player(
             conflict_type="team_unresolved",
             raw_capture_id=raw_capture_id,
         )
+
+    # Consistency check (Rule H extension): the abbreviation is
+    # supporting evidence only. Absent or unmapped -> nothing to check,
+    # proceed on the numeric resolution alone (the normal case for any
+    # team without its own abbreviation-scheme row). Mapped AND
+    # disagreeing with the numeric resolution -> a genuine identity
+    # conflict between two of the provider's own identifier schemes --
+    # quarantine rather than silently trusting either one.
+    if raw_team_abbreviation:
+        abbreviation_team_map = await resolve_team_ids(
+            client, headers, provider_name=_PROVIDER_NAME, provider_team_ids=[raw_team_abbreviation]
+        )
+        abbreviation_team_id = abbreviation_team_map.get(raw_team_abbreviation)
+        if abbreviation_team_id is not None and abbreviation_team_id != team_id:
+            return await _quarantine(
+                client,
+                headers,
+                game_id=game_id,
+                provider_player_id=provider_player_id,
+                provider_team_id=provider_team_id,
+                raw_player_name=raw_player_name,
+                raw_position=raw_position,
+                conflict_type="team_identity_conflict",
+                raw_capture_id=raw_capture_id,
+            )
 
     # Rule F/G: name similarity may only ever act as a safety signal --
     # a plausible existing duplicate on this team means quarantine, never
