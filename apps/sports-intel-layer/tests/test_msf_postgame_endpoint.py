@@ -142,4 +142,6 @@ def test_dispatch_with_nothing_due_returns_empty_results(monkeypatch):
 
     assert response.status_code == 200
     body = response.json()
-    assert body == {"considered": 0, "selected_game_ids": [], "invoked_game_ids": [], "results": []}
+    assert body == {
+        "considered": 0, "selected_game_ids": [], "invoked_game_ids": [], "results": [], "enrolled_game_ids": [],
+    }

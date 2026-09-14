@@ -69,6 +69,46 @@ even a slow tick no longer risks the aggregate crossing so far past the
 boundary that Railway's own cron health reporting goes stale/misleading).
 This is a pacing-constant change only -- no per-game worker logic, retry
 budget, or ingestion-state semantics changed alongside it.
+
+**Automatic Enrollment (2026-09-14, HQ-authorized "MANSA -- AUTOMATIC
+POSTGAME ENROLLMENT").** Root cause: `select_due_msf_postgame_games`
+above only ever reads rows that already exist -- nothing anywhere
+automatically created the *first* `scheduled` row for a newly-relevant
+game (every row that existed before this pass came from a one-time,
+manually-authorized SQL initialization). `select_unenrolled_eligible_
+games` closes that gap with a second, equally read-only discovery query
+(canonical `games` + `game_provider_ids`, never `game_postgame_
+ingestion_state` mutated by the query itself), run every tick alongside
+selection. **Enrollment eligibility (the deterministic rule, using only
+already-persisted data, no provider call):** a canonical game qualifies
+once (1) it has a real `game_provider_ids` row for `mysportsfeeds`, (2)
+`games.scheduled_start <= now` -- kickoff has occurred, the literal
+reading of "eligible for the postgame pipeline" (before kickoff there is
+no completed game to check yet), and (3) no `game_postgame_ingestion_
+state` row exists for it yet. A qualifying game gets exactly one row
+created via the **existing, unmodified** `ensure_scheduled_row` --
+enrollment does not invent a new mutation primitive; it only discovers
+which `game_id`s should be handed to a function that already knew how to
+enroll one. This is why enrollment is idempotent/duplicate-safe/
+concurrency-safe/restart-safe with zero new code for any of those
+properties: `ensure_scheduled_row`'s own check-then-insert (never an
+upsert) plus its existing `(game_id, provider_name)` unique-constraint
+409-recovery path (Sunday Ingestion Foundation Build) already guarantee
+exactly one row ever exists per game, however many times or however
+concurrently enrollment runs. Bounded separately from the main per-game
+loop (`MAX_ENROLLMENTS_PER_DISPATCH_TICK`) since enrollment itself never
+makes a provider call (cheap discovery + insert only) and must not share
+budget with `MAX_GAMES_PER_DISPATCH_TICK`'s real-work cap -- a tick that
+discovers many new games in one pass must not starve already-due games of
+their own slots, and vice versa. A freshly-enrolled game is never claimed
+or fetched in the same tick that enrolls it (its own `next_eligible_
+attempt_at`, computed via the existing, unmodified `first_check_at`, is
+always in the future relative to its own just-passed kickoff) -- it
+becomes a normal candidate for `select_due_msf_postgame_games` on a later
+tick, through the exact same unmodified claim/worker path every other
+game already goes through. No per-game worker logic, claim protection,
+retry limit, terminal-state exclusion, raw-preservation, or quarantine
+behavior changed by this feature.
 """
 from __future__ import annotations
 
@@ -78,7 +118,8 @@ from datetime import datetime, timezone
 
 import httpx
 
-from app.workers.msf_call_control import HARD_CAP_ATTEMPTS
+from app.persistence.game_postgame_ingestion_state import ensure_scheduled_row
+from app.workers.msf_call_control import HARD_CAP_ATTEMPTS, first_check_at
 from app.workers.msf_postgame_worker import MSFPostgameCaptureResult, run_msf_postgame_capture
 
 _PROVIDER_NAME = "mysportsfeeds"
@@ -103,6 +144,17 @@ _DISPATCHABLE_STATES = ("scheduled", "eligible_for_postgame_check", "validated")
 #: 4-game aggregate duration reaching the boundary.
 MAX_GAMES_PER_DISPATCH_TICK = 2
 
+#: Disclosed-conservative policy default, separate from `MAX_GAMES_PER_
+#: DISPATCH_TICK` on purpose (see module docstring's Automatic Enrollment
+#: note) -- enrollment never makes a provider call (one discovery read
+#: plus one lightweight insert per game via the already-idempotent
+#: `ensure_scheduled_row`), so it can safely afford a higher per-tick
+#: bound than real per-game work while still keeping a mass-mapping event
+#: (e.g. a full week's schedule gaining MSF ids at once) from creating an
+#: unbounded burst of inserts in one request -- the same §1.1 principle
+#: #11 "bounded workload" discipline applied at a cheaper tier.
+MAX_ENROLLMENTS_PER_DISPATCH_TICK = 20
+
 
 class MSFPostgameDispatcherError(Exception):
     """Raised only for a genuine infra failure selecting due games (e.g.
@@ -121,6 +173,7 @@ class DispatchResult:
     selected_game_ids: list[str] = field(default_factory=list)
     invoked_game_ids: list[str] = field(default_factory=list)
     results: list[MSFPostgameCaptureResult] = field(default_factory=list)
+    enrolled_game_ids: list[str] = field(default_factory=list)
 
 
 def _auth_headers() -> dict:
@@ -130,6 +183,85 @@ def _auth_headers() -> dict:
         "apikey": service_role_key,
         "Content-Type": "application/json",
     }
+
+
+def _parse_ts(value: str) -> datetime:
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+async def select_unenrolled_eligible_games(
+    client: httpx.AsyncClient, headers: dict, *, now: datetime
+) -> list[dict]:
+    """Pure, read-only discovery -- no row is created, no `game_postgame_
+    ingestion_state` row is even inspected for its own fields beyond
+    `game_id` (mirrors `select_due_msf_postgame_games`'s own read-only
+    safety, extended to a second, complementary query). Three simple
+    reads composed in Python (this module's own established convention --
+    see `select_due_msf_postgame_games` above), not a PostgREST embedded
+    join:
+
+    1. Every `game_id` with a real `mysportsfeeds` `game_provider_ids`
+       mapping.
+    2. Every `game_id` that already has a `mysportsfeeds` `game_postgame_
+       ingestion_state` row (any state, including terminal -- already-
+       enrolled means already-enrolled regardless of what happened since).
+    3. The real `scheduled_start` for whatever's left after (1) minus (2)
+       -- a game not yet returned by MSF-mapping is never queried by id
+       here at all, so an unmapped game can never appear even transiently.
+
+    A candidate is eligible when its own real `scheduled_start <= now`
+    (module docstring's enrollment-eligibility rule) -- a future game
+    stays correctly unenrolled, discovered again next tick once its own
+    kickoff has actually passed. Returns `[{"game_id", "scheduled_start"},
+    ...]` ordered oldest-kickoff-first."""
+    mapped_response = await client.get(
+        "/rest/v1/game_provider_ids",
+        params={"provider_name": f"eq.{_PROVIDER_NAME}", "select": "game_id"},
+        headers=headers,
+    )
+    if mapped_response.status_code != 200:
+        raise MSFPostgameDispatcherError(
+            f"failed to read mysportsfeeds game_provider_ids for enrollment discovery: "
+            f"{mapped_response.status_code} {mapped_response.text}"
+        )
+    mapped_ids = {row["game_id"] for row in mapped_response.json()}
+    if not mapped_ids:
+        return []
+
+    enrolled_response = await client.get(
+        "/rest/v1/game_postgame_ingestion_state",
+        params={"provider_name": f"eq.{_PROVIDER_NAME}", "select": "game_id"},
+        headers=headers,
+    )
+    if enrolled_response.status_code != 200:
+        raise MSFPostgameDispatcherError(
+            f"failed to read enrolled game ids for enrollment discovery: "
+            f"{enrolled_response.status_code} {enrolled_response.text}"
+        )
+    enrolled_ids = {row["game_id"] for row in enrolled_response.json()}
+
+    candidate_ids = sorted(mapped_ids - enrolled_ids)
+    if not candidate_ids:
+        return []
+
+    games_response = await client.get(
+        "/rest/v1/games",
+        params={"id": f"in.({','.join(candidate_ids)})", "select": "id,scheduled_start"},
+        headers=headers,
+    )
+    if games_response.status_code != 200:
+        raise MSFPostgameDispatcherError(
+            f"failed to read candidate games for enrollment discovery: "
+            f"{games_response.status_code} {games_response.text}"
+        )
+
+    eligible = [
+        {"game_id": row["id"], "scheduled_start": row["scheduled_start"]}
+        for row in games_response.json()
+        if _parse_ts(row["scheduled_start"]) <= now
+    ]
+    eligible.sort(key=lambda r: r["scheduled_start"])
+    return eligible
 
 
 async def select_due_msf_postgame_games(
@@ -184,8 +316,21 @@ async def dispatch_due_msf_postgame_games(
     now: datetime | None = None,
     fetch_boxscore=None,
     max_games: int = MAX_GAMES_PER_DISPATCH_TICK,
+    max_enrollments: int = MAX_ENROLLMENTS_PER_DISPATCH_TICK,
 ) -> DispatchResult:
-    """One dispatcher tick: selects due rows (read-only), then invokes the
+    """One dispatcher tick, two independent phases:
+
+    **Phase 1 -- enrollment (module docstring's Automatic Enrollment
+    note).** `select_unenrolled_eligible_games` discovers up to
+    `max_enrollments` real, past-kickoff, MSF-mapped canonical games with
+    no `game_postgame_ingestion_state` row yet, then calls the existing,
+    unmodified `ensure_scheduled_row` once per game. Zero provider calls;
+    zero claims; a freshly-enrolled game is never invoked in this same
+    tick (see module docstring for why its own `next_eligible_attempt_at`
+    is always still in the future).
+
+    **Phase 2 -- dispatch (unchanged from Postgame Dispatch Timeout
+    Hardening).** Selects due rows (read-only), then invokes the
     existing, unmodified `run_msf_postgame_capture` for up to `max_games`
     of them, strictly sequentially (never concurrent -- see module
     docstring). `fetch_boxscore` is forwarded verbatim to every
@@ -196,14 +341,24 @@ async def dispatch_due_msf_postgame_games(
     non-network fake here instead, same convention as every other test in
     this codebase.
 
-    Every selected-but-not-yet-invoked game (beyond `max_games`) is left
-    completely untouched -- its row is unread, unclaimed, unmodified. The
-    next tick (this same function, called again later, by the same
-    recurring cron schedule) picks it up from scratch via a fresh
-    `select_due_msf_postgame_games` call; nothing about the cap requires
-    this module to remember anything between ticks."""
+    Every selected-but-not-yet-invoked game (beyond `max_games`) and every
+    discovered-but-not-yet-enrolled game (beyond `max_enrollments`) is
+    left completely untouched. The next tick (this same function, called
+    again later, by the same recurring cron schedule) picks both up from
+    scratch via fresh discovery/selection calls; nothing about either cap
+    requires this module to remember anything between ticks."""
     now = now or datetime.now(timezone.utc)
     headers = _auth_headers()
+
+    unenrolled = await select_unenrolled_eligible_games(supabase_client, headers, now=now)
+    to_enroll = unenrolled[:max_enrollments]
+    enrolled_game_ids: list[str] = []
+    for candidate in to_enroll:
+        kickoff = _parse_ts(candidate["scheduled_start"])
+        await ensure_scheduled_row(
+            supabase_client, headers, game_id=candidate["game_id"], first_eligible_at=first_check_at(kickoff)
+        )
+        enrolled_game_ids.append(candidate["game_id"])
 
     due_rows = await select_due_msf_postgame_games(supabase_client, headers, now=now)
     selected_game_ids = [row["game_id"] for row in due_rows]
@@ -221,13 +376,16 @@ async def dispatch_due_msf_postgame_games(
         selected_game_ids=selected_game_ids,
         invoked_game_ids=to_invoke,
         results=results,
+        enrolled_game_ids=enrolled_game_ids,
     )
 
 
 __all__ = [
     "MAX_GAMES_PER_DISPATCH_TICK",
+    "MAX_ENROLLMENTS_PER_DISPATCH_TICK",
     "MSFPostgameDispatcherError",
     "DispatchResult",
     "select_due_msf_postgame_games",
+    "select_unenrolled_eligible_games",
     "dispatch_due_msf_postgame_games",
 ]
