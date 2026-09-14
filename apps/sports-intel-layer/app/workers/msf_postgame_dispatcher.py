@@ -43,16 +43,32 @@ processes selected games strictly one at a time (no `asyncio.gather`, no
 concurrency at all) and caps how many it invokes per call
 (`MAX_GAMES_PER_DISPATCH_TICK`) -- a disclosed-conservative policy default
 (not empirically derived, matching this codebase's own convention for
-undecided numbers), chosen so one dispatcher tick's own real end-to-end
-processing time (observed live in the SF@LAR Live Proof pass: ~2 minutes
-for one game's full fetch + ~95-player resolve/persist cycle) stays safely
-inside the cron caller's own request timeout, and so a real Sunday-scale
-recovery spreads its real provider calls across several cron ticks rather
-than firing 13 requests at once. Any games left over past the cap are
-picked up automatically by the next scheduled tick -- no state is lost or
-orphaned between ticks, since nothing about eligibility depends on this
-module's own memory (`next_eligible_attempt_at`/`state` are the only
-source of truth, both owned entirely by the worker/persistence layer).
+undecided numbers). Any games left over past the cap are picked up
+automatically by the next scheduled tick -- no state is lost or orphaned
+between ticks, since nothing about eligibility depends on this module's
+own memory (`next_eligible_attempt_at`/`state` are the only source of
+truth, both owned entirely by the worker/persistence layer).
+
+**Timeout Hardening (2026-09-14, HQ-authorized "MANSA -- POSTGAME
+DISPATCH TIMEOUT HARDENING", following the 502 investigation the same
+day).** The original cap of 4 was sized off a single data point (SF@LAR,
+~2 minutes/game) and, against real Sunday-scale data, a 4-game batch's
+real aggregate duration (observed live: as long as ~15 minutes for some
+batches, well past the single-game ~2 minute estimate) exceeded an
+intermediate HTTP/proxy request-duration boundary on the path between
+`cron-msf-postgame`'s client and `sports-intel-layer`'s public domain
+(~5 minutes, most consistent with Railway's own edge/gateway in front of
+the public `*.up.railway.app` domain -- not the origin itself, which the
+502 investigation proved kept working to completion regardless of the
+severed client connection; not a data-safety issue, a purely client-
+visible/reporting one). Lowered to **2** so a tick's own real duration
+stays comfortably under that boundary even at the slower end of observed
+per-game timing (2 games x up to ~7-8 minutes each, worst case observed,
+still lands with real margin below ~5 minutes for the common case, and
+even a slow tick no longer risks the aggregate crossing so far past the
+boundary that Railway's own cron health reporting goes stale/misleading).
+This is a pacing-constant change only -- no per-game worker logic, retry
+budget, or ingestion-state semantics changed alongside it.
 """
 from __future__ import annotations
 
@@ -78,11 +94,14 @@ _PROVIDER_NAME = "mysportsfeeds"
 _DISPATCHABLE_STATES = ("scheduled", "eligible_for_postgame_check", "validated")
 
 #: Disclosed-conservative policy default (see module docstring) -- keeps
-#: one dispatcher tick's real wall-clock time well inside the cron
-#: caller's own request timeout and avoids a same-tick burst against the
-#: provider. Not a HARD_CAP_ATTEMPTS-style approved number; a dispatcher-
-#: level pacing choice this module alone owns.
-MAX_GAMES_PER_DISPATCH_TICK = 4
+#: one dispatcher tick's real wall-clock time well inside the intermediate
+#: HTTP/proxy request-duration boundary the 502 investigation found
+#: (~5 minutes) and avoids a same-tick burst against the provider. Not a
+#: HARD_CAP_ATTEMPTS-style approved number; a dispatcher-level pacing
+#: choice this module alone owns. Lowered from 4 to 2 (Postgame Dispatch
+#: Timeout Hardening, 2026-09-14) after real Sunday-scale batches showed
+#: 4-game aggregate duration reaching the boundary.
+MAX_GAMES_PER_DISPATCH_TICK = 2
 
 
 class MSFPostgameDispatcherError(Exception):
