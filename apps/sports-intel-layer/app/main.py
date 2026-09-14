@@ -570,6 +570,7 @@ class DispatchMSFPostgameResponse(BaseModel):
     selected_game_ids: list[str]
     invoked_game_ids: list[str]
     results: list[MSFPostgameCaptureOutcome]
+    enrolled_game_ids: list[str]
 
 
 @app.post(
@@ -589,12 +590,14 @@ async def internal_dispatch_msf_postgame() -> DispatchMSFPostgameResponse:
     schedule.
 
     Thin HTTP-to-function adapter only, same discipline as every other
-    `/v1/internal/*` endpoint in this file -- all real selection/
-    invocation logic lives in `app.workers.msf_postgame_dispatcher.
-    dispatch_due_msf_postgame_games`, which itself only ever selects rows
-    (read-only) and calls the existing, unmodified `run_msf_postgame_
+    `/v1/internal/*` endpoint in this file -- all real discovery/
+    enrollment/selection/invocation logic lives in `app.workers.msf_
+    postgame_dispatcher.dispatch_due_msf_postgame_games`, which itself
+    only ever creates the initial `scheduled` row for an already-eligible,
+    already-mapped canonical game (via the existing, unmodified `ensure_
+    scheduled_row`) or calls the existing, unmodified `run_msf_postgame_
     capture` per selected game, sequentially, up to that module's own
-    conservative per-tick cap -- never a batch/bulk endpoint that bypasses
+    conservative per-tick caps -- never a batch/bulk endpoint that bypasses
     the worker's own atomic claim or reimplements any of its validation.
     `fetch_boxscore` is left at its default, so a real call to this
     endpoint can make genuine, spendable MySportsFeeds calls -- exactly as
@@ -608,6 +611,7 @@ async def internal_dispatch_msf_postgame() -> DispatchMSFPostgameResponse:
         considered=result.considered,
         selected_game_ids=result.selected_game_ids,
         invoked_game_ids=result.invoked_game_ids,
+        enrolled_game_ids=result.enrolled_game_ids,
         results=[
             MSFPostgameCaptureOutcome(
                 game_id=r.game_id,

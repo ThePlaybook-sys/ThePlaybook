@@ -93,6 +93,45 @@ async def test_ensure_scheduled_row_never_overwrites_existing_row():
 
 @pytest.mark.asyncio
 @respx.mock
+async def test_ensure_scheduled_row_recovers_from_concurrent_insert_race():
+    """Automatic Postgest Enrollment (2026-09-14) relies on this exact
+    property for its own concurrency-safety claim, so it is proven
+    directly and explicitly here rather than only asserted from the
+    module's own docstring: two callers racing to enroll the same game
+    (e.g. two dispatcher ticks overlapping) both see an empty GET, both
+    POST, the table's real `UNIQUE (game_id, provider_name)` constraint
+    rejects the loser's INSERT with a 409, and the loser recovers by
+    re-reading the row the winner just created -- returning the SAME row
+    either way, never raising, never creating a second row."""
+    winner_row = {"id": "row-1", "state": "scheduled", "attempt_count": 0}
+    call_count = {"n": 0}
+
+    def _get_side_effect(request):
+        call_count["n"] += 1
+        # First GET (pre-insert check): empty, as this caller lost the
+        # race and hasn't seen the winner's row yet. Second GET (409
+        # recovery re-read): the winner's row now exists.
+        if call_count["n"] == 1:
+            return httpx.Response(200, json=[])
+        return httpx.Response(200, json=[winner_row])
+
+    respx.get(f"{SUPABASE_URL}/rest/v1/game_postgame_ingestion_state").mock(side_effect=_get_side_effect)
+    respx.post(f"{SUPABASE_URL}/rest/v1/game_postgame_ingestion_state").mock(
+        return_value=httpx.Response(409, text="duplicate key value violates unique constraint")
+    )
+
+    async with httpx.AsyncClient(base_url=SUPABASE_URL) as client:
+        row = await ensure_scheduled_row(
+            client, _headers(), game_id=GAME_ID,
+            first_eligible_at=datetime(2026, 9, 14, 0, 0, tzinfo=timezone.utc),
+        )
+
+    assert row == winner_row
+    assert call_count["n"] == 2
+
+
+@pytest.mark.asyncio
+@respx.mock
 async def test_promote_due_scheduled_row_patches_state():
     route = respx.patch(f"{SUPABASE_URL}/rest/v1/game_postgame_ingestion_state").mock(
         return_value=httpx.Response(200, json=[{"id": "row-1"}])
