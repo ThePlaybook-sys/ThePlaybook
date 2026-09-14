@@ -89,9 +89,17 @@ _TARGET_PATHS = {
     #: `last_polled_at` (derived from `weather_snapshots.captured_at`)
     #: from its very first cron tick, per Pass 2.1's News incident.
     "weather-worker": "/v1/internal/weather-worker/run",
-    #: Remaining unwired specialized workers: Player Props/Pregame/
-    #: Postgame Ingestion -- see the Phase 3E specialized worker runtime
-    #: invocation debt item recorded in PROGRESS.md.
+    #: Postgame Dispatcher + Sunday Recovery (2026-09-14): the MSF
+    #: postgame ingestion worker's real invocation path -- lives on
+    #: `sports-intel-layer`, same as `odds-worker`/`news-worker`/
+    #: `weather-worker`. Closes the exact gap the Sunday Postgame
+    #: Ingestion Audit found: the worker and its single-game endpoint both
+    #: already existed and were both already correct; nothing had ever
+    #: called either automatically until this target/endpoint pair.
+    "msf-postgame-worker": "/v1/internal/msf-postgame/dispatch",
+    #: Remaining unwired specialized workers: Player Props/Pregame -- see
+    #: the Phase 3E specialized worker runtime invocation debt item
+    #: recorded in PROGRESS.md.
 }
 
 
@@ -137,7 +145,15 @@ async def _run() -> int:
 
     _logger.info("cron_dispatch starting target=%s base_url=%s", target, base_url)
     try:
-        async with httpx.AsyncClient(timeout=120.0) as client:
+        # 600s (was 120s until the msf-postgame-worker target, 2026-09-14):
+        # that target's own endpoint can process up to
+        # MAX_GAMES_PER_DISPATCH_TICK real games sequentially in one
+        # request (observed live, SF@LAR Live Proof: ~2 minutes/game for a
+        # full fetch + ~95-player resolve/persist cycle) -- a longer
+        # client-side timeout is backward-safe for every other, much
+        # faster target too, so this is a shared bump, not a per-target
+        # special case.
+        async with httpx.AsyncClient(timeout=600.0) as client:
             result = await dispatch(target=target, base_url=base_url, internal_token=internal_token, client=client)
     except CronDispatchError as exc:
         _logger.error("cron_dispatch failed target=%s error=%s", target, exc)

@@ -20,6 +20,7 @@ from app.persistence.odds_snapshots import read_last_polled_at
 from app.persistence.weather_snapshots import read_last_polled_at as read_weather_last_polled_at
 from app.adapters.providers.gnews import GNewsNewsAdapter
 from app.workers.balldontlie_injury_worker import run_balldontlie_injury_worker
+from app.workers.msf_postgame_dispatcher import dispatch_due_msf_postgame_games
 from app.workers.msf_postgame_worker import run_msf_postgame_capture
 from app.workers.news_worker import run_news_worker
 from app.workers.odds_worker import run_odds_worker
@@ -549,6 +550,78 @@ async def internal_run_msf_postgame_capture(
         persisted_rows=result.persisted_rows,
         unchanged_rows=result.unchanged_rows,
         error=result.error,
+    )
+
+
+class MSFPostgameCaptureOutcome(BaseModel):
+    game_id: str
+    outcome: str
+    state: str | None
+    attempt_count: int | None
+    resolved_players: int
+    quarantined_players: int
+    persisted_rows: int
+    unchanged_rows: int
+    error: str | None
+
+
+class DispatchMSFPostgameResponse(BaseModel):
+    considered: int
+    selected_game_ids: list[str]
+    invoked_game_ids: list[str]
+    results: list[MSFPostgameCaptureOutcome]
+
+
+@app.post(
+    "/v1/internal/msf-postgame/dispatch",
+    dependencies=[Depends(require_internal_token)],
+    response_model=DispatchMSFPostgameResponse,
+)
+async def internal_dispatch_msf_postgame() -> DispatchMSFPostgameResponse:
+    """Postgame Dispatcher + Sunday Recovery (2026-09-14, HQ-authorized):
+    the permanent execution layer the Sunday Postgame Ingestion Audit
+    found missing -- `run_msf_postgame_capture` and the single-game
+    endpoint above were both already correct, but nothing ever called
+    either automatically. This endpoint is the real target a recurring
+    Railway Cron Job service (the same `apps/workers` `app.cron_dispatch`
+    pattern already used for `cron-odds-worker` etc., new
+    `CRON_DISPATCH_TARGET=msf-postgame-worker` entry) POSTs to on a
+    schedule.
+
+    Thin HTTP-to-function adapter only, same discipline as every other
+    `/v1/internal/*` endpoint in this file -- all real selection/
+    invocation logic lives in `app.workers.msf_postgame_dispatcher.
+    dispatch_due_msf_postgame_games`, which itself only ever selects rows
+    (read-only) and calls the existing, unmodified `run_msf_postgame_
+    capture` per selected game, sequentially, up to that module's own
+    conservative per-tick cap -- never a batch/bulk endpoint that bypasses
+    the worker's own atomic claim or reimplements any of its validation.
+    `fetch_boxscore` is left at its default, so a real call to this
+    endpoint can make genuine, spendable MySportsFeeds calls -- exactly as
+    intended for a real cron tick. No credential is read in this module;
+    same DEMO-1 isolation discipline as the endpoint above."""
+    supabase_client = httpx.AsyncClient(base_url=os.environ["SUPABASE_URL"], timeout=600.0)
+    async with supabase_client:
+        result = await dispatch_due_msf_postgame_games(supabase_client)
+
+    return DispatchMSFPostgameResponse(
+        considered=result.considered,
+        selected_game_ids=result.selected_game_ids,
+        invoked_game_ids=result.invoked_game_ids,
+        results=[
+            MSFPostgameCaptureOutcome(
+                game_id=r.game_id,
+                outcome=r.outcome,
+                state=r.state,
+                attempt_count=r.attempt_count,
+                resolved_players=r.resolved_players,
+                quarantined_players=r.quarantined_players,
+                persisted_rows=r.persisted_rows,
+                unchanged_rows=r.unchanged_rows,
+                error=r.error,
+            )
+            for r in result.results
+        ],
     )
 
 

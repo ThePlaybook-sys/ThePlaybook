@@ -76,3 +76,70 @@ def test_run_rejects_missing_game_id(monkeypatch):
         "/v1/internal/msf-postgame/run", json={}, headers={"X-Internal-Token": "correct-token"}
     )
     assert response.status_code == 422
+
+
+# --------------------------------------------------------------------------
+# POST /v1/internal/msf-postgame/dispatch (Postgame Dispatcher + Sunday
+# Recovery, 2026-09-14) -- `dispatch_due_msf_postgame_games` itself is
+# already fully tested directly (test_msf_postgame_dispatcher.py); these
+# tests cover only the HTTP boundary: auth and response shape.
+# --------------------------------------------------------------------------
+
+
+def test_dispatch_requires_internal_token(monkeypatch):
+    _set_env(monkeypatch)
+    response = client.post("/v1/internal/msf-postgame/dispatch")
+    assert response.status_code == 401
+
+
+def test_dispatch_shapes_response_from_real_dispatch_result(monkeypatch):
+    _set_env(monkeypatch)
+
+    from app.workers.msf_postgame_dispatcher import DispatchResult
+    from app.workers.msf_postgame_worker import MSFPostgameCaptureResult
+
+    async def _fake_dispatch(supabase_client, **kwargs):
+        return DispatchResult(
+            considered=2,
+            selected_game_ids=["g1", "g2"],
+            invoked_game_ids=["g1"],
+            results=[
+                MSFPostgameCaptureResult(
+                    game_id="g1", outcome="confirmed_complete", state="confirmed_complete",
+                    attempt_count=1, resolved_players=95, quarantined_players=0,
+                    persisted_rows=95, unchanged_rows=0,
+                )
+            ],
+        )
+
+    import app.main
+    monkeypatch.setattr(app.main, "dispatch_due_msf_postgame_games", _fake_dispatch)
+
+    response = client.post("/v1/internal/msf-postgame/dispatch", headers={"X-Internal-Token": "correct-token"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["considered"] == 2
+    assert body["selected_game_ids"] == ["g1", "g2"]
+    assert body["invoked_game_ids"] == ["g1"]
+    assert len(body["results"]) == 1
+    assert body["results"][0]["outcome"] == "confirmed_complete"
+    assert body["results"][0]["resolved_players"] == 95
+
+
+def test_dispatch_with_nothing_due_returns_empty_results(monkeypatch):
+    _set_env(monkeypatch)
+
+    from app.workers.msf_postgame_dispatcher import DispatchResult
+
+    async def _fake_dispatch(supabase_client, **kwargs):
+        return DispatchResult(considered=0, selected_game_ids=[], invoked_game_ids=[], results=[])
+
+    import app.main
+    monkeypatch.setattr(app.main, "dispatch_due_msf_postgame_games", _fake_dispatch)
+
+    response = client.post("/v1/internal/msf-postgame/dispatch", headers={"X-Internal-Token": "correct-token"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body == {"considered": 0, "selected_game_ids": [], "invoked_game_ids": [], "results": []}

@@ -182,6 +182,24 @@ async def test_dispatch_weather_worker_posts_to_correct_path():
 
 
 @pytest.mark.asyncio
+@respx.mock
+async def test_dispatch_msf_postgame_worker_posts_to_correct_path():
+    """Postgame Dispatcher + Sunday Recovery (2026-09-14) -- same
+    `sports-intel-layer`-hosted shape as `odds-worker`/`news-worker`/
+    `weather-worker` above."""
+    route = respx.post(f"{BASE_URL}/v1/internal/msf-postgame/dispatch").mock(
+        return_value=httpx.Response(
+            200,
+            json={"considered": 0, "selected_game_ids": [], "invoked_game_ids": [], "results": []},
+        )
+    )
+    async with httpx.AsyncClient() as client:
+        result = await dispatch(target="msf-postgame-worker", base_url=BASE_URL, internal_token="secret", client=client)
+    assert result["considered"] == 0
+    assert route.calls.last.request.headers["X-Internal-Token"] == "secret"
+
+
+@pytest.mark.asyncio
 async def test_dispatch_rejects_unknown_target():
     async with httpx.AsyncClient() as client:
         with pytest.raises(CronDispatchError):
