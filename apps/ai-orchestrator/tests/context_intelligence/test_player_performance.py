@@ -557,3 +557,71 @@ class TestJSNSeaNeRealProof:
             player_id=JSN_PLAYER_ID, target_event_timestamp=before_kickoff,
         )
         assert observations == []
+
+
+# --------------------------------------------------------------------------
+# Cross-player opponent-identity sanity check (Historical Context Assembly
+# V1 pass, 2026-09-15, directive Section 6: "verify the opponent-identity
+# chain across a small sample of additional real players/games... Do not
+# create a separate implementation pass for this"). Audit-only, reusing
+# the EXACT existing extract_msf_team_provider_ids/resolve_opponent_by_
+# team_id functions -- no new code. Every value below is real, queried
+# live against DEV on 2026-09-15: KC@DEN (Courtland Sutton, Denver
+# Broncos) and MIN@GB (John Williams, Green Bay Packers), in addition to
+# the SEA@NE case already proven exhaustively above.
+# --------------------------------------------------------------------------
+
+# KC@DEN: home_team="KC" (MSF id 73 -> Kansas City Chiefs), away_team="DEN"
+# (MSF id 72 -> Denver Broncos). Courtland Sutton plays for Denver (away).
+KC_DEN_RAW_GAME_EVENT_PAYLOAD = {
+    "body": {"game": {"homeTeam": {"id": 73, "abbreviation": "KC"}, "awayTeam": {"id": 72, "abbreviation": "DEN"}}}
+}
+KC_DEN_TEAM_BY_PROVIDER_ID = {
+    "73": {"team_id": "a3000000-0000-0000-0000-000000000001", "name": "Kansas City Chiefs"},
+    "72": {"team_id": "4d915669-1829-4f34-aa1a-1fe965544dcd", "name": "Denver Broncos"},
+}
+COURTLAND_SUTTON_TEAM_ID = "4d915669-1829-4f34-aa1a-1fe965544dcd"  # Denver Broncos
+
+# MIN@GB: home_team="MIN" (MSF id 63 -> Minnesota Vikings), away_team="GB"
+# (MSF id 62 -> Green Bay Packers). John Williams plays for Green Bay (away).
+MIN_GB_RAW_GAME_EVENT_PAYLOAD = {
+    "body": {"game": {"homeTeam": {"id": 63, "abbreviation": "MIN"}, "awayTeam": {"id": 62, "abbreviation": "GB"}}}
+}
+MIN_GB_TEAM_BY_PROVIDER_ID = {
+    "63": {"team_id": "26d48ffc-c082-4020-b8c3-650fb5e4b85c", "name": "Minnesota Vikings"},
+    "62": {"team_id": "dffe4b11-8d4e-42c4-b0d5-81672836e1b4", "name": "Green Bay Packers"},
+}
+JOHN_WILLIAMS_TEAM_ID = "dffe4b11-8d4e-42c4-b0d5-81672836e1b4"  # Green Bay Packers
+
+
+def _real_team_identity(raw_payload: dict, team_by_provider_id: dict) -> dict:
+    home_provider_id, away_provider_id = extract_msf_team_provider_ids(raw_payload)
+    home = team_by_provider_id[home_provider_id]
+    away = team_by_provider_id[away_provider_id]
+    return {"home_team_id": home["team_id"], "home_team_name": home["name"], "away_team_id": away["team_id"], "away_team_name": away["name"]}
+
+
+def test_cross_player_sanity_courtland_sutton_kc_at_den():
+    identity = _real_team_identity(KC_DEN_RAW_GAME_EVENT_PAYLOAD, KC_DEN_TEAM_BY_PROVIDER_ID)
+    opponent, home_or_away = resolve_opponent_by_team_id(identity, player_team_id=COURTLAND_SUTTON_TEAM_ID)
+    assert opponent == "Kansas City Chiefs"
+    assert home_or_away == "away"
+
+
+def test_cross_player_sanity_john_williams_min_at_gb():
+    """games.home_team='MIN', away_team='GB' -- John Williams plays for
+    Green Bay (the away side), so his real opponent is Minnesota."""
+    identity = _real_team_identity(MIN_GB_RAW_GAME_EVENT_PAYLOAD, MIN_GB_TEAM_BY_PROVIDER_ID)
+    opponent, home_or_away = resolve_opponent_by_team_id(identity, player_team_id=JOHN_WILLIAMS_TEAM_ID)
+    assert opponent == "Minnesota Vikings"
+    assert home_or_away == "away"
+
+
+def test_cross_player_sanity_extraction_shape_identical_across_all_three_real_games():
+    """The same generic extraction function, with zero per-game
+    branching, correctly reads three structurally identical but
+    numerically distinct real payloads -- proving the chain generalizes,
+    not merely coincidentally works for one game."""
+    assert extract_msf_team_provider_ids(SEA_NE_RAW_GAME_EVENT_PAYLOAD) == ("79", "50")
+    assert extract_msf_team_provider_ids(KC_DEN_RAW_GAME_EVENT_PAYLOAD) == ("73", "72")
+    assert extract_msf_team_provider_ids(MIN_GB_RAW_GAME_EVENT_PAYLOAD) == ("63", "62")
