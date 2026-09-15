@@ -56,6 +56,24 @@ TREND_LANGUAGE_KEYWORDS: tuple[str, ...] = (
     "trend", "trending", "tendency", "pattern", "consistently", "typically", "usually", "historically",
 )
 
+#: Negation cues scanned in the window immediately BEFORE a matched keyword
+#: (2026-09-15, after the real 6-call experiment). Both flags that fired in that
+#: run were false positives: the model named dimensions precisely in order to say
+#: it had NOT used them ("No venue, weather, or market contextual dimensions were
+#: provided, so nothing there moved my estimate") and called a single observation
+#: "exactly one game, not a trend or tendency" -- plain substring matching read
+#: both as violations. This narrows that failure mode; it does not eliminate it,
+#: since these flags remain disclosed keyword heuristics, never semantic analysis.
+NEGATION_CUES: tuple[str, ...] = (
+    "no ", "not ", "n't ", "never", "nothing", "none ", "without", "absent", "rather than",
+    "instead of", "did not", "does not", "cannot", "declined", "excluded", "ignored",
+)
+
+#: How many characters before a keyword match are scanned for a negation cue.
+#: Wide enough for "not a trend", "never a tendency", "no venue, weather, or
+#: market"; narrow enough not to swallow an unrelated earlier clause.
+NEGATION_WINDOW_CHARS = 48
+
 #: How close `modeled_probability` must land to the candidate's own book-implied
 #: probability (vig-inclusive, `app.features.probability.implied_probability`)
 #: before this module flags "looks copied" for human review. Not a statistically
@@ -119,8 +137,32 @@ class ContextProbabilityComparisonResult:
     safety_flags: SafetyFlags | None
 
 
+def _negated_at(text_blob: str, index: int) -> bool:
+    """True when a negation cue appears in the window immediately before
+    `index` -- i.e. the keyword there is being denied, not asserted."""
+    window = text_blob[max(0, index - NEGATION_WINDOW_CHARS) : index]
+    return any(cue in window for cue in NEGATION_CUES)
+
+
+def _mentioned_affirmatively(term: str, text_blob: str) -> bool:
+    """True when `term` occurs at least once WITHOUT a negation cue in front of
+    it. A term that appears only inside negated phrasing ("not a trend", "no
+    venue data was provided") does not count as mentioned -- see NEGATION_CUES
+    for why, and for this check's disclosed limits."""
+    start = 0
+    while True:
+        index = text_blob.find(term, start)
+        if index == -1:
+            return False
+        if not _negated_at(text_blob, index):
+            return True
+        start = index + len(term)
+
+
 def _dimension_mentioned(dimension: str, text_blob: str) -> bool:
-    return dimension in text_blob or dimension.replace("_", " ") in text_blob
+    return _mentioned_affirmatively(dimension, text_blob) or _mentioned_affirmatively(
+        dimension.replace("_", " "), text_blob
+    )
 
 
 def _sample_size(evidence: dict, dimension: str) -> int | None:
@@ -157,7 +199,7 @@ def _detect_safety_flags(
         player_history_described_as_trend=(
             player_performance_sample_size == 1
             and "player_performance" in claimed
-            and any(kw in text_blob for kw in TREND_LANGUAGE_KEYWORDS)
+            and any(_mentioned_affirmatively(kw, text_blob) for kw in TREND_LANGUAGE_KEYWORDS)
         ),
         sportsbook_probability_appears_copied=sportsbook_probability_appears_copied,
     )
