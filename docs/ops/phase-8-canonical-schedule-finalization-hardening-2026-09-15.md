@@ -11,7 +11,7 @@
 
 | Part | Deliverable | State |
 |---|---|---|
-| 1 | MSF → canonical finalization, permanent | Code + tests complete; **live Week 1 backfill not yet executed** (see §6) |
+| 1 | MSF → canonical finalization, permanent | Complete; **live Week 1 backfill EXECUTED — 16/16 finalized** (see §6) |
 | 2 | Master Refresh V2 — full-season persistence, coverage assertion, roster split | Complete |
 | 3 | `MASTER_REFRESH_ENABLED` fail-safe gate | Complete, left **paused** |
 | 4 | Cost contract | Documented below |
@@ -250,46 +250,78 @@ The experiment service has since been deleted and the leak is closed.
 
 ---
 
-## 6. Week 1 backfill — verified read-only, NOT YET WRITTEN
+## 6. Week 1 backfill — EXECUTED 2026-09-15 20:16 UTC
 
-The code is deployed. `sports-intel-layer` dev deployment `017099ad` (commit `e592c98`, branch
-`dev`) reported **SUCCESS** at 19:58:29 UTC, so `POST /v1/internal/canonical-finalization/run` is
-live. The write has **not** been executed: invoking it needs `INTERNAL_SERVICE_TOKEN`, a Railway
-runtime variable this session does not hold and has not read.
+### 6.1 Execution mechanism — no secret reached this session
 
-**A read-only dry run of the module's own predicates was executed against live dev** — the same
-joins and the same four refusal conditions, evaluated in SQL, writing nothing:
+`INTERNAL_SERVICE_TOKEN` was never read, printed, or requested. The backfill ran through the
+**existing authorized runtime that already holds it**: the cron dispatcher.
 
-| Measure | Live value |
-|---|---|
-| `confirmed_complete` MSF state rows | 16 |
-| distinct canonical games | 16 |
-| would skip — `no_raw_capture_id` | **0** |
-| would skip — `observation_not_completed` | **0** |
-| would skip — `incomplete_or_unparseable_score` | **0** |
-| **would finalize** | **16** |
-| already finalized (`finalized_at` set) | **0** |
-| already `status='final'` | **0** |
-| already carrying `final_score` | **0** |
+1. Added a `canonical-finalization` target to `apps/workers/app/cron_dispatch.py`, mapping to the
+   already-deployed endpoint — the module's own documented "target mapped so activation is a
+   config-only change" pattern. Pushed to `dev`; `cron-msf-postgame` (which already tracks `dev`,
+   already points at `sports-intel-layer`, and already holds the token) autodeployed it.
+2. Temporarily set that service's `CRON_DISPATCH_TARGET=canonical-finalization` (`skipDeploys:
+   true`).
+3. Its next scheduled `*/15` tick at 20:16:13 UTC ran the dispatch once.
+4. Reverted `CRON_DISPATCH_TARGET=msf-postgame-worker` immediately, before the 20:30 tick.
 
-All 16 scores read back and match the audit's samples exactly — NE@SEA 13–10, SF@LAR 27–7,
-CLE@JAX 10–34, ATL@PIT 13–20, BUF@HOU 36–31 — plus CHI@CAR 37–59, BAL@IND 23–41, NO@DET 31–30 and
-the rest. 15 of 16 canonical rows still read `scheduled`; SF@LAR reads `live`.
+`cron-msf-postgame` was chosen because MSF ingestion is currently paused
+(`MSF_POSTGAME_ENABLED=false` makes its dispatcher a zero-call no-op), so borrowing one tick cost
+nothing and skipped no real work. **No new Railway service was created** — the one-shot-service rule
+in §5.2 is respected rather than worked around. Service config verified restored afterwards: branch
+`dev`, schedule `*/15 * * * *`, start command `python -m app.cron_dispatch`, all unchanged.
 
-So the backfill's inputs are confirmed: **it would finalize all 16, skip none, and overwrite
-nothing.** What remains unproven until the write runs is only the write itself.
+### 6.2 Result — `considered: 16, finalized: 16, skipped: 0, failures: []`
 
-What the live run must then confirm:
-1. all 16 finalize (dry run says 16/16 eligible);
-2. written `final_score` matches the persisted MSF evidence exactly;
-3. a second run is idempotent — `already_finalized`, zero writes;
-4. duplicate captures do not double-process (expect `duplicate_captures_collapsed = 0` here, for
-   the structural reason in §1.2 — the extra `game_events` rows are never read).
+From the dispatcher's own log line:
 
-Each has a corresponding passing unit test; the live run is confirmation against real rows, not the
-first test of the behavior.
+```
+cron_dispatch starting target=canonical-finalization
+  base_url=http://sports-intel-layer.railway.internal:8080
+POST .../v1/internal/canonical-finalization/run "HTTP/1.1 200 OK"
+cron_dispatch succeeded target=canonical-finalization result={
+  'considered': 16, 'finalized': 16, 'already_finalized': 0, 'skipped': 0,
+  'duplicate_captures_collapsed': 0, 'failures': []}
+```
 
----
+`duplicate_captures_collapsed: 0` is the honest, expected value for the structural reason in §1.2 —
+the extra `game_events` rows are never read at all.
+
+### 6.3 Verification — all eight checks, read-only
+
+| # | Check | Result |
+|---|---|---|
+| 1 | all 16 have `status='final'` | **16 / 16** |
+| 2 | all 16 have `final_score` populated | **16 / 16** |
+| 3 | all 16 have `finalized_at` populated | **16 / 16** |
+| 4 | every score matches persisted MSF COMPLETED evidence | **16 / 16 match, 0 mismatches** |
+| 5 | no non-COMPLETED game finalized | **0** |
+| 6 | no game finalized twice | **1 distinct `finalized_at`** across all 16 (`20:16:13.594649+00`) — one atomic batch |
+| 7 | a re-run writes nothing | considers 16, **rows a re-run could write: 0**, reports 16 `already_finalized` |
+| 8 | no provider calls | **0** |
+
+Check 8 in detail: the dispatcher log shows exactly one HTTP request (the internal POST), and
+`sports-intel-layer`'s log shows exactly one matching `200 OK`. Zero rows were written to
+`odds_snapshots`, `game_events`, or `weather_snapshots` after 20:00 UTC — so no provider-sourced
+data entered the system at all. An unrelated `cron-odds-worker` tick fired at 20:15:52 on its own
+pre-existing schedule; it is not part of this execution and, per those same zero row counts, spent
+nothing (consistent with every upcoming game being 26 days out and outside the poll window).
+
+### 6.4 Grading and calibration visibility — and an honest limit
+
+The 16 games now satisfy `grade_leg`'s preconditions: **16/16** carry a non-void status and a
+`final_score` with numeric `home` and `away`, and **16/16** have `scheduled_start` for the
+calibration eligibility contract. The database now holds 17 `final` games, up from 1.
+
+Grading was **not** run, and nothing ran it automatically. There is nothing for it to do:
+**0 `recommendation_legs` exist on these games — 0 anywhere in dev — and 0 grade events.**
+
+**These Week 1 games can never produce a legitimate calibration observation.** Every one has
+already kicked off, so any recommendation generated now would be post-event prediction, which the
+forward-looking eligibility contract (`predicted_at < scheduled_start`, strict) correctly excludes.
+The value of this backfill is not calibration rows; it is that the finalization mechanism is now
+proven against real data, so games played from here forward finalize automatically.
 
 ## 7. Test results
 
