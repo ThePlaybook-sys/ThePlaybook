@@ -120,12 +120,20 @@ def _mock_empty_intelligence():
     respx.get(f"{SUPABASE_URL}/rest/v1/daily_game_intelligence").mock(return_value=httpx.Response(200, json=[]))
 
 
-def _mock_games_read(slate_rows, previous_by_team=None):
-    """One route serves both list_games_in_window (no `status` filter) and
-    find_previous_final_game (has `status=eq.final`) -- distinguished by
-    inspecting the request's own query params, since respx matches routes
-    by URL, not by query string, unless told to."""
+def _mock_games_read(slate_rows, previous_by_team=None, reconciliation_rows=None):
+    """One route serves three different reads, distinguished by inspecting the
+    request's own query params (respx matches routes by URL, not query string):
+    `find_previous_final_game` (has `status=eq.final`),
+    `load_reconciliation_candidates` (has `sport=eq.nfl`, no date window), and
+    `list_games_in_window` (everything else).
+
+    `reconciliation_rows` defaults to EMPTY, which is what these orchestration
+    tests mean: the canonical table is empty when reconciliation runs, so every
+    entry is genuinely new and takes the insert path. `slate_rows` is the
+    post-persistence read-back, which is a later, different moment -- serving it
+    to the reconciliation read would wrongly present games as pre-existing."""
     previous_by_team = previous_by_team or {}
+    reconciliation_rows = reconciliation_rows or []
 
     def _respond(request: httpx.Request) -> httpx.Response:
         params = request.url.params
@@ -135,6 +143,8 @@ def _mock_games_read(slate_rows, previous_by_team=None):
                 if team in or_clause:
                     return httpx.Response(200, json=[row] if row else [])
             return httpx.Response(200, json=[])
+        if params.get("sport") == "eq.nfl":
+            return httpx.Response(200, json=reconciliation_rows)
         return httpx.Response(200, json=slate_rows)
 
     respx.get(f"{SUPABASE_URL}/rest/v1/games").mock(side_effect=_respond)
@@ -235,6 +245,11 @@ async def test_empty_slate_still_persists_the_out_of_window_season(monkeypatch):
         return_value=httpx.Response(200, json=[_game_row("g-far", "SEA", "NE", "2026-10-01T00:20:00")])
     )
     _mock_game_provider_ids()
+    # Reconciliation's batched team lookup: nothing resolves, so the entry is
+    # genuinely new and takes the insert path.
+    respx.get(f"{SUPABASE_URL}/rest/v1/team_provider_ids").mock(
+        return_value=httpx.Response(200, json=[])
+    )
     insert_route = respx.post(f"{SUPABASE_URL}/rest/v1/games").mock(
         return_value=httpx.Response(201, json=[{"id": "db-far"}])
     )
@@ -510,6 +525,11 @@ async def test_one_team_roster_failure_does_not_block_other_games(monkeypatch):
         )
     )
     _mock_game_provider_ids()
+    # Reconciliation's batched team lookup runs before persistence; the
+    # canonical table is empty here, so both games are genuinely new.
+    respx.get(f"{SUPABASE_URL}/rest/v1/team_provider_ids").mock(
+        return_value=httpx.Response(200, json=[])
+    )
     created_ids = iter(["db-1", "db-2"])
     respx.post(f"{SUPABASE_URL}/rest/v1/games").mock(
         side_effect=lambda request: httpx.Response(201, json=[{"id": next(created_ids)}])
@@ -652,21 +672,26 @@ async def test_season_opener_and_bye_week_rest_via_orchestration(monkeypatch):
         "SEA": {"id": "prev", "home_team": "X", "away_team": "SEA", "scheduled_start": "2026-08-27T00:20:00+00:00"},
         "NE": None,
     }
-    respx.get(f"{SUPABASE_URL}/rest/v1/games").mock(
-        side_effect=lambda request: (
-            httpx.Response(
+    def _games_respond(request: httpx.Request) -> httpx.Response:
+        params = request.url.params
+        if params.get("status") == "eq.final":
+            return httpx.Response(
                 200,
                 json=(
-                    [{"id": "db-game-1", "home_team": "SEA", "away_team": "NE", "scheduled_start": "2026-09-10T00:20:00+00:00", "stadium": "Lumen Field", "status": "scheduled"}]
-                    if request.url.params.get("status") != "eq.final"
-                    else (
-                        [_mock_previous_games["SEA"]] if "SEA" in request.url.params.get("or", "")
-                        else ([_mock_previous_games["NE"]] if _mock_previous_games["NE"] else [])
-                    )
+                    [_mock_previous_games["SEA"]] if "SEA" in params.get("or", "")
+                    else ([_mock_previous_games["NE"]] if _mock_previous_games["NE"] else [])
                 ),
             )
+        if params.get("sport") == "eq.nfl":
+            # load_reconciliation_candidates: the canonical table is empty at
+            # reconciliation time in this test, so the game is genuinely new.
+            return httpx.Response(200, json=[])
+        return httpx.Response(
+            200,
+            json=[{"id": "db-game-1", "home_team": "SEA", "away_team": "NE", "scheduled_start": "2026-09-10T00:20:00+00:00", "stadium": "Lumen Field", "status": "scheduled"}],
         )
-    )
+
+    respx.get(f"{SUPABASE_URL}/rest/v1/games").mock(side_effect=_games_respond)
     _mock_players_and_depth_charts(["SEA", "NE"])
     _mock_empty_intelligence()
     dgi_route = _mock_dgi_upsert()
@@ -1145,10 +1170,21 @@ async def test_team_identity_error_for_one_team_does_not_crash_master_refresh(mo
 
     def _team_provider_ids_respond(request: httpx.Request) -> httpx.Response:
         ids_param = request.url.params.get("provider_team_id", "")
-        if "SEA" in ids_param:
+        # Fail ONLY the roster phase's single-team lookup for SEA. The schedule
+        # phase's batched lookup (2026-09-15 reconciliation) asks for the whole
+        # slate at once and is deliberately BLOCKING if it fails -- without
+        # canonical team identity it cannot tell an existing game from a new
+        # one, and inserting would duplicate. That blocking behavior has its own
+        # test; this one is about per-team ROSTER isolation.
+        if ids_param == "in.(SEA)":
             return httpx.Response(500)
         return httpx.Response(
-            200, json=[{"team_id": f"team-{t}", "provider_team_id": t} for t in ("NE", "KC", "BUF")]
+            200,
+            json=[
+                {"team_id": f"team-{t}", "provider_team_id": t}
+                for t in ("NE", "KC", "BUF", "SEA")
+                if t in ids_param
+            ],
         )
 
     respx.get(f"{SUPABASE_URL}/rest/v1/team_provider_ids").mock(side_effect=_team_provider_ids_respond)

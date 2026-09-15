@@ -30,22 +30,35 @@ has already been played; only the status is held terminal. `final_score` and
 `finalized_at` are never in the writable field set at all, so a Schedule
 refresh could not clear them even if it tried.
 
-What this deliberately does NOT do: reconcile two different providers
-independently discovering the same real-world game (e.g. The Odds API and
-SportsDataIO both eventually knowing about the same Sunday matchup).
-Decision 2 (2026-08-13) explicitly rules out team/date fuzzy matching as
-that mechanism, and no worker exists yet with the authority to perform
-that reconciliation -- it remains an open item, reported as such rather
-than silently solved here (see PROGRESS.md / the 3E-1 completion report).
+**Cross-provider reconciliation (2026-09-15, CHANGELOG v4.29).** This module
+used to state that it deliberately did NOT reconcile two providers
+independently discovering the same real-world game, leaving Decision 2's
+"does this game already exist under another provider?" as an open item. That
+item is now closed, narrowly: see `app.persistence.game_reconciliation`.
+Provider ids stay authoritative whenever already linked; only an entry with NO
+mapping falls back to deterministic canonical identity (canonical home team id
++ canonical away team id + bounded kickoff alignment), and fuzzy/name-only
+matching remains prohibited.
 """
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass, field, replace
 
 import httpx
 
 from app.adapters.models import AdapterResponse, ScheduleEntry
-from app.persistence.game_identity import link_provider_id, resolve_game_ids
+from app.persistence.game_identity import GameIdentityError, link_provider_id, resolve_game_ids
+from app.persistence.game_reconciliation import (
+    AMBIGUOUS,
+    MATCHED_EXACT,
+    UNRESOLVED_TEAMS,
+    CanonicalGame,
+    decide_reconciliation,
+    link_reconciled_game,
+    load_reconciliation_candidates,
+)
+from app.persistence.team_identity import TeamIdentityError, resolve_team_ids
 
 
 class PersistenceError(Exception):
@@ -64,33 +77,156 @@ def _auth_headers() -> dict:
     }
 
 
+@dataclass
+class SchedulePersistenceResult:
+    """Counts for one ingestion run. Iterable as `(created, updated)` so the
+    long-standing `games_created, games_updated = await persist_schedule_entries(...)`
+    contract keeps working unchanged, while the reconciliation counters added in
+    2026-09-15's canonical-identity amendment are available to callers that want
+    them."""
+
+    created: int = 0
+    updated: int = 0
+    #: Existing canonical games that gained this provider's id instead of being
+    #: duplicated (see `app.persistence.game_reconciliation`).
+    reconciled: int = 0
+    #: Entries matched on an exact kickoff vs. within the bounded tolerance.
+    reconciled_exact: int = 0
+    reconciled_within_tolerance: int = 0
+    #: Entries refused rather than guessed -- reported, never silently dropped.
+    ambiguous: list[str] = field(default_factory=list)
+    unresolved_teams: list[str] = field(default_factory=list)
+    conflicts: list[str] = field(default_factory=list)
+
+    def __iter__(self):
+        yield self.created
+        yield self.updated
+
+
 async def persist_schedule_entries(
     response: AdapterResponse[list[ScheduleEntry]],
-) -> tuple[int, int]:
+) -> SchedulePersistenceResult:
     """Upserts every ScheduleEntry in `response` into games, resolving/
     creating each row through game_provider_ids keyed by
-    (response.source, entry.game_external_id). Returns (created, updated)
-    counts so a caller can distinguish a first-time ingest from a routine
-    refresh instead of a single ambiguous total.
+    (response.source, entry.game_external_id).
+
+    **Reconciliation before insertion (2026-09-15).** An entry with no mapping
+    for this provider is NOT immediately a new game. It is first put through
+    `app.persistence.game_reconciliation`, which matches it against existing
+    canonical games on canonical home team id + canonical away team id +
+    bounded kickoff alignment. Exactly one match -> the existing game gains this
+    provider's id and keeps its row. Zero matches -> genuinely missing, insert.
+    More than one -> refused and reported, never guessed and never duplicated.
+    Only then does the insert path run. Without this step, the first ingestion
+    from a new provider duplicates every game that already exists under another
+    provider's identity.
     """
     entries = response.value
     if not entries:
-        return (0, 0)
+        return SchedulePersistenceResult()
 
     provider_name = response.source
     supabase_url = os.environ["SUPABASE_URL"]
     headers = _auth_headers()
-    created = 0
-    updated = 0
+    result = SchedulePersistenceResult()
 
-    async with httpx.AsyncClient(base_url=supabase_url, timeout=5.0) as client:
+    async with httpx.AsyncClient(base_url=supabase_url, timeout=30.0) as client:
         existing = await resolve_game_ids(
             client,
             headers,
             provider_name=provider_name,
             provider_game_ids=[entry.game_external_id for entry in entries],
         )
+
+        # One batched candidate load for the whole run, only when something is
+        # actually unmapped -- a routine refresh of an already-mapped slate
+        # costs nothing extra.
+        candidates: list[CanonicalGame] | None = None
+        entry_team_ids: dict[str, str] = {}
+        # Entries refused by reconciliation. They must NOT fall through to
+        # the insert path below -- inserting an ambiguous or unresolvable
+        # entry creates exactly the duplicate canonical game the match rule
+        # exists to prevent.
+        refused: set[str] = set()
+        if any(entry.game_external_id not in existing for entry in entries):
+            # A failure here is BLOCKING and deliberately so. Without canonical
+            # team identity there is no way to tell an existing game from a new
+            # one, and the fallback -- inserting -- would duplicate every game
+            # that already exists under another provider. Failing the run is
+            # strictly better than splitting canonical identity, so the
+            # underlying identity/read error is re-raised as the blocking
+            # PersistenceError this path already declares.
+            try:
+                candidates = await load_reconciliation_candidates(
+                    client, headers, provider_name=provider_name
+                )
+                entry_team_ids = await resolve_team_ids(
+                    client,
+                    headers,
+                    provider_name=provider_name,
+                    provider_team_ids=sorted(
+                        {e.home_team for e in entries} | {e.away_team for e in entries}
+                    ),
+                )
+            except (GameIdentityError, TeamIdentityError) as exc:
+                raise PersistenceError(
+                    f"cannot reconcile canonical game identity for {provider_name}, "
+                    f"refusing to insert possible duplicates: {exc}"
+                ) from exc
+
         for entry in entries:
+            if entry.game_external_id not in existing and candidates is not None:
+                decision = decide_reconciliation(
+                    entry_home_team_id=entry_team_ids.get(entry.home_team),
+                    entry_away_team_id=entry_team_ids.get(entry.away_team),
+                    entry_scheduled_start=entry.scheduled_start,
+                    candidates=candidates,
+                )
+                if decision.outcome == AMBIGUOUS:
+                    result.ambiguous.append(
+                        f"{entry.game_external_id} ({entry.away_team}@{entry.home_team}): "
+                        f"{len(decision.candidate_game_ids)} candidates "
+                        f"{decision.candidate_game_ids}"
+                    )
+                    refused.add(entry.game_external_id)
+                    continue
+                if decision.outcome == UNRESOLVED_TEAMS:
+                    result.unresolved_teams.append(
+                        f"{entry.game_external_id} ({entry.away_team}@{entry.home_team})"
+                    )
+                    continue
+                if decision.game_id is not None:
+                    try:
+                        await link_reconciled_game(
+                            client,
+                            headers,
+                            game_id=decision.game_id,
+                            provider_game_id=entry.game_external_id,
+                            provider_name=provider_name,
+                        )
+                    except GameIdentityError as exc:
+                        result.conflicts.append(str(exc))
+                        refused.add(entry.game_external_id)
+                        continue
+                    existing[entry.game_external_id] = decision.game_id
+                    result.reconciled += 1
+                    if decision.outcome == MATCHED_EXACT:
+                        result.reconciled_exact += 1
+                    else:
+                        result.reconciled_within_tolerance += 1
+                    # Mark it mapped so a second entry can't also claim it.
+                    candidates = [
+                        (
+                            replace(c, has_provider_mapping=True)
+                            if c.game_id == decision.game_id
+                            else c
+                        )
+                        for c in candidates
+                    ]
+
+        for entry in entries:
+            if entry.game_external_id in refused:
+                continue
             mutable_fields = {
                 "home_team": entry.home_team,
                 "away_team": entry.away_team,
@@ -132,7 +268,7 @@ async def persist_schedule_entries(
                     and not patch_response.json()
                 )
                 if not guard_blocked:
-                    updated += 1
+                    result.updated += 1
                     continue
 
                 # Finalized: refresh everything EXCEPT status, so a played
@@ -150,7 +286,7 @@ async def persist_schedule_entries(
                         f"failed to update finalized game {game_id}: "
                         f"{retained_response.status_code} {retained_response.text}"
                     )
-                updated += 1
+                result.updated += 1
                 continue
 
             insert_response = await client.post(
@@ -172,6 +308,6 @@ async def persist_schedule_entries(
                 provider_name=provider_name,
                 provider_game_id=entry.game_external_id,
             )
-            created += 1
+            result.created += 1
 
-    return (created, updated)
+    return result

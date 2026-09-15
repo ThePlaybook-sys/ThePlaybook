@@ -49,12 +49,31 @@ def _entry(game_external_id: str, **overrides) -> ScheduleEntry:
     return ScheduleEntry(**fields)
 
 
+def _mock_reconciliation_reads(canonical_rows=None, team_ids=None):
+    """Reconciliation (2026-09-15) runs before the insert path and performs two
+    batched reads: every canonical NFL game, and the authoritative team mapping.
+    Both default to EMPTY, which means "nothing to reconcile against", so the
+    entry is genuinely new and the original insert behavior is unchanged."""
+    respx.get(f"{SUPABASE_URL}/rest/v1/team_provider_ids").mock(
+        return_value=httpx.Response(200, json=team_ids or [])
+    )
+    existing_games = canonical_rows or []
+
+    def _respond(request: httpx.Request) -> httpx.Response:
+        if request.url.params.get("sport") == "eq.nfl":
+            return httpx.Response(200, json=existing_games)
+        return httpx.Response(200, json=[])
+
+    respx.get(f"{SUPABASE_URL}/rest/v1/games").mock(side_effect=_respond)
+
+
 @pytest.mark.asyncio
 @respx.mock
 async def test_new_provider_game_id_creates_game_and_links_mapping():
     respx.get(f"{SUPABASE_URL}/rest/v1/game_provider_ids").mock(
         return_value=httpx.Response(200, json=[])
     )
+    _mock_reconciliation_reads()
     insert_route = respx.post(f"{SUPABASE_URL}/rest/v1/games").mock(
         return_value=httpx.Response(201, json=[{"id": NEW_GAME_DB_ID}])
     )
@@ -122,6 +141,7 @@ async def test_game_create_failure_raises_persistence_error():
     respx.get(f"{SUPABASE_URL}/rest/v1/game_provider_ids").mock(
         return_value=httpx.Response(200, json=[])
     )
+    _mock_reconciliation_reads()
     respx.post(f"{SUPABASE_URL}/rest/v1/games").mock(
         return_value=httpx.Response(500, text="db error")
     )
@@ -134,7 +154,7 @@ async def test_game_create_failure_raises_persistence_error():
 @pytest.mark.asyncio
 async def test_empty_entries_is_a_no_op():
     response = AdapterResponse(value=[], source="sportsdataio")
-    assert await persist_schedule_entries(response) == (0, 0)
+    assert tuple(await persist_schedule_entries(response)) == (0, 0)
 
 
 @pytest.mark.asyncio
@@ -146,6 +166,7 @@ async def test_missing_venue_metadata_persists_as_null_not_fabricated():
     respx.get(f"{SUPABASE_URL}/rest/v1/game_provider_ids").mock(
         return_value=httpx.Response(200, json=[])
     )
+    _mock_reconciliation_reads()
     insert_route = respx.post(f"{SUPABASE_URL}/rest/v1/games").mock(
         return_value=httpx.Response(201, json=[{"id": NEW_GAME_DB_ID}])
     )
@@ -278,5 +299,5 @@ async def test_a_204_with_no_representation_is_treated_as_a_normal_update():
     )
 
     response = AdapterResponse(value=[_entry("202610130")], source="sportsdataio")
-    assert await persist_schedule_entries(response) == (0, 1)
+    assert tuple(await persist_schedule_entries(response)) == (0, 1)
     assert patch_route.call_count == 1

@@ -392,7 +392,17 @@ async def test_master_refresh_full_slate_and_full_league_roster(monkeypatch):
         {"id": f"db-{gid}", "home_team": h, "away_team": a, "scheduled_start": "2026-09-14T17:00:00+00:00", "stadium": "X", "status": "scheduled"}
         for gid, (h, a) in zip(game_ids, teams)
     ]
-    respx.get(f"{SUPABASE_URL}/rest/v1/games").mock(return_value=httpx.Response(200, json=slate_rows))
+
+    def _games_get(request: httpx.Request) -> httpx.Response:
+        # `sport=eq.nfl` is reconciliation's candidate load (2026-09-15), which
+        # runs BEFORE persistence -- the canonical table is empty at that point
+        # in this test, so all 13 games are genuinely new. Anything else is the
+        # post-persistence windowed slate read-back.
+        if request.url.params.get("sport") == "eq.nfl":
+            return httpx.Response(200, json=[])
+        return httpx.Response(200, json=slate_rows)
+
+    respx.get(f"{SUPABASE_URL}/rest/v1/games").mock(side_effect=_games_get)
 
     depth_route = respx.get(f"{SPORTSDATAIO_URL}/v3/nfl/scores/json/DepthCharts").mock(
         return_value=httpx.Response(200, json=[])
