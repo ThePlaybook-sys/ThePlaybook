@@ -20,6 +20,7 @@ from app.agents.probability_output import ProbabilityModelOutput
 from app.agents.risk_manager import RiskManagerAgent
 from app.agents.sequential_base import (
     _LEGACY_AGENT_OUTPUT_INSTRUCTIONS,
+    _LEGACY_CONTEXTUAL_EVIDENCE_GUARDRAILS,
     _LEGACY_PROBABILITY_OUTPUT_INSTRUCTIONS,
     _LEGACY_SEQUENTIAL_SYSTEM_PROMPT_TEMPLATE,
 )
@@ -33,9 +34,10 @@ from app.models.types import ModelRequest
 
 
 def _sequential_prompt(agent) -> str:
-    instructions = (
-        _LEGACY_PROBABILITY_OUTPUT_INSTRUCTIONS if agent.response_model is ProbabilityModelOutput else _LEGACY_AGENT_OUTPUT_INSTRUCTIONS
-    )
+    if agent.response_model is ProbabilityModelOutput:
+        instructions = _LEGACY_PROBABILITY_OUTPUT_INSTRUCTIONS + "\n\n" + _LEGACY_CONTEXTUAL_EVIDENCE_GUARDRAILS
+    else:
+        instructions = _LEGACY_AGENT_OUTPUT_INSTRUCTIONS
     return _LEGACY_SEQUENTIAL_SYSTEM_PROMPT_TEMPLATE.format(agent_name=agent.agent_name, output_instructions=instructions)
 
 _VALID_AGENT_OUTPUT = json.dumps(
