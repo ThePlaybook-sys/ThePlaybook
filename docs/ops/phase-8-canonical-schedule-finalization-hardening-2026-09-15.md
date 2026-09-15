@@ -71,10 +71,19 @@ This sits *alongside* `mark_game_finalized`/`update_final_score` rather than rep
 two are separate PATCHes, so a caller can crash between them and leave a game `final` with a null
 score. `postgame_worker` sequences them carefully and is unchanged; new callers use `finalize_game`.
 
-**Duplicate captures cannot double-process.** Dev holds 18 boxscore rows across 16 distinct games.
-`resolve_canonical_capture` collapses repeats to the most recent `captured_at` (row `id` as the
-deterministic tie-break) *before* anything is written, and reports `duplicate_captures_collapsed`
-rather than silently discarding.
+**Duplicate captures cannot double-process — and the live shape is better than assumed.**
+`resolve_canonical_capture` collapses repeats per game to the most recent `captured_at` (row `id`
+as the deterministic tie-break) *before* anything is written, reporting
+`duplicate_captures_collapsed` rather than silently discarding.
+
+A live read (§6) corrected an assumption carried over from the audit. Duplicate captures do exist
+in `game_events` — NE@SEA has 3 and DEN@KC has 2, 19 MSF rows across 16 games — but
+`game_postgame_ingestion_state` holds **exactly one row per game** (its unique constraint is
+`(game_id, provider_name)`). So the function this module actually reads from cannot present a
+duplicate, and `raw_capture_id` names exactly one capture: **the extra `game_events` rows are never
+read at all**, which is a stronger guarantee than collapsing them would be. The collapse logic
+remains as a defensive invariant, and on this dataset it will correctly report
+`duplicate_captures_collapsed = 0` rather than a misleading non-zero number.
 
 ### 1.3 The HTTP boundary — and why it is separate
 
@@ -241,24 +250,44 @@ The experiment service has since been deleted and the leak is closed.
 
 ---
 
-## 6. Week 1 backfill — NOT YET EXECUTED
+## 6. Week 1 backfill — verified read-only, NOT YET WRITTEN
 
-The backfill code is complete and fully tested, but the live run has **not** happened in this pass.
-It requires the new endpoint to be deployed to dev and invoked with `INTERNAL_SERVICE_TOKEN`, which
-is a Railway runtime variable this session does not hold.
+The code is deployed. `sports-intel-layer` dev deployment `017099ad` (commit `e592c98`, branch
+`dev`) reported **SUCCESS** at 19:58:29 UTC, so `POST /v1/internal/canonical-finalization/run` is
+live. The write has **not** been executed: invoking it needs `INTERNAL_SERVICE_TOKEN`, a Railway
+runtime variable this session does not hold and has not read.
 
-Evidence already verified live and unchanged (from the 2026-09-15 audit):
-16 games `confirmed_complete`, 18 captures, real scores — NE@SEA 13–10, SF@LAR 27–7, CLE@JAX 10–34,
-ATL@PIT 13–20, BUF@HOU 36–31.
+**A read-only dry run of the module's own predicates was executed against live dev** — the same
+joins and the same four refusal conditions, evaluated in SQL, writing nothing:
 
-What the backfill must prove, once authorized to run:
-1. all 16 eligible Week 1 games finalize;
+| Measure | Live value |
+|---|---|
+| `confirmed_complete` MSF state rows | 16 |
+| distinct canonical games | 16 |
+| would skip — `no_raw_capture_id` | **0** |
+| would skip — `observation_not_completed` | **0** |
+| would skip — `incomplete_or_unparseable_score` | **0** |
+| **would finalize** | **16** |
+| already finalized (`finalized_at` set) | **0** |
+| already `status='final'` | **0** |
+| already carrying `final_score` | **0** |
+
+All 16 scores read back and match the audit's samples exactly — NE@SEA 13–10, SF@LAR 27–7,
+CLE@JAX 10–34, ATL@PIT 13–20, BUF@HOU 36–31 — plus CHI@CAR 37–59, BAL@IND 23–41, NO@DET 31–30 and
+the rest. 15 of 16 canonical rows still read `scheduled`; SF@LAR reads `live`.
+
+So the backfill's inputs are confirmed: **it would finalize all 16, skip none, and overwrite
+nothing.** What remains unproven until the write runs is only the write itself.
+
+What the live run must then confirm:
+1. all 16 finalize (dry run says 16/16 eligible);
 2. written `final_score` matches the persisted MSF evidence exactly;
-3. a second run is idempotent (`already_finalized`, zero writes);
-4. the 2 duplicate captures collapse and do not double-process.
+3. a second run is idempotent — `already_finalized`, zero writes;
+4. duplicate captures do not double-process (expect `duplicate_captures_collapsed = 0` here, for
+   the structural reason in §1.2 — the extra `game_events` rows are never read).
 
-Each of (1)–(4) has a corresponding passing unit test already; the live run is the confirmation
-against real rows, not the first test of the behavior.
+Each has a corresponding passing unit test; the live run is confirmation against real rows, not the
+first test of the behavior.
 
 ---
 
