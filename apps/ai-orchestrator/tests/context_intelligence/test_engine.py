@@ -12,9 +12,12 @@ import httpx
 import pytest
 import respx
 
+from app.agents.committee_context import ParticipationMetadata, SequentialDecisionContext
+from app.agents.probability_modeling import ADMITTED_CONTEXT_DIMENSIONS, ProbabilityModelingAgent
 from app.context_intelligence.context_package import assemble_context_package
 from app.context_intelligence.engine import SUPPORTED_DIMENSIONS, build_contextual_intelligence
 from app.context_intelligence.unsupported import UNSUPPORTED_DIMENSIONS
+from app.features.candidate import MarketCandidate
 
 SUPABASE_URL = "https://test-project.supabase.co"
 
@@ -512,3 +515,91 @@ async def test_jsn_sea_ne_real_historical_context_package():
     # test_context_package.py's own dedicated proof) -- spot-checked here too.
     assert not hasattr(package, "confidence")
     assert not hasattr(package, "probability")
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_jsn_sea_ne_context_reaches_build_evidence():
+    """Directive Section 7 (build_evidence Context Integration pass) --
+    the real JSN/SEA@NE ContextPackage, through the real engine +
+    assembly + build_evidence path together, using the exact same real
+    live-queried DEV values as the package-level proof above."""
+    _mock_jsn_sea_ne_full_package_boundaries()
+
+    async with httpx.AsyncClient(base_url=SUPABASE_URL) as client:
+        intelligence = await build_contextual_intelligence(
+            client, _headers(), game_id=SEA_NE_GAME_ID, player_id=JSN_PLAYER_ID, now=PROOF_NOW,
+        )
+    package = assemble_context_package(intelligence, player_id=JSN_PLAYER_ID, target_event_timestamp=PROOF_NOW.isoformat())
+
+    candidate = MarketCandidate(
+        game_id=SEA_NE_GAME_ID, sportsbook="DraftKings", market_type="player_receiving_yards",
+        selection="Jaxon Smith-Njigba Over 65.5", american_odds=-115, point=65.5, observed_at=PROOF_NOW,
+    )
+    participation = ParticipationMetadata(
+        configured_agents=frozenset({"vegas_line_agent"}), built_agents=frozenset({"vegas_line_agent"}),
+        deferred_agents=frozenset(), attempted_agents=frozenset({"vegas_line_agent"}),
+        successful_agents=frozenset({"vegas_line_agent"}), failed_agents=frozenset(),
+        fan_out_status="full", committee_completeness=1.0,
+    )
+    context = SequentialDecisionContext(
+        game_id=SEA_NE_GAME_ID, correlation_id="corr-jsn-proof", candidate=candidate,
+        upstream_outputs=(), participation=participation, context_package=package,
+    )
+
+    evidence = ProbabilityModelingAgent().build_evidence(context)
+
+    # contextual_evidence exists.
+    assert "contextual_evidence" in evidence
+    ce = evidence["contextual_evidence"]
+
+    # venue present.
+    assert "venue" in ce["dimensions"]
+
+    # player_performance present with the real, exact stat line.
+    pp = ce["dimensions"]["player_performance"]
+    obs = pp["facts"]["observations"][0]
+    assert obs["role_usage_signals"]["receiving"] == {"targets": 11, "receptions": 8, "recYards": 122, "recTD": 1}
+
+    # market present with its real evidence.
+    assert "market" in ce["dimensions"]
+    assert ce["dimensions"]["market"]["completeness"] == "joined"
+    assert ce["dimensions"]["market"]["facts"]
+
+    # weather present as PARTIAL.
+    assert ce["dimensions"]["weather"]["completeness"] == "partial"
+
+    # blocked dimensions absent -- news, and every unsupported.py stub.
+    for blocked in ("news", "injuries", "roster_role", "team_performance", "depth_lineup", "game_state_pbp"):
+        assert blocked not in ce["dimensions"]
+    assert set(ce["dimensions"].keys()).issubset(set(ADMITTED_CONTEXT_DIMENSIONS))
+
+    # player_performance sample_size remains 1 -- no duplicate inflation despite 2 real raw rows.
+    assert pp["sample_size"] == 1
+    assert obs["duplicate_raw_row_count"] == 2
+
+    # no confidence generated from context anywhere in contextual_evidence.
+    def _all_keys(obj):
+        keys = set()
+        if isinstance(obj, dict):
+            for k, v in obj.items():
+                keys.add(k)
+                keys |= _all_keys(v)
+        elif isinstance(obj, list):
+            for item in obj:
+                keys |= _all_keys(item)
+        return keys
+
+    assert _all_keys(ce).isdisjoint({"confidence", "probability_score"})
+
+    # no existing probability output changes -- candidate/upstream_findings/participation
+    # are byte-identical to what a context_package=None call would produce.
+    context_without_package = SequentialDecisionContext(
+        game_id=SEA_NE_GAME_ID, correlation_id="corr-jsn-proof", candidate=candidate,
+        upstream_outputs=(), participation=participation,
+    )
+    evidence_without = ProbabilityModelingAgent().build_evidence(context_without_package)
+    assert evidence["candidate"] == evidence_without["candidate"]
+    assert evidence["upstream_findings"] == evidence_without["upstream_findings"]
+    assert evidence["participation"] == evidence_without["participation"]
+    assert "contextual_evidence" not in evidence_without
