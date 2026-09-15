@@ -100,6 +100,45 @@ async def read_venue(client: httpx.AsyncClient, headers: dict, *, venue_id: str)
     return rows[0] if rows else None
 
 
+async def read_all_player_stats(client: httpx.AsyncClient, headers: dict) -> list[dict]:
+    """Every `player_stats` row in the table (`id`, `player_id`, `game_id`,
+    `stats`, `created_at`) -- real scale as of the Player Performance
+    Context Foundation pass (2026-09-15): 1,551 rows, still small enough
+    to fetch wholesale and filter/group in Python, matching this module's
+    own established "download once" convention at every previous scale
+    this project has had. A future pass at materially larger real scale
+    (post-Week-1, multi-season) may need a `player_id`-scoped read
+    instead -- not needed yet, not built here."""
+    response = await client.get(
+        "/rest/v1/player_stats",
+        params={"select": "id,player_id,game_id,stats,created_at", "order": "created_at.asc"},
+        headers=headers,
+    )
+    if response.status_code != 200:
+        raise ContextIntelligenceReadError(f"failed to read player_stats: {response.status_code} {response.text}")
+    return response.json()
+
+
+async def read_games_by_ids(client: httpx.AsyncClient, headers: dict, *, game_ids: list[str]) -> dict[str, dict]:
+    """Batch `games` read keyed by `id` (`scheduled_start`, `home_team`,
+    `away_team`) for exactly the game_ids a caller already knows it needs
+    -- the shape `player_performance.py`'s `games_by_id` parameter expects.
+    Returns `{}` for an empty `game_ids` without making a request, same
+    empty-input discipline as `market_integrity.resolve_team_ids_by_name`."""
+    if not game_ids:
+        return {}
+    response = await client.get(
+        "/rest/v1/games",
+        params={"id": f"in.({','.join(game_ids)})", "select": "id,scheduled_start,home_team,away_team"},
+        headers=headers,
+    )
+    if response.status_code != 200:
+        raise ContextIntelligenceReadError(
+            f"failed to read games for game_ids={game_ids!r}: {response.status_code} {response.text}"
+        )
+    return {row["id"]: row for row in response.json()}
+
+
 async def read_games_sharing_venue(
     client: httpx.AsyncClient, headers: dict, *, venue_id: str, exclude_game_id: str
 ) -> list[dict]:
@@ -127,6 +166,8 @@ __all__ = [
     "ContextIntelligenceReadError",
     "read_all_weather_snapshots",
     "read_all_odds_snapshots",
+    "read_all_player_stats",
+    "read_games_by_ids",
     "read_game_venue_context",
     "read_venue",
     "read_games_sharing_venue",
