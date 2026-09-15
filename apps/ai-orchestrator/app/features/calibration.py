@@ -6,13 +6,37 @@ and joining live in `app.persistence.calibration_reads`.
 happened?"** It never tunes a probability, never proposes a weight, never
 touches EV/Kelly/Risk, and never writes anything. It only measures.
 
-**What counts as a scoreable prediction.** Only `WIN` and `LOSS` are scoreable:
-they are the two outcomes with an unambiguous realized value (1 and 0). `PUSH`,
-`VOID_NO_ACTION` and `PENDING_MISSING_DATA` are NOT coerced into either -- a
-push is not half a win, and a void bet never resolved at all. They are counted
-and reported separately so the excluded population is always visible rather than
-silently dropped (the same null-not-neutral discipline the rest of this codebase
-applies to missing data).
+**What counts as a scoreable prediction.** Two independent gates, both required.
+
+*Gate 1 -- the forward-looking timing contract (2026-09-15).* A calibration
+observation is only meaningful if the prediction genuinely existed BEFORE the
+outcome was knowable. A probability produced at or after kickoff may encode
+hindsight -- in-game state, a known final score, a settled stat line -- and
+scoring it would flatter the model with information it never had to forecast.
+So `predicted_at` must exist, the event's `scheduled_start` must exist, and
+`predicted_at` must be strictly earlier than `scheduled_start`. A prediction
+failing this is **never deleted and never silently dropped** -- it is returned
+with an explicit `calibration_exclusion_reason` so the excluded population stays
+auditable.
+
+*Gate 2 -- a binary realized outcome.* Only `WIN` and `LOSS` have an unambiguous
+realized value (1 and 0). `PUSH`, `VOID_NO_ACTION` and `PENDING_MISSING_DATA`
+are NOT coerced into either -- a push is not half a win, and a void bet never
+resolved at all.
+
+Both gates report through one field, `calibration_exclusion_reason`: `None`
+means eligible. Every metric in this module filters on `is_scoreable`, so an
+ineligible prediction cannot reach a Brier score, a log loss or a bucket by any
+path.
+
+**Hindsight backfill is prohibited, not merely discouraged.** Generating a
+prediction after a game has ended and treating it as a historical calibration
+observation is post-event prediction, not forecasting. Neither is
+`modeled_probability` ever reconstructed later -- it is read frozen or the row
+does not become a prediction at all. No historical/replay path has been proven
+point-in-time safe in this codebase, so none may feed this ledger. Synthetic and
+post-hoc fixtures may prove plumbing in tests; they must never increase the real
+calibration sample count.
 
 **Sample-size honesty is enforced in the type, not left to the reader.**
 `CalibrationReport.conclusions_justified` is False below
@@ -26,17 +50,41 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from datetime import datetime
 
 #: Outcomes with an unambiguous realized value. Everything else is excluded
 #: from scoring rather than coerced -- see module docstring.
 SCOREABLE_OUTCOMES: dict[str, float] = {"WIN": 1.0, "LOSS": 0.0}
 
-#: Disclosed-conservative, explicitly NOT empirically derived -- the same
-#: convention as `app.context_intelligence.scoring`'s own sample floors. Below
-#: this, `CalibrationReport.conclusions_justified` is False. Chosen as a round
-#: number that is obviously insufficient for per-bucket inference rather than as
-#: a statistically defended threshold; raising it later is a policy decision, not
-#: a bug fix.
+#: Every reason a settled prediction can be held out of binary scoring. Stable
+#: strings -- they are reported to operators, so they are part of this module's
+#: contract rather than incidental prose.
+EXCLUSION_MISSING_PREDICTED_AT = "missing_predicted_at"
+EXCLUSION_MISSING_SCHEDULED_START = "missing_event_scheduled_start"
+EXCLUSION_UNPARSEABLE_TIMESTAMP = "unparseable_timestamp"
+EXCLUSION_NOT_PREDICTED_BEFORE_KICKOFF = "predicted_at_not_before_scheduled_start"
+EXCLUSION_OUTCOME_NOT_BINARY = "outcome_not_binary"
+
+
+def _parse_timestamp(value: str | None) -> datetime | None:
+    """Tolerant ISO-8601 parse of a Postgres `timestamptz`. Returns `None`
+    rather than raising -- an unparseable timestamp is an eligibility failure to
+    be reported, never an exception that hides the whole ledger."""
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+#: A PRODUCT RULE meaning "MANSA draws no conclusions yet" -- explicitly NOT a
+#: statistically proven sufficiency threshold, and it must never be described as
+#: one. 100 eligible observations does not make a calibration estimate reliable;
+#: it is a round, conservative number chosen so that obviously-meaningless
+#: samples cannot be read as findings. Genuine per-bucket inference needs far
+#: more than 100, spread across buckets. Same disclosed-not-derived convention as
+#: `app.context_intelligence.scoring`'s own sample floors; changing it is a
+#: policy decision, not a bug fix.
 MIN_SAMPLE_FOR_CALIBRATION_CONCLUSIONS = 100
 
 #: Numerical guard for `log_loss` only: ln(0) is undefined, so a modeled
@@ -86,6 +134,10 @@ class SettledPrediction:
     #: their completeness/sample_size. `None` for any prediction made before
     #: this provenance was captured -- honestly absent, never backfilled.
     context_provenance: dict | None
+    #: The event's scheduled kickoff, frozen on `games`. The forward-looking
+    #: timing contract is `predicted_at < scheduled_start`; without this value
+    #: the contract cannot be evaluated and the prediction is excluded.
+    scheduled_start: str | None
     outcome: str
     graded_at: str | None
     grading_version: str | None
@@ -96,12 +148,47 @@ class SettledPrediction:
     corrects_grade_event_id: str | None
 
     @property
+    def calibration_exclusion_reason(self) -> str | None:
+        """`None` when this prediction may contribute to calibration metrics.
+        Otherwise the specific, stable reason it may not -- evaluated in a fixed
+        order so a row with several problems reports the most fundamental one.
+
+        The timing gate is checked BEFORE the outcome gate on purpose: a
+        prediction made after kickoff is disqualified as a forecast regardless
+        of how cleanly it later settled."""
+        predicted = _parse_timestamp(self.predicted_at)
+        scheduled = _parse_timestamp(self.scheduled_start)
+        if not self.predicted_at:
+            return EXCLUSION_MISSING_PREDICTED_AT
+        if not self.scheduled_start:
+            return EXCLUSION_MISSING_SCHEDULED_START
+        if predicted is None or scheduled is None:
+            return EXCLUSION_UNPARSEABLE_TIMESTAMP
+        if predicted >= scheduled:
+            return EXCLUSION_NOT_PREDICTED_BEFORE_KICKOFF
+        if self.outcome not in SCOREABLE_OUTCOMES:
+            return EXCLUSION_OUTCOME_NOT_BINARY
+        return None
+
+    @property
+    def predicted_before_kickoff(self) -> bool:
+        """The forward-looking timing contract alone, independent of outcome --
+        the single property that separates a genuine forecast from a post-event
+        prediction."""
+        return self.calibration_exclusion_reason not in (
+            EXCLUSION_MISSING_PREDICTED_AT,
+            EXCLUSION_MISSING_SCHEDULED_START,
+            EXCLUSION_UNPARSEABLE_TIMESTAMP,
+            EXCLUSION_NOT_PREDICTED_BEFORE_KICKOFF,
+        )
+
+    @property
     def is_scoreable(self) -> bool:
-        return self.outcome in SCOREABLE_OUTCOMES
+        return self.calibration_exclusion_reason is None
 
     @property
     def realized_value(self) -> float | None:
-        return SCOREABLE_OUTCOMES.get(self.outcome)
+        return SCOREABLE_OUTCOMES.get(self.outcome) if self.is_scoreable else None
 
 
 @dataclass(frozen=True)
@@ -128,7 +215,14 @@ class BucketBreakdown:
 class CalibrationReport:
     total_predictions: int
     scoreable_predictions: int
-    excluded_by_outcome: dict[str, int]
+    #: Every held-out prediction, grouped by `calibration_exclusion_reason`.
+    #: Nothing is deleted or hidden -- the excluded population stays auditable.
+    excluded_by_reason: dict[str, int]
+    #: Predictions failing the forward-looking timing contract specifically.
+    #: Called out separately because it is the one exclusion that indicates a
+    #: process problem (a post-event prediction was produced) rather than an
+    #: ordinary un-scoreable settlement like a push.
+    excluded_post_event: int
     wins: int
     losses: int
     brier_score: float | None
@@ -206,9 +300,14 @@ def build_calibration_report(
     via `conclusions_justified` and `notes` -- when believing it is not."""
     scoreable = [p for p in predictions if p.is_scoreable]
     excluded: dict[str, int] = {}
+    post_event = 0
     for prediction in predictions:
-        if not prediction.is_scoreable:
-            excluded[prediction.outcome] = excluded.get(prediction.outcome, 0) + 1
+        reason = prediction.calibration_exclusion_reason
+        if reason is None:
+            continue
+        excluded[reason] = excluded.get(reason, 0) + 1
+        if not prediction.predicted_before_kickoff:
+            post_event += 1
 
     notes: list[str] = []
     if not predictions:
@@ -218,22 +317,30 @@ def build_calibration_report(
         )
     elif not scoreable:
         notes.append(
-            f"{len(predictions)} settled prediction(s) exist but none are scoreable "
-            f"(outcomes: {sorted(excluded)}). PUSH/VOID/PENDING are never coerced into a win or loss."
+            f"{len(predictions)} settled prediction(s) exist but none are eligible for scoring "
+            f"(reasons: {sorted(excluded)}). PUSH/VOID are never coerced into a win or loss, and a "
+            f"prediction made at or after kickoff is never scored at all."
         )
     if scoreable and len(scoreable) < min_sample:
         notes.append(
-            f"Only {len(scoreable)} scoreable prediction(s) -- below the {min_sample} floor. The metrics "
-            f"below are arithmetically correct and evidentially meaningless; no calibration conclusion, "
-            f"and no probability or context adjustment, is justified by them."
+            f"Only {len(scoreable)} eligible prediction(s) -- below the {min_sample} product floor. The "
+            f"metrics below are arithmetically correct and evidentially meaningless; no calibration "
+            f"conclusion, and no probability or context adjustment, is justified by them."
+        )
+    if post_event:
+        notes.append(
+            f"{post_event} prediction(s) were made at or after the event's scheduled start and are "
+            f"excluded from every metric -- these are post-event predictions, not forecasts, and may "
+            f"encode hindsight. They are retained and reported, never deleted."
         )
     if excluded:
-        notes.append(f"Excluded from scoring by outcome: {dict(sorted(excluded.items()))}.")
+        notes.append(f"Excluded from scoring by reason: {dict(sorted(excluded.items()))}.")
 
     return CalibrationReport(
         total_predictions=len(predictions),
         scoreable_predictions=len(scoreable),
-        excluded_by_outcome=dict(sorted(excluded.items())),
+        excluded_by_reason=dict(sorted(excluded.items())),
+        excluded_post_event=post_event,
         wins=sum(1 for p in scoreable if p.outcome == "WIN"),
         losses=sum(1 for p in scoreable if p.outcome == "LOSS"),
         brier_score=brier_score(predictions),
