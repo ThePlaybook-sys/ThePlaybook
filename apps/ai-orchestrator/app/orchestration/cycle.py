@@ -96,6 +96,7 @@ import httpx
 from app.agents.base_agent import ContextDataAgent
 from app.agents.committee_context import ParticipationMetadata, SequentialDecisionContext
 from app.agents.context import build_agent_context
+from app.agents.probability_modeling import ADMITTED_CONTEXT_DIMENSIONS
 from app.agents.probability_output import ProbabilityModelOutput
 from app.context_intelligence.context_package import ContextPackage, assemble_context_package
 from app.context_intelligence.engine import build_contextual_intelligence
@@ -186,6 +187,39 @@ def _shared_deterministic_payload_for(agent_name: str, chain_result: SharedCandi
     raise ValueError(f"no deterministic payload mapping for agent_name={agent_name!r}")
 
 
+def _context_provenance(context_package: ContextPackage | None) -> dict | None:
+    """Which admitted contextual dimensions were actually present when this
+    probability was produced, with their completeness and sample_size --
+    captured at decision time so the calibration ledger can later ask "did
+    predictions made WITH context settle differently from those made without?"
+    without reconstructing anything (Phase 8 Calibration Ledger, 2026-09-15).
+
+    Deliberately a sibling key inside the existing `raw_output` jsonb rather
+    than a new column or table: `raw_output` already carries non-output
+    provenance for the other chain steps (the `"deterministic"` key below), and
+    `recommendation_agent_outputs` is already append-only at the database level
+    (`trg_block_rao_update`), so this inherits immutability for free and needs
+    no migration.
+
+    Records only what `build_evidence()` itself would admit
+    (`ADMITTED_CONTEXT_DIMENSIONS`, non-`unavailable`) -- never the full
+    unfiltered package, so this can never imply a blocked dimension reached the
+    model. `None` when no package was attached at all, which is honestly
+    distinct from an empty dict (a package that carried nothing admissible)."""
+    if context_package is None:
+        return None
+    dimensions = {}
+    for name in ADMITTED_CONTEXT_DIMENSIONS:
+        completeness = context_package.dimension_completeness.get(name)
+        if completeness is None or completeness.completeness == "unavailable":
+            continue
+        dimensions[name] = {"completeness": completeness.completeness, "sample_size": completeness.sample_size}
+    return {
+        "target_event_timestamp": context_package.target_event_timestamp,
+        "dimensions": dimensions,
+    }
+
+
 async def _attach_context_package(
     client: httpx.AsyncClient, headers: dict, *, game_id: str, player_id: str | None
 ) -> ContextPackage | None:
@@ -273,7 +307,10 @@ async def run_candidate_evaluation(
     key = _candidate_key(candidate)
     for result in chain_result.successes:
         if isinstance(result.output, ProbabilityModelOutput):
-            raw_output = {"probability_output": result.output.model_dump(mode="json")}
+            raw_output = {
+                "probability_output": result.output.model_dump(mode="json"),
+                "context_provenance": _context_provenance(context_package),
+            }
             agent_confidence = result.output.confidence_in_probability
         else:
             raw_output = {

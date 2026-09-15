@@ -581,3 +581,82 @@ async def test_jsn_sea_ne_live_path_cycle_to_build_evidence():
     assert chain_result.status == "full"
     assert chain_result.probability.modeled_probability == 0.57  # exactly the scripted value, unchanged
     assert chain_result.probability.confidence_in_probability == 0.72  # unchanged -- no context-derived confidence
+
+
+# --------------------------------------------------------------------------
+# Calibration ledger: context provenance captured at decision time
+# (Phase 8 Probability Calibration Ledger, 2026-09-15). The prediction row must
+# record WHICH admitted contextual dimensions were present when the probability
+# was produced, so calibration can later ask "did context-backed predictions
+# settle differently?" without reconstructing anything.
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_probability_row_captures_context_provenance_at_decision_time():
+    """REAL JSN/SEA@NE path. The persisted probability row must carry a
+    context_provenance sibling key naming the admitted dimensions and their
+    completeness/sample_size -- inside the existing append-only raw_output
+    jsonb, needing no new table and no migration."""
+    _mock_jsn_sea_ne_context_boundaries()
+    _mock_agents()
+    captured: dict = {}
+
+    def _capture(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        row = body[0] if isinstance(body, list) else body
+        if "probability_output" in (row.get("raw_output") or {}):
+            captured.update(row)
+        return httpx.Response(201, json=[{}])
+
+    respx.post(f"{SUPABASE_URL}/rest/v1/recommendation_agent_outputs").mock(side_effect=_capture)
+    registry = AdapterRegistry(adapters={"anthropic": _shared_chain_adapter()})
+
+    async with httpx.AsyncClient(base_url=SUPABASE_URL) as client:
+        await run_candidate_evaluation(
+            client, _headers(), recommendation_id="r1", game_id=SEA_NE_GAME_ID, correlation_id="corr-cal",
+            candidate=_sea_ne_candidate(), upstream_outputs=(), participation=_participation(),
+            routing_rules=_routing_rules(), adapter_registry=registry, player_id=JSN_PLAYER_ID,
+        )
+
+    provenance = captured["raw_output"]["context_provenance"]
+    assert provenance is not None
+    # Real dimensions from the real package, with real completeness/sample_size.
+    assert provenance["dimensions"]["player_performance"] == {"completeness": "joined", "sample_size": 1}
+    assert provenance["dimensions"]["market"]["completeness"] == "joined"
+    assert provenance["dimensions"]["weather"]["completeness"] == "partial"
+    assert provenance["target_event_timestamp"] is not None
+    # Blocked dimensions can never appear here either -- same allowlist as build_evidence().
+    for blocked in ("news", "injuries", "roster_role", "team_performance", "depth_lineup", "game_state_pbp"):
+        assert blocked not in provenance["dimensions"]
+    # The probability output itself is untouched by this addition.
+    assert captured["raw_output"]["probability_output"]["modeled_probability"] == 0.57
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_probability_row_provenance_is_none_when_no_context_package_attached():
+    """Honestly absent, never an empty-dict placeholder that would imply a
+    package was built and found nothing."""
+    _mock_agents()
+    captured: dict = {}
+
+    def _capture(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        row = body[0] if isinstance(body, list) else body
+        if "probability_output" in (row.get("raw_output") or {}):
+            captured.update(row)
+        return httpx.Response(201, json=[{}])
+
+    respx.post(f"{SUPABASE_URL}/rest/v1/recommendation_agent_outputs").mock(side_effect=_capture)
+    registry = AdapterRegistry(adapters={"anthropic": _shared_chain_adapter()})
+
+    async with httpx.AsyncClient(base_url=SUPABASE_URL) as client:
+        await run_candidate_evaluation(
+            client, _headers(), recommendation_id="r1", game_id="g1", correlation_id="corr-1",
+            candidate=_candidate(), upstream_outputs=(), participation=_participation(),
+            routing_rules=_routing_rules(), adapter_registry=registry,
+        )
+
+    assert captured["raw_output"]["context_provenance"] is None
