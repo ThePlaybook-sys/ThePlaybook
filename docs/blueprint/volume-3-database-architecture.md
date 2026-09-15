@@ -1,7 +1,7 @@
 # The Playbook — Volume 3
 ## Database Architecture: Tables, Relationships, Indexes, Triggers, Migrations, RLS
 
-**Version:** v4.28
+**Version:** v4.29
 **Last updated:** 2026-09-04
 
 **v4.28 note (MINOR, HQ Decision Lock, planning only):** §5G's proposed design is now LOCKED, not merely proposed — HQ approved all seven items in one pass the same day: the four-value `event_type` vocabulary as originally proposed; `REPLACED` always creates a new product row AND a new activation snapshot, never a mutation; grading is now mandatory status-blind policy (an activated recommendation remains independently gradeable on its original frozen terms regardless of later lifecycle events, and a replacement/reversal is its own separate gradeable decision — the explicit survivorship-bias protection HQ named); `user_recommendation_placements` approved as a user-reported, communication-tone-only signal; `market_monitoring_events` explicitly confirmed NOT touched or extended by this section, remaining sole Phase 7 property; Milestone 5.6 approved as a mandatory pre-Beta milestone with a phased authorization (basic mechanics may build ahead of Phase 7/8, closure requires real Phase 7/8 signals feeding `trigger_type`); and the dashboard "never silently disappear or overwrite" principle locked, exact visual treatment left open. Still zero migrations applied, zero code changed — approving a design is not authorizing its build. See `CHANGELOG.md`'s 2026-09-04 entry for full reasoning.

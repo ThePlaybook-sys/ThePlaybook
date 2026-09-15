@@ -174,18 +174,30 @@ def _mock_runs():
     respx.patch(f"{SUPABASE_URL}/rest/v1/master_refresh_runs").mock(return_value=httpx.Response(204))
 
 
-def _mock_persistence(canonical_readback: list[dict]):
+def _mock_persistence(canonical_readback: list[dict], reconciliation_rows: list[dict] | None = None):
     respx.get(f"{SUPABASE_URL}/rest/v1/game_provider_ids").mock(
         return_value=httpx.Response(200, json=[])
     )
     respx.post(f"{SUPABASE_URL}/rest/v1/game_provider_ids").mock(return_value=httpx.Response(201))
+    # Reconciliation's batched team lookup. Empty by default: nothing resolves
+    # canonically, so every entry is genuinely new and takes the insert path.
+    respx.get(f"{SUPABASE_URL}/rest/v1/team_provider_ids").mock(
+        return_value=httpx.Response(200, json=[])
+    )
     created = iter(f"db-{i}" for i in range(1, 500))
     insert_route = respx.post(f"{SUPABASE_URL}/rest/v1/games").mock(
         side_effect=lambda request: httpx.Response(201, json=[{"id": next(created)}])
     )
-    respx.get(f"{SUPABASE_URL}/rest/v1/games").mock(
-        return_value=httpx.Response(200, json=canonical_readback)
-    )
+    existing = reconciliation_rows or []
+
+    def _games_respond(request: httpx.Request) -> httpx.Response:
+        # `sport=eq.nfl` with no date window is the reconciliation read; the
+        # windowed read is the post-persistence slate read-back.
+        if request.url.params.get("sport") == "eq.nfl":
+            return httpx.Response(200, json=existing)
+        return httpx.Response(200, json=canonical_readback)
+
+    respx.get(f"{SUPABASE_URL}/rest/v1/games").mock(side_effect=_games_respond)
     return insert_route
 
 
