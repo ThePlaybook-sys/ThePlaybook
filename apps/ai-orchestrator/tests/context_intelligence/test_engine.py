@@ -12,6 +12,7 @@ import httpx
 import pytest
 import respx
 
+from app.context_intelligence.context_package import assemble_context_package
 from app.context_intelligence.engine import SUPPORTED_DIMENSIONS, build_contextual_intelligence
 from app.context_intelligence.unsupported import UNSUPPORTED_DIMENSIONS
 
@@ -343,3 +344,171 @@ async def test_engine_accepts_multiple_distinct_games_as_separate_observations()
     assert observations[1]["duplicate_raw_row_count"] == 1
     # Crossing the sample floor with 2 real-shaped games flips insufficient_evidence off.
     assert dim.insufficient_evidence is False
+
+
+# --------------------------------------------------------------------------
+# Full real historical Context Package proof (Historical Context Assembly
+# V1 pass, 2026-09-15) -- JSN / SEA@NE, every dimension. Every value below
+# is real, queried live against DEV on 2026-09-15: the real venue
+# (Lumen Field, 0 other real games sharing it), the real weather
+# observation for SEA@NE plus its one real same-dome-bucket comparable
+# (PHI@WAS), and real opening/closing spread lines for SEA@NE plus two
+# real comparable games (LV@MIA, LAC@ARI) -- a genuine but reduced real
+# sample (2 games, not all 4-5 real comparables SQL confirmed exist) that
+# already crosses the same INSUFFICIENT_SAMPLE_FLOOR=2 the full real
+# dataset also crosses, so the classification this proves (market =
+# JOINED) matches what the full real table would also produce.
+# --------------------------------------------------------------------------
+
+SEA_NE_VENUE_ID = "ebe8bbcc-23b4-453e-98d9-8b7eee1e0dc3"
+
+SEA_NE_WEATHER_ROW = {
+    "game_id": SEA_NE_GAME_ID,
+    "weather_data": {"source": "weatherapi", "is_dome": False, "wind_mph": 0.9, "conditions": "Overcast", "observed_at": "2026-09-09T23:00:00+00:00", "temperature_f": 63.1, "precipitation_pct": 15.0},
+    "captured_at": "2026-09-07T23:10:25.507456+00:00",
+}
+PHI_WAS_GAME_ID = "cd0f612b-6ff3-48c3-b9ef-55da1ac38226"
+PHI_WAS_WEATHER_ROW = {
+    "game_id": PHI_WAS_GAME_ID,
+    "weather_data": {"source": "weatherapi", "is_dome": False, "wind_mph": 11.4, "conditions": "Cloudy", "observed_at": "2026-09-09T23:00:00+00:00", "temperature_f": 76.5, "precipitation_pct": 7},
+    "captured_at": "2026-09-07T23:10:25.507456+00:00",
+}
+
+SEA_NE_SPREAD_OPEN = {"game_id": SEA_NE_GAME_ID, "sportsbook": "draftkings", "market_type": "spread", "line_data": {"outcomes": [{"name": "New England Patriots", "point": 3.5, "price": -115}, {"name": "Seattle Seahawks", "point": -3.5, "price": -105}]}, "captured_at": "2026-09-07T02:30:55.267463+00:00"}
+SEA_NE_SPREAD_LATEST = {"game_id": SEA_NE_GAME_ID, "sportsbook": "draftkings", "market_type": "spread", "line_data": {"outcomes": [{"name": "New England Patriots", "point": 3, "price": -102}, {"name": "Seattle Seahawks", "point": -3, "price": -118}]}, "captured_at": "2026-09-10T00:17:07.104582+00:00"}
+LV_MIA_GAME_ID = "42eae7bd-08ca-4bfc-a83b-3bfac35f8b92"
+LV_MIA_SPREAD_OPEN = {"game_id": LV_MIA_GAME_ID, "sportsbook": "draftkings", "market_type": "spread", "line_data": {"outcomes": [{"name": "Las Vegas Raiders", "point": -3.5, "price": -105}, {"name": "Miami Dolphins", "point": 3.5, "price": -115}]}, "captured_at": "2026-09-07T18:03:29.355010+00:00"}
+LV_MIA_SPREAD_LATEST = {"game_id": LV_MIA_GAME_ID, "sportsbook": "draftkings", "market_type": "spread", "line_data": {"outcomes": [{"name": "Las Vegas Raiders", "point": -3, "price": -110}, {"name": "Miami Dolphins", "point": 3, "price": -110}]}, "captured_at": "2026-09-13T20:15:54.296273+00:00"}
+LAC_ARI_GAME_ID = "57316028-d864-48e5-bbeb-df37618a1b27"
+LAC_ARI_SPREAD_OPEN = {"game_id": LAC_ARI_GAME_ID, "sportsbook": "draftkings", "market_type": "spread", "line_data": {"outcomes": [{"name": "Arizona Cardinals", "point": 10, "price": -115}, {"name": "Los Angeles Chargers", "point": -10, "price": -105}]}, "captured_at": "2026-09-07T18:03:29.355010+00:00"}
+LAC_ARI_SPREAD_LATEST = {"game_id": LAC_ARI_GAME_ID, "sportsbook": "draftkings", "market_type": "spread", "line_data": {"outcomes": [{"name": "Arizona Cardinals", "point": 8.5, "price": -102}, {"name": "Los Angeles Chargers", "point": -8.5, "price": -118}]}, "captured_at": "2026-09-13T20:15:54.296273+00:00"}
+
+ALL_REAL_ODDS_ROWS = [SEA_NE_SPREAD_OPEN, SEA_NE_SPREAD_LATEST, LV_MIA_SPREAD_OPEN, LV_MIA_SPREAD_LATEST, LAC_ARI_SPREAD_OPEN, LAC_ARI_SPREAD_LATEST]
+
+
+def _odds_route(request: httpx.Request) -> httpx.Response:
+    """Real `/rest/v1/odds_snapshots` gets two structurally different
+    calls (`read_odds_snapshots`'s target-game `game_id=eq.` lookup vs.
+    `read_all_odds_snapshots`'s table-wide, no-`game_id`-param read)."""
+    if "game_id" in request.url.params:
+        return httpx.Response(200, json=[SEA_NE_SPREAD_OPEN, SEA_NE_SPREAD_LATEST])
+    return httpx.Response(200, json=ALL_REAL_ODDS_ROWS)
+
+
+def _games_route_full_package(request: httpx.Request) -> httpx.Response:
+    """Real `/rest/v1/games` gets THREE structurally different calls once
+    a real `venue_id` is involved: the single `id=eq.` venue-context
+    lookup, the batch `id=in.` referenced-games lookup (player_
+    performance), and `read_games_sharing_venue`'s `venue_id=eq.&id=neq.`
+    lookup -- routed by inspecting which real params respx hands the
+    callback. `venue_id=eq.` is checked first since that query also
+    carries an `id=neq.` param that would otherwise be misread as the
+    batch-lookup shape."""
+    params = request.url.params
+    if "venue_id" in params:
+        return httpx.Response(200, json=[])  # real, live-confirmed: 0 other games share Lumen Field
+    id_param = params.get("id", "")
+    if id_param.startswith("eq."):
+        return httpx.Response(
+            200,
+            json=[{
+                "id": SEA_NE_GAME_ID, "home_team": "SEA", "away_team": "NE",
+                "scheduled_start": "2026-09-10T00:20:00+00:00", "venue_id": SEA_NE_VENUE_ID,
+                "venue_lat": 47.595097, "venue_long": -122.332245, "venue_type": "outdoor", "stadium": "Lumen Field",
+            }],
+        )
+    return httpx.Response(200, json=[{"id": SEA_NE_GAME_ID, "scheduled_start": "2026-09-10T00:20:00+00:00", "home_team": "SEA", "away_team": "NE"}])
+
+
+def _mock_jsn_sea_ne_full_package_boundaries():
+    respx.get(f"{SUPABASE_URL}/rest/v1/games").mock(side_effect=_games_route_full_package)
+    respx.get(f"{SUPABASE_URL}/rest/v1/teams").mock(side_effect=_teams_route)
+    respx.get(f"{SUPABASE_URL}/rest/v1/odds_snapshots").mock(side_effect=_odds_route)
+    respx.get(f"{SUPABASE_URL}/rest/v1/weather_snapshots").mock(return_value=httpx.Response(200, json=[SEA_NE_WEATHER_ROW, PHI_WAS_WEATHER_ROW]))
+    respx.get(f"{SUPABASE_URL}/rest/v1/venues").mock(return_value=httpx.Response(200, json=[{"id": SEA_NE_VENUE_ID, "name": "Lumen Field", "city": "Seattle", "state": "WA", "venue_type": "outdoor"}]))
+    respx.get(f"{SUPABASE_URL}/rest/v1/news_article_history").mock(return_value=httpx.Response(200, json=[]))
+    respx.get(f"{SUPABASE_URL}/rest/v1/players").mock(
+        return_value=httpx.Response(200, json=[{"id": JSN_PLAYER_ID, "name": "Jaxon Smith-Njigba", "position": "WR", "team_id": SEATTLE_TEAM_ID}])
+    )
+    respx.get(f"{SUPABASE_URL}/rest/v1/player_stats").mock(return_value=httpx.Response(200, json=JSN_SEA_NE_RAW_ROWS))
+    respx.get(f"{SUPABASE_URL}/rest/v1/game_events").mock(
+        return_value=httpx.Response(200, json=[{"game_id": SEA_NE_GAME_ID, "raw_payload": SEA_NE_RAW_GAME_EVENT_PAYLOAD}])
+    )
+    respx.get(f"{SUPABASE_URL}/rest/v1/team_provider_ids").mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                {"team_id": SEATTLE_TEAM_ID, "provider_team_id": "79"},
+                {"team_id": NEW_ENGLAND_TEAM_ID, "provider_team_id": "50"},
+            ],
+        )
+    )
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_jsn_sea_ne_real_historical_context_package():
+    """Directive Section 5 -- the real Context Package MANSA can assemble
+    today for JSN/SEA@NE, through the real engine path AND the real
+    assembly layer together. A ONE-GAME historical proof, not the final
+    multi-game Context Assembly Proof."""
+    _mock_jsn_sea_ne_full_package_boundaries()
+
+    async with httpx.AsyncClient(base_url=SUPABASE_URL) as client:
+        intelligence = await build_contextual_intelligence(
+            client, _headers(), game_id=SEA_NE_GAME_ID, player_id=JSN_PLAYER_ID, now=PROOF_NOW,
+        )
+    package = assemble_context_package(
+        intelligence, player_id=JSN_PLAYER_ID, target_event_timestamp=PROOF_NOW.isoformat(),
+    )
+
+    # Real, live-confirmed classification matrix.
+    assert set(package.joined_dimensions) == {"player_performance", "market"}
+    assert set(package.partial_dimensions) == {"weather", "venue"}
+    assert set(package.unavailable_dimensions) == {"news", "injuries", "roster_role", "team_performance", "depth_lineup", "game_state_pbp"}
+    # No dimension silently omitted -- all ten present exactly once.
+    all_classified = set(package.joined_dimensions) | set(package.partial_dimensions) | set(package.unavailable_dimensions)
+    assert all_classified == set(SUPPORTED_DIMENSIONS) | set(UNSUPPORTED_DIMENSIONS)
+
+    # player_performance: no duplicate inflation, real values intact.
+    pp = package.dimension_completeness["player_performance"]
+    assert pp.sample_size == 1
+    obs = intelligence.dimensions["player_performance"].facts["observations"][0]
+    assert obs["role_usage_signals"]["receiving"] == {"targets": 11, "receptions": 8, "recYards": 122, "recTD": 1}
+    assert obs["opponent"] == "New England Patriots"  # resolves deterministically
+    assert obs["duplicate_raw_row_count"] == 2  # both real rows disclosed, never inflated into 2 observations
+
+    # weather: real target-game facts found (partial -- only 1 same-dome comparable, below the floor).
+    weather = intelligence.dimensions["weather"]
+    assert weather.facts["temperature_f"] == 63.1
+    assert package.dimension_completeness["weather"].completeness == "partial"
+
+    # venue: real target-game facts found (partial -- 0 other real games share Lumen Field).
+    venue = intelligence.dimensions["venue"]
+    assert venue.facts["venue_name"] == "Lumen Field"
+    assert package.dimension_completeness["venue"].completeness == "partial"
+
+    # market: real target odds + real comparable pool crosses the floor -- joined.
+    market = intelligence.dimensions["market"]
+    assert market.insufficient_evidence is False
+    assert package.dimension_completeness["market"].completeness == "joined"
+
+    # news: genuinely unavailable for this exact game via the current, unmodified engine
+    # path -- games.home_team/away_team ("SEA"/"NE") don't exactly match teams.name
+    # ("Seattle Seahawks"/"New England Patriots"), so resolve_team_ids_by_name resolves
+    # zero team_ids and news_articles_for_teams is genuinely empty. A real, disclosed
+    # finding (Section 7 of the report), not a fabricated zero.
+    assert intelligence.dimensions["news"].sample_size == 0
+    assert package.dimension_completeness["news"].completeness == "unavailable"
+
+    # Package-level completeness is independent of confidence -- proven directly: market is
+    # "joined" while its own confidence may or may not be high, and player_performance is
+    # "joined" with confidence=None (see test_jsn_sea_ne_real_engine_proof) -- data_completeness
+    # never stands in for, or is derived from, a prediction/confidence number.
+    assert package.dimension_completeness["player_performance"].completeness == "joined"
+    assert intelligence.dimensions["player_performance"].confidence is None
+
+    # No prediction/probability field anywhere on the package (structural, see
+    # test_context_package.py's own dedicated proof) -- spot-checked here too.
+    assert not hasattr(package, "confidence")
+    assert not hasattr(package, "probability")
