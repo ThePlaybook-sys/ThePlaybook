@@ -12,6 +12,11 @@ import math
 import pytest
 
 from app.features.calibration import (
+    EXCLUSION_MISSING_PREDICTED_AT,
+    EXCLUSION_MISSING_SCHEDULED_START,
+    EXCLUSION_NOT_PREDICTED_BEFORE_KICKOFF,
+    EXCLUSION_OUTCOME_NOT_BINARY,
+    EXCLUSION_UNPARSEABLE_TIMESTAMP,
     MIN_SAMPLE_FOR_CALIBRATION_CONCLUSIONS,
     SettledPrediction,
     brier_score,
@@ -22,14 +27,18 @@ from app.features.calibration import (
 )
 
 
-def _prediction(*, modeled_probability: float, outcome: str, key: str = "k") -> SettledPrediction:
+def _prediction(
+    *, modeled_probability: float, outcome: str, key: str = "k",
+    predicted_at: str | None = "2026-09-15T00:00:00+00:00",
+    scheduled_start: str | None = "2026-09-15T17:00:00+00:00",
+) -> SettledPrediction:
     return SettledPrediction(
         candidate_key=key, recommendation_id="r1", recommendation_leg_id="l1", game_id="g1",
         market_type="moneyline", selection="Kansas City Chiefs", sportsbook="DraftKings",
         american_odds=-125, point=None, sportsbook_implied_probability=0.5556,
         modeled_probability=modeled_probability, confidence_in_probability=0.7,
         model_name="claude-opus-5", provider="anthropic", prompt_name="probability_modeling_agent",
-        prompt_version=3, predicted_at="2026-09-15T00:00:00+00:00", context_provenance=None,
+        prompt_version=3, predicted_at=predicted_at, context_provenance=None, scheduled_start=scheduled_start,
         outcome=outcome, graded_at="2026-09-16T00:00:00+00:00", grading_version="v1",
         grade_event_id="ge1", grade_is_correction=False, corrects_grade_event_id=None,
     )
@@ -60,7 +69,7 @@ def test_pushes_and_voids_are_excluded_from_metrics_not_counted_as_losses():
     assert report.total_predictions == 3
     assert report.scoreable_predictions == 1
     assert report.wins == 1 and report.losses == 0
-    assert report.excluded_by_outcome == {"PUSH": 1, "VOID_NO_ACTION": 1}
+    assert report.excluded_by_reason == {"outcome_not_binary": 2}
     # Brier over the single scoreable prediction only: (0.6 - 1)^2
     assert report.brier_score == pytest.approx(0.16)
 
@@ -172,3 +181,117 @@ def test_conclusions_become_justified_at_the_floor():
     report = build_calibration_report(predictions)
     assert report.conclusions_justified is True
     assert not any("floor" in note for note in report.notes)
+
+
+# --------------------------------------------------------------------------
+# Forward-looking timing contract (2026-09-15). A calibration observation is
+# only meaningful if the prediction genuinely existed BEFORE the outcome was
+# knowable. These are the tests that keep hindsight out of the ledger.
+# --------------------------------------------------------------------------
+
+
+def test_prediction_made_before_kickoff_is_eligible():
+    prediction = _prediction(
+        modeled_probability=0.6, outcome="WIN",
+        predicted_at="2026-09-15T12:00:00+00:00", scheduled_start="2026-09-15T17:00:00+00:00",
+    )
+    assert prediction.calibration_exclusion_reason is None
+    assert prediction.predicted_before_kickoff is True
+    assert prediction.is_scoreable is True
+
+
+def test_prediction_made_after_kickoff_is_excluded_as_post_event():
+    """The core anti-hindsight rule: a probability produced after the event
+    started may encode information it never had to forecast."""
+    prediction = _prediction(
+        modeled_probability=0.95, outcome="WIN",
+        predicted_at="2026-09-16T03:00:00+00:00", scheduled_start="2026-09-15T17:00:00+00:00",
+    )
+    assert prediction.calibration_exclusion_reason == EXCLUSION_NOT_PREDICTED_BEFORE_KICKOFF
+    assert prediction.predicted_before_kickoff is False
+    assert prediction.is_scoreable is False
+    assert prediction.realized_value is None
+
+
+def test_prediction_made_exactly_at_kickoff_is_excluded():
+    """`predicted_at < scheduled_start` is strict -- equality is not before."""
+    prediction = _prediction(
+        modeled_probability=0.6, outcome="WIN",
+        predicted_at="2026-09-15T17:00:00+00:00", scheduled_start="2026-09-15T17:00:00+00:00",
+    )
+    assert prediction.calibration_exclusion_reason == EXCLUSION_NOT_PREDICTED_BEFORE_KICKOFF
+
+
+def test_timing_gate_is_checked_before_the_outcome_gate():
+    """A post-event prediction is disqualified as a forecast regardless of how
+    cleanly it settled -- the reported reason must be the timing failure."""
+    prediction = _prediction(
+        modeled_probability=0.6, outcome="PUSH",
+        predicted_at="2026-09-16T03:00:00+00:00", scheduled_start="2026-09-15T17:00:00+00:00",
+    )
+    assert prediction.calibration_exclusion_reason == EXCLUSION_NOT_PREDICTED_BEFORE_KICKOFF
+
+
+def test_missing_scheduled_start_excludes_rather_than_assuming_in_time():
+    prediction = _prediction(modeled_probability=0.6, outcome="WIN", scheduled_start=None)
+    assert prediction.calibration_exclusion_reason == EXCLUSION_MISSING_SCHEDULED_START
+    assert prediction.is_scoreable is False
+
+
+def test_missing_predicted_at_excludes():
+    prediction = _prediction(modeled_probability=0.6, outcome="WIN", predicted_at=None)
+    assert prediction.calibration_exclusion_reason == EXCLUSION_MISSING_PREDICTED_AT
+
+
+def test_unparseable_timestamp_excludes_without_raising():
+    prediction = _prediction(modeled_probability=0.6, outcome="WIN", predicted_at="not-a-timestamp")
+    assert prediction.calibration_exclusion_reason == EXCLUSION_UNPARSEABLE_TIMESTAMP
+
+
+def test_post_event_predictions_cannot_reach_any_metric():
+    """Belt and braces: a confidently-correct post-event prediction would
+    flatter every metric. It must be invisible to all of them."""
+    hindsight = _prediction(
+        modeled_probability=1.0, outcome="WIN",
+        predicted_at="2026-09-16T03:00:00+00:00", scheduled_start="2026-09-15T17:00:00+00:00",
+    )
+    assert brier_score([hindsight]) is None
+    assert log_loss([hindsight]) is None
+    assert bucket_breakdown([hindsight]) == ()
+
+
+def test_report_counts_post_event_exclusions_separately_and_retains_them():
+    legitimate = _prediction(
+        modeled_probability=0.6, outcome="WIN",
+        predicted_at="2026-09-15T12:00:00+00:00", scheduled_start="2026-09-15T17:00:00+00:00",
+    )
+    hindsight = _prediction(
+        modeled_probability=1.0, outcome="WIN",
+        predicted_at="2026-09-16T03:00:00+00:00", scheduled_start="2026-09-15T17:00:00+00:00",
+    )
+    report = build_calibration_report([legitimate, hindsight])
+
+    assert report.total_predictions == 2  # retained, never deleted
+    assert report.scoreable_predictions == 1
+    assert report.excluded_post_event == 1
+    assert report.excluded_by_reason == {EXCLUSION_NOT_PREDICTED_BEFORE_KICKOFF: 1}
+    # Only the legitimate forecast reaches the metrics: (0.6 - 1)^2
+    assert report.brier_score == pytest.approx(0.16)
+    assert any("post-event predictions, not forecasts" in note for note in report.notes)
+
+
+def test_report_distinguishes_post_event_from_ordinary_unscoreable_settlement():
+    """A push is an ordinary un-scoreable settlement; a post-event prediction is
+    a process problem. They must not be conflated in the reporting."""
+    push = _prediction(modeled_probability=0.6, outcome="PUSH")
+    hindsight = _prediction(
+        modeled_probability=0.9, outcome="LOSS",
+        predicted_at="2026-09-16T03:00:00+00:00", scheduled_start="2026-09-15T17:00:00+00:00",
+    )
+    report = build_calibration_report([push, hindsight])
+
+    assert report.excluded_post_event == 1
+    assert report.excluded_by_reason == {
+        EXCLUSION_NOT_PREDICTED_BEFORE_KICKOFF: 1,
+        EXCLUSION_OUTCOME_NOT_BINARY: 1,
+    }

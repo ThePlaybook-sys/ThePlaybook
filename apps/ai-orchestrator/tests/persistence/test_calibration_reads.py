@@ -60,8 +60,11 @@ def _grade(**overrides) -> dict:
     return base
 
 
-def _mock(*, legs, outputs, grades):
+def _mock(*, legs, outputs, grades, scheduled_start="2026-09-15T17:00:00+00:00"):
     respx.get(f"{SUPABASE_URL}/rest/v1/recommendation_legs").mock(return_value=httpx.Response(200, json=legs))
+    respx.get(f"{SUPABASE_URL}/rest/v1/games").mock(
+        return_value=httpx.Response(200, json=[{"id": leg["game_id"], "scheduled_start": scheduled_start} for leg in legs])
+    )
     respx.get(f"{SUPABASE_URL}/rest/v1/agents").mock(return_value=httpx.Response(200, json=[{"id": AGENT_ID}]))
     respx.get(f"{SUPABASE_URL}/rest/v1/recommendation_agent_outputs").mock(return_value=httpx.Response(200, json=outputs))
     respx.get(f"{SUPABASE_URL}/rest/v1/recommendation_leg_grade_events").mock(return_value=httpx.Response(200, json=grades))
@@ -179,6 +182,9 @@ async def test_missing_probability_agent_row_fails_loud():
     """Silently returning an empty ledger here would look identical to "no bets
     have settled yet" -- a configuration gap must not masquerade as data."""
     respx.get(f"{SUPABASE_URL}/rest/v1/recommendation_legs").mock(return_value=httpx.Response(200, json=[_leg()]))
+    respx.get(f"{SUPABASE_URL}/rest/v1/games").mock(
+        return_value=httpx.Response(200, json=[{"id": "game-1", "scheduled_start": "2026-09-15T17:00:00+00:00"}])
+    )
     respx.get(f"{SUPABASE_URL}/rest/v1/agents").mock(return_value=httpx.Response(200, json=[]))
 
     async with httpx.AsyncClient(base_url=SUPABASE_URL) as client:
@@ -193,3 +199,55 @@ async def test_read_failure_raises_rather_than_returning_a_partial_ledger():
     async with httpx.AsyncClient(base_url=SUPABASE_URL) as client:
         with pytest.raises(CalibrationReadError):
             await read_settled_predictions(client, _headers())
+
+
+# --------------------------------------------------------------------------
+# Forward-looking timing contract plumbing (2026-09-15).
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_scheduled_start_is_read_and_makes_a_pre_kickoff_prediction_eligible():
+    _mock(
+        legs=[_leg()],
+        outputs=[_probability_output_row(created_at="2026-09-15T12:00:00+00:00")],
+        grades=[_grade()],
+        scheduled_start="2026-09-15T17:00:00+00:00",
+    )
+    async with httpx.AsyncClient(base_url=SUPABASE_URL) as client:
+        predictions = await read_settled_predictions(client, _headers())
+
+    assert predictions[0].scheduled_start == "2026-09-15T17:00:00+00:00"
+    assert predictions[0].predicted_before_kickoff is True
+    assert predictions[0].is_scoreable is True
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_post_event_prediction_is_returned_not_filtered_away():
+    """Filtering it at read time would hide a process problem. It must come back
+    with the kickoff time that disqualifies it and an explicit reason."""
+    _mock(
+        legs=[_leg()],
+        outputs=[_probability_output_row(created_at="2026-09-16T03:00:00+00:00")],
+        grades=[_grade()],
+        scheduled_start="2026-09-15T17:00:00+00:00",
+    )
+    async with httpx.AsyncClient(base_url=SUPABASE_URL) as client:
+        predictions = await read_settled_predictions(client, _headers())
+
+    assert len(predictions) == 1  # retained
+    assert predictions[0].is_scoreable is False
+    assert predictions[0].calibration_exclusion_reason == "predicted_at_not_before_scheduled_start"
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_game_without_scheduled_start_yields_none_not_a_silent_pass():
+    _mock(legs=[_leg()], outputs=[_probability_output_row()], grades=[_grade()], scheduled_start=None)
+    async with httpx.AsyncClient(base_url=SUPABASE_URL) as client:
+        predictions = await read_settled_predictions(client, _headers())
+
+    assert predictions[0].scheduled_start is None
+    assert predictions[0].calibration_exclusion_reason == "missing_event_scheduled_start"

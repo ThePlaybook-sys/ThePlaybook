@@ -77,6 +77,24 @@ async def _get(client: httpx.AsyncClient, headers: dict, path: str, params: dict
     return response.json()
 
 
+async def _read_scheduled_starts(client: httpx.AsyncClient, headers: dict, *, game_ids: list[str]) -> dict[str, str | None]:
+    """Kickoff times for the events behind these legs, batched into one read.
+    Required by the forward-looking timing contract: a prediction is only a
+    forecast if it existed strictly before `scheduled_start`. A game row that
+    somehow lacks one yields `None`, which the eligibility rule reports as an
+    exclusion rather than silently treating as "in time"."""
+    if not game_ids:
+        return {}
+    rows = await _get(
+        client,
+        headers,
+        "/rest/v1/games",
+        {"id": f"in.({','.join(sorted(set(game_ids)))})", "select": "id,scheduled_start"},
+        what="games scheduled_start",
+    )
+    return {row["id"]: row.get("scheduled_start") for row in rows}
+
+
 async def _read_agent_id(client: httpx.AsyncClient, headers: dict, *, agent_name: str) -> str | None:
     rows = await _get(
         client,
@@ -108,7 +126,14 @@ async def read_settled_predictions(
     terminal grade, joined into `SettledPrediction`. A leg with no prediction
     row, a prediction with no terminal grade, or a grade still
     `PENDING_MISSING_DATA` simply does not appear -- the ledger reports what has
-    actually settled, never a partially-resolved placeholder."""
+    actually settled, never a partially-resolved placeholder.
+
+    **Post-event predictions are returned, not filtered.** A prediction made at
+    or after its event's `scheduled_start` is still a real persisted row and is
+    still returned here, carrying the kickoff time that disqualifies it;
+    `SettledPrediction.calibration_exclusion_reason` then holds it out of every
+    metric. Filtering it away at read time would hide a process problem instead
+    of surfacing it."""
     legs = await _get(
         client,
         headers,
@@ -123,6 +148,7 @@ async def read_settled_predictions(
     if not legs:
         return []
 
+    scheduled_starts = await _read_scheduled_starts(client, headers, game_ids=[leg["game_id"] for leg in legs])
     agent_id = await _read_agent_id(client, headers, agent_name=PROBABILITY_AGENT_NAME)
     if agent_id is None:
         raise CalibrationReadError(
@@ -200,6 +226,7 @@ async def read_settled_predictions(
                 prompt_version=outputs[0].get("prompt_version"),
                 predicted_at=outputs[0].get("created_at"),
                 context_provenance=(outputs[0]["raw_output"] or {}).get("context_provenance"),
+                scheduled_start=scheduled_starts.get(leg["game_id"]),
                 outcome=grade["outcome"],
                 graded_at=grade.get("graded_at"),
                 grading_version=grade.get("grading_version"),
