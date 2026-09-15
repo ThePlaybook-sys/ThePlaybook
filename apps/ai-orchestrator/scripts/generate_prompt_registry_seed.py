@@ -15,6 +15,7 @@ import json
 from app.agents.base_agent import _LEGACY_SYSTEM_PROMPT_TEMPLATE
 from app.agents.sequential_base import (
     _LEGACY_AGENT_OUTPUT_INSTRUCTIONS,
+    _LEGACY_CONTEXTUAL_EVIDENCE_GUARDRAILS,
     _LEGACY_PROBABILITY_OUTPUT_INSTRUCTIONS,
     _LEGACY_SEQUENTIAL_SYSTEM_PROMPT_TEMPLATE,
 )
@@ -50,9 +51,12 @@ def build_prompts() -> dict[str, str]:
             agent_name=name, output_instructions=_LEGACY_AGENT_OUTPUT_INSTRUCTIONS
         )
 
+    probability_output_instructions = (
+        _LEGACY_PROBABILITY_OUTPUT_INSTRUCTIONS + "\n\n" + _LEGACY_CONTEXTUAL_EVIDENCE_GUARDRAILS
+    )
     for name in PROBABILITY_OUTPUT_SEQUENTIAL_AGENTS:
         prompts[name] = _LEGACY_SEQUENTIAL_SYSTEM_PROMPT_TEMPLATE.format(
-            agent_name=name, output_instructions=_LEGACY_PROBABILITY_OUTPUT_INSTRUCTIONS
+            agent_name=name, output_instructions=probability_output_instructions
         )
 
     prompts["meta_agent"] = _LEGACY_REVIEW_SYSTEM_PROMPT_TEMPLATE.format(

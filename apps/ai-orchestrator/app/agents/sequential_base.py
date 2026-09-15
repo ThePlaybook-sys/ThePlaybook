@@ -62,6 +62,51 @@ _LEGACY_AGENT_OUTPUT_INSTRUCTIONS = """Return ONLY a JSON object matching this e
   "would_change_mind_if": "explicit invalidation condition"
 }"""
 
+#: Appended to `_LEGACY_PROBABILITY_OUTPUT_INSTRUCTIONS` by plain string concatenation (never
+#: `.format()`) wherever the two are combined -- the instructions string above contains literal
+#: JSON `{`/`}` characters that `.format()` would misread as its own placeholders.
+_LEGACY_CONTEXTUAL_EVIDENCE_GUARDRAILS = """If the evidence includes a "contextual_evidence" key, treat it as SUPPORTING evidence only -- \
+it is never permission to invent a numeric adjustment. Follow these rules exactly:
+- Do not assign an arbitrary weight or point value to any contextual_evidence dimension. There is \
+no calibrated formula for how much any dimension should move your probability; if you cannot \
+articulate a specific, evidence-grounded reason tied to THIS candidate, do not let that dimension \
+move your number at all.
+- "completeness" (joined/partial/unavailable) describes how much evidence exists, not how \
+confident you should be. Never treat a "joined" dimension as inherently more persuasive than a \
+"partial" one just because more data rows back it -- judge the actual facts, not the completeness \
+label.
+- A dimension with completeness "partial" must be treated cautiously -- weigh it, if at all, less \
+than a "joined" dimension with an equivalent fact pattern.
+- A dimension with completeness "unavailable" (or omitted entirely) contributes NOTHING to your \
+probability. Do not infer, guess, or fill in what unavailable evidence might have shown.
+- contextual_evidence.player_performance with sample_size 1 is exactly one historical observation \
+-- never describe or treat it as a trend, tendency, or pattern. A single game proves nothing about \
+repeatability.
+- Do not change your probability merely because contextual_evidence.weather or \
+contextual_evidence.venue data exists. Existence of data is not evidence of an effect; only cite \
+it if the specific facts given plausibly affect THIS candidate.
+- contextual_evidence.venue evidence is normally informational/neutral. Only let it move your \
+probability if the evidence itself describes an independently-supported performance effect at \
+that venue -- not merely that the game is being played there.
+- The target game's own moneyline/spread/total line and any market-movement findings from \
+upstream committee agents (e.g. a Vegas Line or Closing Line Movement finding) already reflect the \
+target game's market. If contextual_evidence.market repeats those same target-game facts, that \
+repetition is NOT independent confirmation and must not receive additional influence beyond what \
+you already gave the upstream market evidence -- only a genuinely new fact (e.g. the cross-game \
+comparable-pool statistics) may be weighed on its own.
+- If an upstream weather finding (e.g. a Weather Agent finding) already covers the same conditions \
+contextual_evidence.weather describes, that is one piece of evidence observed twice, not two \
+independent confirmations -- do not double-count it.
+- In general, do not count the same underlying fact more than once just because it appears under \
+more than one key in the evidence you were given.
+- Never copy a sportsbook's implied probability (from odds, a line, or a market finding) directly \
+into modeled_probability. modeled_probability is YOUR calibrated estimate; it may agree with the \
+market, but it must be your own reasoned judgment, not a restated market number.
+- Your reasoning must name which SPECIFIC, UNIQUE piece of evidence actually affected your \
+judgment -- not a category of evidence you merely had access to. If contextual_evidence was \
+present but did not change your estimate, say so plainly rather than listing it as if it \
+mattered."""
+
 _LEGACY_PROBABILITY_OUTPUT_INSTRUCTIONS = """Return ONLY a JSON object matching this exact shape, with no other text:
 {
   "agent_name": "<this agent's name>",
