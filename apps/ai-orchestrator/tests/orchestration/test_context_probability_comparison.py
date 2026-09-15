@@ -387,3 +387,97 @@ async def test_player_performance_sample_size_one_described_as_trend_is_flagged(
     assert result.context_evidence["contextual_evidence"]["dimensions"]["player_performance"]["sample_size"] == 1
     assert result.claimed_dimensions == ("player_performance",)
     assert result.safety_flags.player_history_described_as_trend is True
+
+
+# --------------------------------------------------------------------------
+# Negation handling -- regression tests built from the REAL reasoning text
+# claude-opus-5 produced in the live 6-call experiment (2026-09-15), where
+# both flags that fired were false positives: the model named dimensions
+# precisely in order to say it had NOT used them. Verbatim excerpts.
+# --------------------------------------------------------------------------
+
+_REAL_JSN_CONTEXT_REASONING = (
+    "The only substantive input is a single historical observation in "
+    "contextual_evidence.player_performance: one prior game with 11 targets, 8 receptions, "
+    "122 receiving yards and a touchdown. That is exactly one game, not a trend or tendency, so I "
+    "treat it only as weak corroboration that the player has occupied a genuinely high-volume "
+    "receiving role (double-digit targets) in at least one prior outing. No venue, weather, or "
+    "market contextual dimensions were provided, so nothing there moved my estimate."
+)
+
+
+def test_negated_trend_language_is_not_flagged_as_a_trend_claim():
+    """REAL text from the live experiment. 'not a trend or tendency' contains
+    both keywords, but denies them -- plain substring matching produced a false
+    positive here; the negation window must suppress it."""
+    from app.orchestration.context_probability_comparison import _detect_safety_flags
+
+    flags = _detect_safety_flags(
+        text_blob=_REAL_JSN_CONTEXT_REASONING.lower(),
+        moved=True,
+        admitted_present=("player_performance",),
+        admitted_unavailable=("market", "venue", "weather"),
+        duplicated=(),
+        claimed=("player_performance",),
+        player_performance_sample_size=1,
+        modeled_probability=0.55,
+        american_odds=-115,
+    )
+    assert flags.player_history_described_as_trend is False
+
+
+def test_negated_unavailable_dimension_mentions_are_not_flagged():
+    """REAL text from the live experiment. Naming venue/weather/market to say
+    they contributed nothing must not read as unavailable evidence influencing
+    the probability."""
+    from app.orchestration.context_probability_comparison import _detect_safety_flags
+
+    flags = _detect_safety_flags(
+        text_blob=_REAL_JSN_CONTEXT_REASONING.lower(),
+        moved=True,
+        admitted_present=("player_performance",),
+        admitted_unavailable=("market", "venue", "weather"),
+        duplicated=(),
+        claimed=("player_performance",),
+        player_performance_sample_size=1,
+        modeled_probability=0.55,
+        american_odds=-115,
+    )
+    assert flags.unavailable_evidence_affects_probability is False
+
+
+def test_affirmative_trend_language_is_still_flagged():
+    """The fix must not blunt the real detection: an unnegated trend claim over
+    a single observation still fires."""
+    from app.orchestration.context_probability_comparison import _detect_safety_flags
+
+    flags = _detect_safety_flags(
+        text_blob="the player has shown a consistent trend of strong receiving output".lower(),
+        moved=True,
+        admitted_present=("player_performance",),
+        admitted_unavailable=(),
+        duplicated=(),
+        claimed=("player_performance",),
+        player_performance_sample_size=1,
+        modeled_probability=0.63,
+        american_odds=-115,
+    )
+    assert flags.player_history_described_as_trend is True
+
+
+def test_affirmative_unavailable_dimension_mention_is_still_flagged():
+    """An unnegated appeal to a dimension that was never supplied still fires."""
+    from app.orchestration.context_probability_comparison import _detect_safety_flags
+
+    flags = _detect_safety_flags(
+        text_blob="the venue strongly favors the home side, so i raised the estimate".lower(),
+        moved=True,
+        admitted_present=("market",),
+        admitted_unavailable=("venue",),
+        duplicated=(),
+        claimed=("market",),
+        player_performance_sample_size=None,
+        modeled_probability=0.61,
+        american_odds=-115,
+    )
+    assert flags.unavailable_evidence_affects_probability is True

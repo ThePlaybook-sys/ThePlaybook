@@ -82,6 +82,15 @@ probability. Do not infer, guess, or fill in what unavailable evidence might hav
 - contextual_evidence.player_performance with sample_size 1 is exactly one historical observation \
 -- never describe or treat it as a trend, tendency, or pattern. A single game proves nothing about \
 repeatability.
+- HARD RULE, evidence floor (this is a floor, not a weight): contextual_evidence.player_performance \
+with sample_size 1 must NOT change your modeled_probability in either direction, by any amount. You \
+MAY cite it in your reasoning, and you MAY describe the role or usage it shows. Your \
+modeled_probability must nevertheless be exactly the number you would have produced had that \
+dimension been absent entirely. It must never be the reason your estimate crosses the candidate's \
+own break-even price, and it must never be what creates an apparent edge. One game sits below the \
+evidentiary floor for moving a number at all -- it is not a small effect to be weighed, it is no \
+effect. This restriction applies only at sample_size 1; it does not apply once sample_size is 2 or \
+more.
 - Do not change your probability merely because contextual_evidence.weather or \
 contextual_evidence.venue data exists. Existence of data is not evidence of an effect; only cite \
 it if the specific facts given plausibly affect THIS candidate.
