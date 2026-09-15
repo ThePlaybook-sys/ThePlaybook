@@ -1,13 +1,14 @@
-"""Historical player-performance Context Intelligence dimension (Player
-Performance Context Foundation pass, 2026-09-15, HQ-authorized "MANSA --
-PHASE 8 PLAYER PERFORMANCE CONTEXT FOUNDATION"). The smallest safe
-foundation the 2026-09-15 Context Assembly Readiness Reassessment
-recommended: a deterministic, real, `player_stats`-only module, built
-standalone and **not wired into `engine.py`'s `SUPPORTED_DIMENSIONS`,
-`unsupported.py`'s stub set, or `build_evidence()` by this pass** -- that
-wiring is a separate, later, explicitly-deferred decision (see module
-docstring's own "Boundary" note below), exactly mirroring the prior
-pass's own "stop short of `build_evidence()` wiring" recommendation.
+"""Historical player-performance Context Intelligence dimension. Built as
+a standalone foundation in the Player Performance Context Foundation pass
+(2026-09-15, "MANSA -- PHASE 8 PLAYER PERFORMANCE CONTEXT FOUNDATION") and
+**registered as a real, official `engine.py` `SUPPORTED_DIMENSIONS` entry**
+in the Player Performance Engine Integration pass (2026-09-15,
+HQ-authorized "MANSA -- PHASE 8 PLAYER PERFORMANCE ENGINE INTEGRATION",
+same day) -- see `engine.py`'s own module docstring for exactly how it is
+now reached through `build_contextual_intelligence`'s normal
+supported-dimension path. **Still not wired into `build_evidence()` or
+any recommendation path** -- that remains a separate, later,
+explicitly-deferred decision per this pass's own explicit boundary.
 
 **This is a ONE-GAME foundation, not the multi-game Context Assembly
 Proof.** The 2026-09-15 readiness reassessment found, live, that every
@@ -74,12 +75,19 @@ not:**
   usage can change week to week in a way a stadium's roof type does not.
   Not changed by this pass.
 
+**Opponent identity (Engine Integration pass fix)** no longer reads
+`games.home_team`/`away_team` free text at all -- see
+`resolve_opponent_by_team_id`'s and `extract_msf_team_provider_ids`'s own
+docstrings below for the real, deterministic, provider-identity-based
+replacement for the prior pass's text-matching approach, which the JSN
+proof showed fails on real rows.
+
 **Boundary (per this pass's explicit HQ instruction):** does not modify
 `app.agents.probability_modeling.ProbabilityModelingAgent.build_evidence`,
-does not add `player_performance` to `engine.py`'s `SUPPORTED_DIMENSIONS`
-or remove it from `unsupported.py`'s `UNSUPPORTED_DIMENSIONS`, makes no
-provider calls, and does not touch injuries/lineup-breadth/game-state-PBP
-(each independently confirmed unsolved by the 2026-09-15 reassessment).
+does not change recommendation behavior, makes no provider calls, and
+does not touch injuries/lineup-breadth/game-state-PBP or add any trend-
+scoring methodology (each independently confirmed unsolved/deferred by
+the 2026-09-15 reassessment and the prior foundation pass).
 """
 from __future__ import annotations
 
@@ -199,32 +207,102 @@ def _extract_role_usage_signals(stats: dict) -> tuple[dict, tuple[str, ...]]:
     return signals, unreliable
 
 
-def _resolve_opponent(game: dict, *, player_team_name: str | None) -> tuple[str | None, str | None]:
-    """Exact, case-sensitive match only -- reuses the same matching
-    contract `app.persistence.market_integrity.resolve_team_ids_by_name`
-    already establishes for `engine.py`'s news dimension (`teams.name`
-    exact match), never a fuzzy/abbreviation heuristic invented for this
-    pass. **Live-confirmed limitation, not assumed:** `games.home_team`/
-    `away_team` are free-text and inconsistently formatted across real
-    rows (some full team names, some short provider-style codes like
-    `"SEA"`/`"NE"`) with no foreign key to `teams` -- when `player_team_name`
-    doesn't exactly match either side (including the SEA@NE proof game
-    itself, whose real `home_team`/`away_team` are the short codes `"SEA"`/
-    `"NE"`, not `teams.name`'s `"Seattle Seahawks"`/`"New England Patriots"`),
-    this returns `(None, None)` rather than guessing. This is a real,
-    pre-existing data-format inconsistency this pass discovered and
-    discloses -- fixing it (e.g. a `teams.abbreviation` column, or a
-    `games.home_team_id` foreign key) is out of this pass's explicit
-    scope ("no unrelated cleanup")."""
-    home_team = game.get("home_team")
-    away_team = game.get("away_team")
-    if player_team_name is None:
+#: Real, deterministic opponent identity resolution (Player Performance
+#: Engine Integration pass, 2026-09-15, HQ-authorized "MANSA -- PHASE 8
+#: PLAYER PERFORMANCE ENGINE INTEGRATION"). Replaces the prior pass's
+#: `games.home_team`/`away_team` free-text matching, which the JSN proof
+#: showed fails for real rows (`"SEA"`/`"NE"` vs. `teams.name`'s
+#: `"Seattle Seahawks"`/`"New England Patriots"`) -- **not fixed by
+#: guessing or by a hardcoded abbreviation table**, but by routing through
+#: real, already-persisted, provider-scoped canonical identity data this
+#: project already has:
+#:
+#:   game_events.raw_payload (MySportsFeeds game_boxscore raw capture)
+#:       -> body.game.homeTeam.id / body.game.awayTeam.id
+#:       (real MySportsFeeds numeric team identifiers, live-confirmed:
+#:        homeTeam.id=79/awayTeam.id=50 for the real SEA@NE capture)
+#:   -> team_provider_ids (provider_name='mysportsfeeds', provider_team_id)
+#:       -> team_id -> teams.name
+#:       (the SAME real mapping table `app.persistence.team_stats`/other
+#:       sports-intel-layer identity modules already rely on)
+#:
+#: This chain is exact-match-only (numeric provider-id equality, never a
+#: fuzzy/name-similarity heuristic) and names no team, abbreviation, or
+#: player literally anywhere in this module's own code -- every value
+#: compared is read from a real row. `extract_msf_team_provider_ids` is
+#: the one MySportsFeeds-shape-specific piece (isolated here, not
+#: pretended to be provider-generic); `resolve_opponent_by_team_id` is
+#: fully generic, operating only on already-resolved real team_ids.
+
+
+def extract_msf_team_provider_ids(raw_payload: dict) -> tuple[str, str] | None:
+    """Pure, no I/O. Reads the real MySportsFeeds numeric team identifiers
+    a genuine `game_boxscore` raw capture already carries at `body.game.
+    homeTeam.id`/`body.game.awayTeam.id` -- live-confirmed against the
+    real SEA@NE `game_events` row (2026-09-15). Returns `None` (never a
+    guess, never a partial tuple) for any payload that doesn't have this
+    exact real MSF shape -- a different provider's raw payload, a
+    malformed/incomplete capture, or a missing key all resolve the same
+    honest way: 'not extractable,' handled by the caller as 'opponent
+    unavailable for this game,' never silently worked around."""
+    try:
+        game_block = raw_payload["body"]["game"]
+        home_id = game_block["homeTeam"]["id"]
+        away_id = game_block["awayTeam"]["id"]
+    except (KeyError, TypeError):
+        return None
+    if home_id is None or away_id is None:
+        return None
+    return str(home_id), str(away_id)
+
+
+def resolve_opponent_by_team_id(
+    identity: dict | None, *, player_team_id: str | None
+) -> tuple[str | None, str | None]:
+    """Fully generic, provider-agnostic, pure -- operates only on
+    already-resolved real `team_id`s (never provider-specific ids, never
+    free text). `identity` is one game's resolved `{"home_team_id",
+    "home_team_name", "away_team_id", "away_team_name"}` entry (built by
+    `app.persistence.context_intelligence_reads.resolve_team_identity_for_games`,
+    which does the real, provider-specific work this function deliberately
+    doesn't do). Exact `team_id` equality only -- no fuzzy matching
+    anywhere in this function, matching this pass's explicit instruction.
+    Returns `(None, None)`, honestly, when identity wasn't resolvable for
+    this game, or the player's own team_id is unknown, or (a genuine
+    anomaly) it matches neither side -- never a guess in any of these
+    cases."""
+    if identity is None or player_team_id is None:
         return None, None
-    if player_team_name == home_team:
-        return away_team, "home"
-    if player_team_name == away_team:
-        return home_team, "away"
+    if player_team_id == identity.get("home_team_id"):
+        return identity.get("away_team_name"), "home"
+    if player_team_id == identity.get("away_team_id"):
+        return identity.get("home_team_name"), "away"
     return None, None
+
+
+_NO_PLAYER_REQUESTED_REASON = "no player_id was provided for this contextual intelligence request"
+
+
+def no_player_requested_result() -> ContextualDimensionResult:
+    """Returned by `engine.py` when `build_contextual_intelligence` is
+    called without a `player_id` -- a legitimately different reason than
+    any `unsupported.py` stub (those mean 'no real data/code path exists
+    at all'; this means 'no data path exists for THIS call because no
+    player was named'), so it is not borrowed from that module."""
+    return ContextualDimensionResult(
+        dimension="player_performance",
+        context_dimensions_used=(),
+        sample_size=0,
+        similarity_score=None,
+        recency_weighting=None,
+        confidence=None,
+        confounders=(_NO_PLAYER_REQUESTED_REASON,),
+        insufficient_evidence=True,
+        insufficient_evidence_reason=_NO_PLAYER_REQUESTED_REASON,
+        provenance=(),
+        facts={},
+        data_completeness="unavailable",
+    )
 
 
 def resolve_player_game_observations(
@@ -235,7 +313,8 @@ def resolve_player_game_observations(
     target_event_timestamp: datetime | str,
     player_name: str | None = None,
     position: str | None = None,
-    player_team_name: str | None = None,
+    player_team_id: str | None = None,
+    team_identity_by_game: dict[str, dict] | None = None,
     now: datetime | None = None,
 ) -> list[PlayerGameObservation]:
     """Pure function over already-fetched rows -- no I/O, directly
@@ -243,12 +322,22 @@ def resolve_player_game_observations(
     convention. `player_stats_rows` may hold rows for many players/games
     at once (the "download once" shape); this function filters to
     `player_id` itself. `games_by_id` must map `game_id -> {"scheduled_
-    start", "home_team", "away_team"}` for every game this player's rows
-    reference -- a game missing from `games_by_id` is excluded entirely
-    (point-in-time safety cannot be verified without its kickoff, so it
-    is never included with a caveat; this is the same "exclude, never
-    guess" discipline `point_in_time.py` already establishes for missing
-    data).
+    start"}` (only the kickoff is required for point-in-time safety --
+    `home_team`/`away_team` text is no longer read by this function at
+    all, see `resolve_opponent_by_team_id`'s own docstring for why).
+    `team_identity_by_game`, when provided, must map `game_id ->
+    {"home_team_id", "home_team_name", "away_team_id", "away_team_name"}`
+    -- real, already-resolved team identity (built by
+    `app.persistence.context_intelligence_reads.resolve_team_identity_for_games`),
+    used only for opponent/home-away resolution. A game missing from
+    `games_by_id` is excluded entirely (point-in-time safety cannot be
+    verified without its kickoff, so it is never included with a caveat
+    -- the same "exclude, never guess" discipline `point_in_time.py`
+    already establishes for missing data); a game missing from
+    `team_identity_by_game` still produces an observation, just with
+    `opponent=None` and a disclosed reliability limitation, since
+    opponent identity is a nice-to-have, not a point-in-time-safety
+    requirement.
 
     Returns one `PlayerGameObservation` per real, point-in-time-eligible,
     deduplicated (player_id, game_id) pair -- ordered oldest-event-first,
@@ -280,7 +369,8 @@ def resolve_player_game_observations(
         stats = canonical_row.get("stats") or {}
 
         role_usage_signals, unreliable_fields = _extract_role_usage_signals(stats)
-        opponent, home_or_away = _resolve_opponent(game, player_team_name=player_team_name)
+        identity = (team_identity_by_game or {}).get(game_id)
+        opponent, home_or_away = resolve_opponent_by_team_id(identity, player_team_id=player_team_id)
 
         limitations: list[str] = [PLAYER_PERFORMANCE_POINT_IN_TIME_LIMITATION]
         if resolution.duplicate_row_count > 1:
@@ -300,11 +390,12 @@ def resolve_player_game_observations(
             )
         if opponent is None:
             limitations.append(
-                "Opponent/home-away could not be determined: games.home_team/away_team "
-                f"({game.get('home_team')!r}/{game.get('away_team')!r}) did not exactly match "
-                f"the player's resolved team name ({player_team_name!r}) -- a real, pre-existing "
-                "data-format inconsistency (short codes vs. full names, no foreign key to teams), "
-                "not fixed by this pass."
+                "Opponent/home-away could not be determined via real provider identity data: "
+                "this requires a real MySportsFeeds game_events raw capture for this game "
+                "(providing body.game.homeTeam.id/awayTeam.id) AND a team_provider_ids mapping "
+                "for both teams AND a resolvable player_team_id -- when any of these is missing, "
+                "or the player's own team_id matches neither resolved side, opponent stays "
+                "unresolved rather than guessed (never a fuzzy/text match)."
             )
         if position is None:
             limitations.append("No position on file for this player (players.position is null).")
@@ -356,7 +447,8 @@ def compute_player_performance_context(
     target_event_timestamp: datetime | str,
     player_name: str | None = None,
     position: str | None = None,
-    player_team_name: str | None = None,
+    player_team_id: str | None = None,
+    team_identity_by_game: dict[str, dict] | None = None,
     now: datetime | None = None,
 ) -> ContextualDimensionResult:
     """Wraps `resolve_player_game_observations` into the shared
@@ -374,7 +466,8 @@ def compute_player_performance_context(
         target_event_timestamp=target_event_timestamp,
         player_name=player_name,
         position=position,
-        player_team_name=player_team_name,
+        player_team_id=player_team_id,
+        team_identity_by_game=team_identity_by_game,
         now=now,
     )
 
@@ -451,6 +544,9 @@ def compute_player_performance_context(
 __all__ = [
     "PLAYER_PERFORMANCE_POINT_IN_TIME_LIMITATION",
     "PlayerGameObservation",
+    "extract_msf_team_provider_ids",
+    "resolve_opponent_by_team_id",
+    "no_player_requested_result",
     "resolve_player_game_observations",
     "compute_player_performance_context",
 ]

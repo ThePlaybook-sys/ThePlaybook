@@ -3,16 +3,27 @@ Phase 8.0.5's own closeout audit confirmed MISSING/INSUFFICIENT or
 IMPLEMENTED BUT BLOCKED (2026-09-07/08) -- HQ's explicit instruction:
 "do not silently omit them in a way that implies MANSA considered them."
 
-Every one of these six dimensions runs through `engine.
-build_contextual_intelligence` on every call, exactly like the four real
-ones -- the difference is entirely in the result they produce, not in
-whether they run at all. No real data read is attempted for any of them
-(there is none to read): this module returns the same fixed, honest
-result shape unconditionally, never a query against
-`players`/`player_stats`/`team_stats`/`roster_memberships`/
+Every one of these dimensions runs through `engine.
+build_contextual_intelligence` on every call, exactly like the real ones
+-- the difference is entirely in the result they produce, not in whether
+they run at all. No real data read is attempted for any of them (there is
+none to read): this module returns the same fixed, honest result shape
+unconditionally, never a query against `team_stats`/`roster_memberships`/
 `depth_chart_snapshots`/`injury_reports`/`game_events` -- attempting a
 real read against tables confirmed fixture-only or zero-row would only
-risk surfacing fixture data as though it were real."""
+risk surfacing fixture data as though it were real.
+
+**`player_performance` moved OUT of this module (Player Performance
+Engine Integration pass, 2026-09-15)** -- real `player_stats` data now
+exists (1,551+ rows across 16 real completed games) and a real compute
+path (`app.context_intelligence.player_performance`) is registered in
+`engine.py`'s own `SUPPORTED_DIMENSIONS`. Its stale reason string ("no
+real player identity or player_stats data exists") is no longer merely
+inaccurate prose (as the 2026-09-09 readiness audit already flagged) --
+it is now outright wrong, so it was removed rather than left to drift
+further. The remaining five dimensions below are unaffected and were
+independently reconfirmed still MISSING/INSUFFICIENT/BLOCKED by the
+2026-09-15 Context Assembly Readiness Reassessment."""
 from __future__ import annotations
 
 from app.context_intelligence.models import ContextualDimensionResult
@@ -24,11 +35,6 @@ from app.context_intelligence.models import ContextualDimensionResult
 #: a reader of this output can trace it back to the real audit rather
 #: than a description invented here.
 UNSUPPORTED_DIMENSIONS: dict[str, str] = {
-    "player_performance": (
-        "No real player identity or player_stats data exists -- `players`/`player_provider_ids` "
-        "are fixture/seed-only and `player_stats` rows are fixture-linked (Phase 8.0.5 closeout: "
-        "MISSING/INSUFFICIENT). No player-specific contextual claim can be made honestly."
-    ),
     "injuries": (
         "BALLDONTLIE Player Injuries entitlement is not currently confirmed active (the account's "
         "invoice is open/unpaid) -- the adapter is complete and correct, but real injury data cannot "
