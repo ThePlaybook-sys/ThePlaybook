@@ -1,7 +1,18 @@
 """Phase 8, MANSA directive "PHASE 8 TEMPORARY DIAGNOSTIC SERVICE EXPERIMENT"
 (2026-09-15). One-shot diagnostic entry point -- NOT imported by the FastAPI
 app, NOT a production code path. Runs to completion once, prints a single
-JSON report to stdout, and exits. Intended to run only as the `startCommand`
+JSON report to stdout, and exits.
+
+**Why it lives under `app/scripts/` rather than the repo-level `scripts/`
+directory** (2026-09-15 path fix, after a real 0-call failure): this
+service's Dockerfile copies ONLY `COPY app ./app` into the built image, so
+anything under the sibling `scripts/` directory is absent at runtime -- the
+first deployment crashed with `python: can't open file
+'/app/scripts/phase8_context_probability_experiment.py'` before executing a
+single line. Placing it inside `app/` makes it image-visible with no change
+to the shared Dockerfile (which `ai-orchestrator` itself also builds from).
+
+Intended to run only as the `startCommand`
 of a temporary, isolated Railway service (`phase8-context-experiment`) whose
 variables are set as Railway REFERENCES to the real `ai-orchestrator` (dev)
 service's own variables -- this script reads `ANTHROPIC_API_KEY`/
@@ -56,7 +67,12 @@ from datetime import datetime, timezone
 
 import httpx
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+#: Three levels up from `app/scripts/this_file.py` is the package root that
+#: holds `app/` itself -- `/app` inside the built image (Dockerfile:
+#: `WORKDIR /app` + `COPY app ./app`), `apps/ai-orchestrator` in a checkout.
+#: Required because Python puts the SCRIPT's own directory on `sys.path`,
+#: not the working directory, when invoked as `python app/scripts/<file>.py`.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from app.agents.committee_context import ParticipationMetadata, SequentialDecisionContext  # noqa: E402
 from app.agents.probability_modeling import ADMITTED_CONTEXT_DIMENSIONS, ProbabilityModelingAgent  # noqa: E402
