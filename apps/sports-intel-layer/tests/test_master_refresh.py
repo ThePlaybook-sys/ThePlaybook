@@ -28,6 +28,10 @@ TODAY = date(2026, 9, 9)
 def _headers_env(monkeypatch):
     monkeypatch.setenv("SUPABASE_URL", SUPABASE_URL)
     monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "test-service-role-key")
+    # V2 (2026-09-15): the refresh is explicit-opt-in. Every test below is
+    # exercising a RUNNING refresh, so it must opt in; the paused path has its
+    # own dedicated tests in tests/test_master_refresh_pause_gate.py.
+    monkeypatch.setenv("MASTER_REFRESH_ENABLED", "true")
 
 
 def _game_row(game_key, home, away, dt, week=1, stadium="Lumen Field"):
@@ -218,13 +222,23 @@ async def test_normal_master_refresh(monkeypatch):
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_empty_slate(monkeypatch):
+async def test_empty_slate_still_persists_the_out_of_window_season(monkeypatch):
+    """V2 (2026-09-15): an empty 7-day SLATE no longer means an empty
+    PERSISTENCE set. Pre-V2 this game was filtered out before persistence and
+    silently lost -- the exact mechanism that produced the Week 2 gap. It is now
+    written, while `games_in_slate` still correctly reports zero games in the
+    rolling window, so no roster or DGI work happens for it."""
     _headers_env(monkeypatch)
     _mock_season()
     # Only a game far outside the 7-day window.
     respx.get(f"{SPORTSDATAIO_URL}/v3/nfl/scores/json/Schedules/2026REG").mock(
         return_value=httpx.Response(200, json=[_game_row("g-far", "SEA", "NE", "2026-10-01T00:20:00")])
     )
+    _mock_game_provider_ids()
+    insert_route = respx.post(f"{SUPABASE_URL}/rest/v1/games").mock(
+        return_value=httpx.Response(201, json=[{"id": "db-far"}])
+    )
+    respx.get(f"{SUPABASE_URL}/rest/v1/games").mock(return_value=httpx.Response(200, json=[]))
 
     async with (
         httpx.AsyncClient(base_url=SUPABASE_URL) as supabase_client,
@@ -238,8 +252,10 @@ async def test_empty_slate(monkeypatch):
         )
 
     assert result.status == "success"
-    assert result.games_in_slate == 0
-    assert result.games_created == 0
+    assert result.games_in_slate == 0  # nothing in the rolling window
+    assert result.schedule_entries_persisted == 1  # but the season IS persisted
+    assert result.games_created == 1
+    assert insert_route.called
 
 
 @pytest.mark.asyncio

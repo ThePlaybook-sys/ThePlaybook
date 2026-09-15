@@ -29,6 +29,10 @@ def _set_env(monkeypatch):
     monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "test-service-role-key")
     monkeypatch.setenv("SPORTSDATAIO_API_KEY", "test-sportsdataio-key")
     monkeypatch.setenv("RAILWAY_ENVIRONMENT_NAME", "dev")
+    # V2 (2026-09-15): explicit-opt-in pause gate. This test exercises a
+    # RUNNING refresh through the HTTP boundary, so it opts in; the paused
+    # path has its own tests in tests/test_master_refresh_pause_gate.py.
+    monkeypatch.setenv("MASTER_REFRESH_ENABLED", "true")
 
 
 def _mock_season_wide_range():

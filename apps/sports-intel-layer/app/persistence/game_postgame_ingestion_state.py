@@ -161,6 +161,46 @@ async def claim_game_for_capture(
     return rows[0] if rows else None
 
 
+async def read_confirmed_complete_states(
+    client: httpx.AsyncClient,
+    headers: dict,
+    *,
+    provider_name: str = _PROVIDER_NAME,
+    limit: int = 500,
+) -> list[dict]:
+    """Reads every terminal `state='confirmed_complete'` row for
+    `provider_name` -- the set of canonical games whose completed boxscore is
+    already durably captured.
+
+    Added for the MSF -> canonical finalization wiring (2026-09-15). Every
+    existing read in this module is single-game (`get_ingestion_state`) or a
+    targeted claim; the finalization worker needs the whole completed set, and
+    `game_id`/`raw_capture_id` on these rows ARE the canonical game and the
+    exact capture that justified the state -- so finalization never has to
+    match on teams or dates, and never has to call a provider again.
+
+    Selects `*` rather than an explicit column list so a future column added to
+    this table can't turn this read into a 400.
+    """
+    response = await client.get(
+        "/rest/v1/game_postgame_ingestion_state",
+        params={
+            "provider_name": f"eq.{provider_name}",
+            "state": "eq.confirmed_complete",
+            "select": "*",
+            "order": "game_id.asc",
+            "limit": str(limit),
+        },
+        headers=headers,
+    )
+    if response.status_code != 200:
+        raise IngestionStateError(
+            f"failed to read confirmed_complete ingestion states for {provider_name}: "
+            f"{response.status_code} {response.text}"
+        )
+    return response.json()
+
+
 async def update_ingestion_state(
     client: httpx.AsyncClient, headers: dict, *, game_id: str, **fields
 ) -> None:
@@ -194,5 +234,6 @@ __all__ = [
     "ensure_scheduled_row",
     "promote_due_scheduled_row",
     "claim_game_for_capture",
+    "read_confirmed_complete_states",
     "update_ingestion_state",
 ]

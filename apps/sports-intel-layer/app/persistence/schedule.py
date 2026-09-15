@@ -12,6 +12,24 @@ For each ScheduleEntry it:
     game_provider_ids -- this is how a provider's Schedule call establishes
     a game's existence in the first place.
 
+**Final is terminal (2026-09-15).** A Schedule response is a forward-looking
+view of the slate: a provider can still describe a game as `Scheduled` or
+`InProgress` long after it has actually ended, and with Master Refresh V2
+persisting the full season, every already-played game is re-seen on every
+daily refresh. So once a canonical game is finalized -- `finalized_at` stamped
+by `app.workers.canonical_finalization` off real postgame evidence -- a later
+refresh MUST NOT write `status` back to `scheduled`/`live`.
+
+The guard is the DATABASE's own, never a prior read: the update PATCHes with
+`finalized_at=is.null` as a server-side filter. A finalized game matches zero
+rows, so the downgrade is impossible rather than merely unlikely -- there is no
+read-then-write window for a concurrent finalization to slip through. When that
+happens the row is then re-patched WITHOUT `status`, so every other mutable
+field (venue, stadium, week, kickoff) still refreshes normally on a game that
+has already been played; only the status is held terminal. `final_score` and
+`finalized_at` are never in the writable field set at all, so a Schedule
+refresh could not clear them even if it tried.
+
 What this deliberately does NOT do: reconcile two different providers
 independently discovering the same real-world game (e.g. The Odds API and
 SportsDataIO both eventually knowing about the same Sunday matchup).
@@ -72,7 +90,6 @@ async def persist_schedule_entries(
             provider_name=provider_name,
             provider_game_ids=[entry.game_external_id for entry in entries],
         )
-
         for entry in entries:
             mutable_fields = {
                 "home_team": entry.home_team,
@@ -92,16 +109,46 @@ async def persist_schedule_entries(
 
             game_id = existing.get(entry.game_external_id)
             if game_id is not None:
+                # The terminal guard: `finalized_at=is.null` is enforced by
+                # Postgres, so a finalized game simply matches no row.
                 patch_response = await client.patch(
                     "/rest/v1/games",
-                    params={"id": f"eq.{game_id}"},
+                    params={"id": f"eq.{game_id}", "finalized_at": "is.null"},
                     json=mutable_fields,
-                    headers=headers,
+                    headers={**headers, "Prefer": "return=representation"},
                 )
                 if patch_response.status_code not in (200, 204):
                     raise PersistenceError(
                         f"failed to update game {game_id}: "
                         f"{patch_response.status_code} {patch_response.text}"
+                    )
+
+                # Zero returned rows means the game is already finalized. A 204
+                # carries no representation to count at all, so it is taken at
+                # face value as a normal update.
+                guard_blocked = (
+                    patch_response.status_code != 204
+                    and bool(patch_response.content)
+                    and not patch_response.json()
+                )
+                if not guard_blocked:
+                    updated += 1
+                    continue
+
+                # Finalized: refresh everything EXCEPT status, so a played
+                # game's venue/week/kickoff still reconcile while its outcome
+                # stays terminal.
+                retained = {k: v for k, v in mutable_fields.items() if k != "status"}
+                retained_response = await client.patch(
+                    "/rest/v1/games",
+                    params={"id": f"eq.{game_id}"},
+                    json=retained,
+                    headers=headers,
+                )
+                if retained_response.status_code not in (200, 204):
+                    raise PersistenceError(
+                        f"failed to update finalized game {game_id}: "
+                        f"{retained_response.status_code} {retained_response.text}"
                     )
                 updated += 1
                 continue

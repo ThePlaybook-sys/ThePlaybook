@@ -59,6 +59,9 @@ def _seed_reference_taxonomy(fake: FakeSupabase) -> None:
 def _new_fake(monkeypatch) -> FakeSupabase:
     monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "test-service-role-key")
     monkeypatch.setenv("SUPABASE_URL", SUPABASE_URL)
+    # V2 (2026-09-15): Master Refresh is explicit-opt-in, and Demo scenarios
+    # drive a real refresh against the in-memory Supabase fake, so they opt in.
+    monkeypatch.setenv("MASTER_REFRESH_ENABLED", "true")
     fake = FakeSupabase()
     _seed_reference_taxonomy(fake)
     fake.register_routes(SUPABASE_URL)
