@@ -15,7 +15,7 @@ from app.master_refresh.production_clients import (
     build_real_odds_worker_clients,
     build_real_weather_worker_clients,
 )
-from app.master_refresh.run import run_master_refresh
+from app.master_refresh.run import run_master_refresh, run_schedule_refresh
 from app.persistence.odds_snapshots import read_last_polled_at
 from app.persistence.weather_snapshots import read_last_polled_at as read_weather_last_polled_at
 from app.adapters.providers.gnews import GNewsNewsAdapter
@@ -116,6 +116,77 @@ async def internal_run_master_refresh() -> RunMasterRefreshResponse:
         player_id_resolution_failed=result.player_id_resolution_failed,
         daily_game_intelligence_written=result.daily_game_intelligence_written,
         daily_game_intelligence_failures=result.daily_game_intelligence_failures,
+        error=result.error,
+    )
+
+
+class RunScheduleRefreshResponse(BaseModel):
+    status: str
+    run_id: str | None
+    season_string: str | None
+    games_in_slate: int
+    schedule_entries_persisted: int
+    games_created: int
+    games_updated: int
+    coverage_days_asserted: int
+    coverage_expected_games: int
+    coverage_canonical_games: int
+    coverage_complete: bool
+    coverage_gaps: list[str]
+    error: str | None
+
+
+@app.post(
+    "/v1/internal/schedule-refresh/run",
+    dependencies=[Depends(require_internal_token)],
+    response_model=RunScheduleRefreshResponse,
+)
+async def internal_run_schedule_refresh() -> RunScheduleRefreshResponse:
+    """Master Refresh V2 (2026-09-15): the schedule-only invocation path.
+
+    **Exactly ONE SportsDataIO Schedule call, and zero roster calls.** That is
+    the entire reason this endpoint exists separately from
+    `/v1/internal/master-refresh/run` above: that one runs both phases, so the
+    cheapest way to reconcile the canonical schedule used to cost up to 33
+    provider calls (1 schedule + up to 32 rosters). This endpoint invokes
+    `run_schedule_refresh`, which returns after the schedule phase and its
+    rolling 7-day coverage assertion without constructing a roster adapter at
+    all. The daily canonical-integrity path is therefore 1 call, not 33 --
+    the condition set for authorizing re-enablement.
+
+    The single call returns the **full season**, and V2 persists all of it
+    rather than discarding everything outside a 7-day window, so one successful
+    run restores complete coverage including weeks that were never ingested.
+
+    Gated by `MASTER_REFRESH_ENABLED` inside `run_schedule_refresh` itself
+    (checked before any provider or Supabase call), so this endpoint returns
+    `status="paused"` and spends nothing unless the refresh is explicitly
+    enabled. Thin HTTP-to-function adapter only, same discipline as every other
+    `/v1/internal/*` endpoint here -- and, like the master-refresh endpoint
+    above, real credential/client construction lives in
+    `app.master_refresh.production_clients`, never in this module (DEMO-1)."""
+    supabase_client, sportsdataio_client, sportsdataio_api_key = build_real_master_refresh_clients()
+    async with supabase_client, sportsdataio_client:
+        result = await run_schedule_refresh(
+            supabase_client=supabase_client,
+            sportsdataio_client=sportsdataio_client,
+            sportsdataio_api_key=sportsdataio_api_key,
+        )
+
+    coverage = result.coverage
+    return RunScheduleRefreshResponse(
+        status=result.status,
+        run_id=result.run_id,
+        season_string=result.season_string,
+        games_in_slate=result.games_in_slate,
+        schedule_entries_persisted=result.schedule_entries_persisted,
+        games_created=result.games_created,
+        games_updated=result.games_updated,
+        coverage_days_asserted=coverage.days_asserted if coverage else 0,
+        coverage_expected_games=coverage.expected_games if coverage else 0,
+        coverage_canonical_games=coverage.canonical_games if coverage else 0,
+        coverage_complete=coverage.complete if coverage else False,
+        coverage_gaps=result.coverage_gaps,
         error=result.error,
     )
 

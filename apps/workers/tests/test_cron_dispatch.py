@@ -224,6 +224,33 @@ async def test_dispatch_canonical_finalization_posts_to_correct_path():
 
 
 @pytest.mark.asyncio
+@respx.mock
+async def test_dispatch_schedule_refresh_posts_to_correct_path():
+    """Master Refresh V2 (2026-09-15): the schedule-only target -- 1 SportsDataIO
+    call, zero roster calls, versus up to 33 for `master-refresh`."""
+    route = respx.post(f"{BASE_URL}/v1/internal/schedule-refresh/run").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "status": "success", "run_id": "mrr-1", "season_string": "2026REG",
+                "games_in_slate": 16, "schedule_entries_persisted": 304,
+                "games_created": 288, "games_updated": 16,
+                "coverage_days_asserted": 7, "coverage_expected_games": 16,
+                "coverage_canonical_games": 16, "coverage_complete": True,
+                "coverage_gaps": [], "error": None,
+            },
+        )
+    )
+    async with httpx.AsyncClient() as client:
+        result = await dispatch(
+            target="schedule-refresh", base_url=BASE_URL, internal_token="secret", client=client
+        )
+    assert result["schedule_entries_persisted"] == 304
+    assert result["coverage_complete"] is True
+    assert route.calls.last.request.headers["X-Internal-Token"] == "secret"
+
+
+@pytest.mark.asyncio
 async def test_dispatch_rejects_unknown_target():
     async with httpx.AsyncClient() as client:
         with pytest.raises(CronDispatchError):

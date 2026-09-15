@@ -87,3 +87,60 @@ def test_run_empty_slate_round_trip_uses_real_sportsdataio_key(monkeypatch):
     assert body["games_in_slate"] == 0
     assert body["error"] is None
     assert schedule_route.calls.last.request.headers["Ocp-Apim-Subscription-Key"] == "test-sportsdataio-key"
+
+
+# --------------------------------------------------------------------------
+# POST /v1/internal/schedule-refresh/run -- Master Refresh V2's schedule-only
+# path (2026-09-15). Exists so the daily canonical-integrity path costs 1
+# SportsDataIO call instead of up to 33.
+# --------------------------------------------------------------------------
+
+
+def test_schedule_refresh_requires_internal_token(monkeypatch):
+    _set_env(monkeypatch)
+    assert client.post("/v1/internal/schedule-refresh/run").status_code == 401
+
+
+@respx.mock
+def test_schedule_refresh_is_paused_and_spends_nothing_unless_explicitly_enabled(monkeypatch):
+    """respx is strict with NO routes registered, so any request -- provider or
+    Supabase -- would raise. The gate must stop everything before that."""
+    _set_env(monkeypatch)
+    monkeypatch.delenv("MASTER_REFRESH_ENABLED", raising=False)
+
+    response = client.post(
+        "/v1/internal/schedule-refresh/run", headers={"X-Internal-Token": "correct-token"}
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "paused"
+    assert len(respx.calls) == 0
+
+
+@respx.mock
+def test_schedule_refresh_makes_exactly_one_provider_call_and_zero_roster_calls(monkeypatch):
+    """The whole reason this endpoint is separate from master-refresh/run.
+    Any roster request is unmocked here, so it would raise rather than pass."""
+    _set_env(monkeypatch)
+    _mock_season_wide_range()
+    _mock_master_refresh_runs()
+    schedule_route = respx.get(f"{SPORTSDATAIO_URL}/v3/nfl/scores/json/Schedules/2026REG").mock(
+        return_value=httpx.Response(200, json=[])
+    )
+
+    response = client.post(
+        "/v1/internal/schedule-refresh/run", headers={"X-Internal-Token": "correct-token"}
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "success"
+    assert body["run_id"] == "mrr-1"
+    assert body["error"] is None
+    # Exactly one provider call, and it is the Schedule call.
+    assert schedule_route.call_count == 1
+    provider_calls = [c for c in respx.calls if c.request.url.host == "api.sportsdata.io"]
+    assert len(provider_calls) == 1
+    assert "/Schedules/" in str(provider_calls[0].request.url)
+    # Real adapter, real key -- not an injected fixture adapter.
+    assert schedule_route.calls.last.request.headers["Ocp-Apim-Subscription-Key"] == "test-sportsdataio-key"
