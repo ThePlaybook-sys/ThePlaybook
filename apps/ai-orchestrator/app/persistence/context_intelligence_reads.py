@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import httpx
 
+from app.context_intelligence.player_performance import extract_msf_team_provider_ids
+
 
 class ContextIntelligenceReadError(Exception):
     """Raised when a context-intelligence read fails on Supabase's side."""
@@ -139,6 +141,184 @@ async def read_games_by_ids(client: httpx.AsyncClient, headers: dict, *, game_id
     return {row["id"]: row for row in response.json()}
 
 
+async def read_player_stats_for_player(client: httpx.AsyncClient, headers: dict, *, player_id: str) -> list[dict]:
+    """Every `player_stats` row for exactly one `player_id` (`id`,
+    `player_id`, `game_id`, `stats`, `created_at`) -- the targeted
+    alternative to `read_all_player_stats` used by `engine.py`'s real
+    per-player dimension request (Player Performance Engine Integration
+    pass, 2026-09-15): fetching one player's own rows instead of the
+    whole table is both more efficient and the more natural shape once
+    this dimension is reachable via a real `player_id`-scoped API call,
+    rather than the standalone module-level testing `read_all_player_
+    stats` was built for."""
+    response = await client.get(
+        "/rest/v1/player_stats",
+        params={"player_id": f"eq.{player_id}", "select": "id,player_id,game_id,stats,created_at", "order": "created_at.asc"},
+        headers=headers,
+    )
+    if response.status_code != 200:
+        raise ContextIntelligenceReadError(
+            f"failed to read player_stats for player_id={player_id!r}: {response.status_code} {response.text}"
+        )
+    return response.json()
+
+
+async def read_player_identity(client: httpx.AsyncClient, headers: dict, *, player_id: str) -> dict | None:
+    """Reads the one real `players` row (`id`, `name`, `position`,
+    `team_id`) `player_performance.py` needs for `player_name`/`position`/
+    `player_team_id`. Returns `None` when no row exists."""
+    response = await client.get(
+        "/rest/v1/players",
+        params={"id": f"eq.{player_id}", "select": "id,name,position,team_id"},
+        headers=headers,
+    )
+    if response.status_code != 200:
+        raise ContextIntelligenceReadError(
+            f"failed to read player {player_id!r}: {response.status_code} {response.text}"
+        )
+    rows = response.json()
+    return rows[0] if rows else None
+
+
+async def read_game_events_raw_payloads(
+    client: httpx.AsyncClient, headers: dict, *, game_ids: list[str], provider_name: str
+) -> dict[str, dict]:
+    """One real `raw_payload` per `game_id` (the first captured, by
+    `captured_at` ascending) for `provider_name` -- team-identity fields
+    inside a real MySportsFeeds `game_boxscore` payload are invariant
+    across repeat captures of the same game (unlike `player_stats`'
+    `snapCounts`, see `observation_identity.py`), so "first found" is a
+    correct, simple choice, not a tie-break decision the way
+    `resolve_canonical_observation` is for player stats. Returns `{}` for
+    an empty `game_ids` without making a request."""
+    if not game_ids:
+        return {}
+    response = await client.get(
+        "/rest/v1/game_events",
+        params={
+            "game_id": f"in.({','.join(game_ids)})",
+            "provider_name": f"eq.{provider_name}",
+            "select": "game_id,raw_payload",
+            "order": "captured_at.asc",
+        },
+        headers=headers,
+    )
+    if response.status_code != 200:
+        raise ContextIntelligenceReadError(
+            f"failed to read game_events for game_ids={game_ids!r} provider_name={provider_name!r}: "
+            f"{response.status_code} {response.text}"
+        )
+    result: dict[str, dict] = {}
+    for row in response.json():
+        result.setdefault(row["game_id"], row["raw_payload"])
+    return result
+
+
+async def read_team_provider_ids(
+    client: httpx.AsyncClient, headers: dict, *, provider_name: str, provider_team_ids: list[str]
+) -> dict[str, dict]:
+    """Maps `provider_team_id -> {"team_id", "name"}` for `provider_name`
+    -- the real, canonical `team_provider_ids` + `teams` identity chain
+    (the same table sports-intel-layer's own game/player identity
+    resolvers already rely on, read here for the first time from
+    ai-orchestrator). Two plain reads composed in Python, matching this
+    module's own established convention (see `build_contextual_
+    intelligence`'s own three-read venue composition). Returns `{}` for
+    an empty `provider_team_ids` without making a request."""
+    if not provider_team_ids:
+        return {}
+    mapping_response = await client.get(
+        "/rest/v1/team_provider_ids",
+        params={
+            "provider_name": f"eq.{provider_name}",
+            "provider_team_id": f"in.({','.join(provider_team_ids)})",
+            "select": "team_id,provider_team_id",
+        },
+        headers=headers,
+    )
+    if mapping_response.status_code != 200:
+        raise ContextIntelligenceReadError(
+            f"failed to read team_provider_ids for provider_name={provider_name!r}: "
+            f"{mapping_response.status_code} {mapping_response.text}"
+        )
+    mapping_rows = mapping_response.json()
+    team_ids = sorted({row["team_id"] for row in mapping_rows})
+    if not team_ids:
+        return {}
+
+    teams_response = await client.get(
+        "/rest/v1/teams",
+        params={"id": f"in.({','.join(team_ids)})", "select": "id,name"},
+        headers=headers,
+    )
+    if teams_response.status_code != 200:
+        raise ContextIntelligenceReadError(
+            f"failed to read teams for team_ids={team_ids!r}: {teams_response.status_code} {teams_response.text}"
+        )
+    names_by_team_id = {row["id"]: row["name"] for row in teams_response.json()}
+
+    return {
+        row["provider_team_id"]: {"team_id": row["team_id"], "name": names_by_team_id.get(row["team_id"])}
+        for row in mapping_rows
+    }
+
+
+async def resolve_team_identity_for_games(
+    client: httpx.AsyncClient, headers: dict, *, game_ids: list[str], provider_name: str = "mysportsfeeds"
+) -> dict[str, dict]:
+    """The real opponent-identity resolution chain (Player Performance
+    Engine Integration pass, 2026-09-15) -- composes the two reads above
+    plus `player_performance.extract_msf_team_provider_ids`'s own pure
+    parsing into one `{game_id: {"home_team_id", "home_team_name",
+    "away_team_id", "away_team_name"}}` map, entirely from real,
+    already-persisted canonical identity data:
+
+        game_events.raw_payload (real MySportsFeeds game_boxscore capture)
+            -> body.game.homeTeam.id / awayTeam.id (real MSF numeric ids)
+        -> team_provider_ids (provider_name='mysportsfeeds') -> team_id
+        -> teams.name
+
+    Never a hardcoded team/abbreviation, never a fuzzy match -- exact
+    numeric provider-id equality only. A game with no real `game_events`
+    row for `provider_name`, or whose raw payload doesn't carry the
+    expected MSF shape, or whose extracted provider team id has no
+    `team_provider_ids` mapping yet, is simply absent from the returned
+    dict -- `player_performance.py`'s own `resolve_opponent_by_team_id`
+    already handles a missing/partial entry as an honest, disclosed
+    "opponent unavailable" result, never a guess. Returns `{}` for an
+    empty `game_ids` without making a request."""
+    if not game_ids:
+        return {}
+
+    raw_payloads = await read_game_events_raw_payloads(
+        client, headers, game_ids=game_ids, provider_name=provider_name
+    )
+
+    extracted_by_game: dict[str, tuple[str, str]] = {}
+    all_provider_team_ids: set[str] = set()
+    for game_id, raw_payload in raw_payloads.items():
+        extracted = extract_msf_team_provider_ids(raw_payload)
+        if extracted is not None:
+            extracted_by_game[game_id] = extracted
+            all_provider_team_ids.update(extracted)
+
+    team_by_provider_id = await read_team_provider_ids(
+        client, headers, provider_name=provider_name, provider_team_ids=sorted(all_provider_team_ids)
+    )
+
+    result: dict[str, dict] = {}
+    for game_id, (home_provider_id, away_provider_id) in extracted_by_game.items():
+        home = team_by_provider_id.get(home_provider_id)
+        away = team_by_provider_id.get(away_provider_id)
+        result[game_id] = {
+            "home_team_id": home["team_id"] if home else None,
+            "home_team_name": home["name"] if home else None,
+            "away_team_id": away["team_id"] if away else None,
+            "away_team_name": away["name"] if away else None,
+        }
+    return result
+
+
 async def read_games_sharing_venue(
     client: httpx.AsyncClient, headers: dict, *, venue_id: str, exclude_game_id: str
 ) -> list[dict]:
@@ -167,7 +347,12 @@ __all__ = [
     "read_all_weather_snapshots",
     "read_all_odds_snapshots",
     "read_all_player_stats",
+    "read_player_stats_for_player",
+    "read_player_identity",
     "read_games_by_ids",
+    "read_game_events_raw_payloads",
+    "read_team_provider_ids",
+    "resolve_team_identity_for_games",
     "read_game_venue_context",
     "read_venue",
     "read_games_sharing_venue",

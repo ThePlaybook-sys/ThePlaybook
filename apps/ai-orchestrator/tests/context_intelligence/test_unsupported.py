@@ -8,7 +8,6 @@ import pytest
 from app.context_intelligence.unsupported import UNSUPPORTED_DIMENSIONS, insufficient_evidence_result
 
 _EXPECTED_DIMENSIONS = {
-    "player_performance",
     "injuries",
     "roster_role",
     "team_performance",
