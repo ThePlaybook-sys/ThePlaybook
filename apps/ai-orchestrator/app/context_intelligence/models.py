@@ -18,6 +18,27 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 
+#: The `data_completeness` vocabulary (Player Performance Context
+#: Foundation pass, 2026-09-15 -- first recommended by `docs/ops/phase-8-
+#: context-assembly-integration-design-2026-09-09.md` Section 1, never
+#: implemented until now). Describes **evidence availability**, never
+#: prediction confidence -- a dimension can be "joined" (real evidence
+#: found) with `confidence=None` (too little of it to say anything about
+#: consistency/trend yet), and the two must never be conflated:
+#: - `"joined"`: a real row/observation exists for the exact target
+#:   entity (or the fact is static/time-invariant), retrieval code
+#:   exists, nothing fabricated.
+#: - `"partial"`: real data exists but with a named caveat -- current-only
+#:   when historical is needed, coverage begins only after some
+#:   activation date, or the join resolves at a coarser granularity than
+#:   asked for.
+#: - `"unavailable"`: no real row, no code path, or schema-only.
+#: A dimension that sets this field must never use it to imply anything
+#: about `confidence`/`similarity_score` -- those stay exactly what they
+#: already were: `None` whenever there isn't enough real evidence to
+#: compute them honestly, never inflated because a field merely exists.
+DATA_COMPLETENESS_VALUES = ("joined", "partial", "unavailable")
+
 
 @dataclass(frozen=True)
 class ProvenanceRef:
@@ -62,6 +83,14 @@ class ContextualDimensionResult:
     #: itself (e.g. its own weather reading) -- never a derived/modeled
     #: value, always traceable back to a real row.
     facts: dict = field(default_factory=dict)
+    #: One of `DATA_COMPLETENESS_VALUES`, or `None` for a dimension built
+    #: before this field existed (2026-09-08 pass's four real dimensions
+    #: and six unsupported stubs are not retrofitted by this pass -- see
+    #: `player_performance.py`'s own module docstring for the first real
+    #: consumer). `None` here means "not yet classified," never
+    #: "unavailable" -- a caller must not treat a missing value as a
+    #: negative signal.
+    data_completeness: str | None = None
 
     def to_json(self) -> dict:
         data = asdict(self)
@@ -85,4 +114,4 @@ class ContextualIntelligenceResult:
         }
 
 
-__all__ = ["ProvenanceRef", "ContextualDimensionResult", "ContextualIntelligenceResult"]
+__all__ = ["ProvenanceRef", "ContextualDimensionResult", "ContextualIntelligenceResult", "DATA_COMPLETENESS_VALUES"]
