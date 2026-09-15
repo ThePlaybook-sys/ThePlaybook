@@ -571,6 +571,7 @@ class DispatchMSFPostgameResponse(BaseModel):
     invoked_game_ids: list[str]
     results: list[MSFPostgameCaptureOutcome]
     enrolled_game_ids: list[str]
+    paused: bool
 
 
 @app.post(
@@ -602,7 +603,14 @@ async def internal_dispatch_msf_postgame() -> DispatchMSFPostgameResponse:
     `fetch_boxscore` is left at its default, so a real call to this
     endpoint can make genuine, spendable MySportsFeeds calls -- exactly as
     intended for a real cron tick. No credential is read in this module;
-    same DEMO-1 isolation discipline as the endpoint above."""
+    same DEMO-1 isolation discipline as the endpoint above.
+
+    **Provider pause (2026-09-15, HQ-authorized "MANSA -- MSF PAUSE /
+    BACKLOG-SAFE PROVIDER STATE"):** when `MSF_POSTGAME_ENABLED=false` is
+    set on this service, `dispatch_due_msf_postgame_games` itself is a
+    zero-call no-op (checked first, before any Supabase query) and
+    returns `paused=True` -- this endpoint just passes that flag through
+    unchanged, same thin-adapter discipline as every other field here."""
     supabase_client = httpx.AsyncClient(base_url=os.environ["SUPABASE_URL"], timeout=600.0)
     async with supabase_client:
         result = await dispatch_due_msf_postgame_games(supabase_client)
@@ -612,6 +620,7 @@ async def internal_dispatch_msf_postgame() -> DispatchMSFPostgameResponse:
         selected_game_ids=result.selected_game_ids,
         invoked_game_ids=result.invoked_game_ids,
         enrolled_game_ids=result.enrolled_game_ids,
+        paused=result.paused,
         results=[
             MSFPostgameCaptureOutcome(
                 game_id=r.game_id,

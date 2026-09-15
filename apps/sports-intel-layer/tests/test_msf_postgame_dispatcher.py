@@ -36,6 +36,7 @@ import respx
 from app.workers.msf_postgame_dispatcher import (
     MAX_ENROLLMENTS_PER_DISPATCH_TICK,
     MAX_GAMES_PER_DISPATCH_TICK,
+    MSF_POSTGAME_ENABLED_ENV_VAR,
     MSFPostgameDispatcherError,
     dispatch_due_msf_postgame_games,
     select_due_msf_postgame_games,
@@ -545,3 +546,123 @@ async def test_dispatch_enrollment_and_dispatch_phases_are_independent(monkeypat
 
     assert result.enrolled_game_ids == ["new-game"]
     assert invoked == ["existing-game"]
+
+
+# --------------------------------------------------------------------------
+# dispatch_due_msf_postgame_games -- Provider Pause State (MSF Pause /
+# Backlog-Safe Provider State, 2026-09-15). No respx route is registered
+# in ANY of these "paused" tests except where explicitly noted -- if the
+# pause check ever failed to short-circuit before a Supabase call, respx
+# would raise its own "no matching route" error, which is itself part of
+# the proof of zero HTTP calls, on top of the explicit call-count/invoked
+# assertions below.
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_dispatch_paused_returns_clean_zero_result(monkeypatch):
+    _env(monkeypatch)
+    monkeypatch.setenv(MSF_POSTGAME_ENABLED_ENV_VAR, "false")
+
+    async with httpx.AsyncClient(base_url=SUPABASE_URL) as client:
+        result = await dispatch_due_msf_postgame_games(client, now=NOW)
+
+    assert result.paused is True
+    assert result.considered == 0
+    assert result.selected_game_ids == []
+    assert result.invoked_game_ids == []
+    assert result.enrolled_game_ids == []
+    assert result.results == []
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_dispatch_paused_makes_zero_http_calls(monkeypatch):
+    """No respx route registered at all -- any HTTP call this function
+    made (enrollment discovery, selection, ensure_scheduled_row, or the
+    worker's own Supabase reads/writes) would raise respx's own
+    `AllMockedAssertionError` for an unmocked request, proving zero calls
+    at the transport layer, not merely zero calls the test happened to
+    assert on."""
+    _env(monkeypatch)
+    monkeypatch.setenv(MSF_POSTGAME_ENABLED_ENV_VAR, "false")
+    invoked: list[str] = []
+
+    async def _fake_run(*, supabase_client, game_id, now, fetch_boxscore):
+        invoked.append(game_id)
+        return MSFPostgameCaptureResult(game_id=game_id, outcome="confirmed_complete")
+
+    async def _fake_ensure(client, headers, *, game_id, first_eligible_at):
+        raise AssertionError("ensure_scheduled_row must not be called while paused")
+
+    monkeypatch.setattr("app.workers.msf_postgame_dispatcher.run_msf_postgame_capture", _fake_run)
+    monkeypatch.setattr("app.workers.msf_postgame_dispatcher.ensure_scheduled_row", _fake_ensure)
+
+    async with httpx.AsyncClient(base_url=SUPABASE_URL) as client:
+        result = await dispatch_due_msf_postgame_games(client, now=NOW)
+
+    assert result.paused is True
+    assert invoked == []
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_dispatch_paused_case_insensitive_false(monkeypatch):
+    _env(monkeypatch)
+    for value in ("false", "False", "FALSE", "fAlSe"):
+        monkeypatch.setenv(MSF_POSTGAME_ENABLED_ENV_VAR, value)
+        async with httpx.AsyncClient(base_url=SUPABASE_URL) as client:
+            result = await dispatch_due_msf_postgame_games(client, now=NOW)
+        assert result.paused is True, f"expected paused for value={value!r}"
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_dispatch_unset_env_var_preserves_existing_enabled_behavior(monkeypatch):
+    """Regression proof: with no MSF_POSTGAME_ENABLED set at all, behavior
+    is byte-identical to every pre-pause-feature test in this file --
+    normal discovery/selection/dispatch runs, paused=False."""
+    _env(monkeypatch)
+    monkeypatch.delenv(MSF_POSTGAME_ENABLED_ENV_VAR, raising=False)
+    _mock_no_enrollment_candidates()
+    _mock_selection(["g1"])
+    invoked: list[str] = []
+
+    async def _fake_run(*, supabase_client, game_id, now, fetch_boxscore):
+        invoked.append(game_id)
+        return MSFPostgameCaptureResult(game_id=game_id, outcome="confirmed_complete", state="confirmed_complete")
+
+    monkeypatch.setattr("app.workers.msf_postgame_dispatcher.run_msf_postgame_capture", _fake_run)
+
+    async with httpx.AsyncClient(base_url=SUPABASE_URL) as client:
+        result = await dispatch_due_msf_postgame_games(client, now=NOW, max_games=10)
+
+    assert result.paused is False
+    assert invoked == ["g1"]
+    assert result.considered == 1
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_dispatch_non_false_values_are_treated_as_enabled(monkeypatch):
+    """Any value other than a case-insensitive 'false' -- including an
+    empty string, 'true', or an unrelated typo -- fails open (enabled),
+    per this feature's deliberate fail-open design."""
+    _env(monkeypatch)
+    _mock_no_enrollment_candidates()
+    _mock_selection(["g1"])
+    invoked: list[str] = []
+
+    async def _fake_run(*, supabase_client, game_id, now, fetch_boxscore):
+        invoked.append(game_id)
+        return MSFPostgameCaptureResult(game_id=game_id, outcome="confirmed_complete", state="confirmed_complete")
+
+    monkeypatch.setattr("app.workers.msf_postgame_dispatcher.run_msf_postgame_capture", _fake_run)
+    monkeypatch.setenv(MSF_POSTGAME_ENABLED_ENV_VAR, "true")
+
+    async with httpx.AsyncClient(base_url=SUPABASE_URL) as client:
+        result = await dispatch_due_msf_postgame_games(client, now=NOW, max_games=10)
+
+    assert result.paused is False
+    assert invoked == ["g1"]

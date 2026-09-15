@@ -144,4 +144,30 @@ def test_dispatch_with_nothing_due_returns_empty_results(monkeypatch):
     body = response.json()
     assert body == {
         "considered": 0, "selected_game_ids": [], "invoked_game_ids": [], "results": [], "enrolled_game_ids": [],
+        "paused": False,
+    }
+
+
+def test_dispatch_passes_through_paused_flag(monkeypatch):
+    """MSF Pause / Backlog-Safe Provider State (2026-09-15): when the real
+    `dispatch_due_msf_postgame_games` reports `paused=True` (MSF_POSTGAME_
+    ENABLED=false), this HTTP boundary must pass that flag through
+    unchanged, same thin-adapter discipline as every other field here."""
+    _set_env(monkeypatch)
+
+    from app.workers.msf_postgame_dispatcher import DispatchResult
+
+    async def _fake_dispatch(supabase_client, **kwargs):
+        return DispatchResult(considered=0, paused=True)
+
+    import app.main
+    monkeypatch.setattr(app.main, "dispatch_due_msf_postgame_games", _fake_dispatch)
+
+    response = client.post("/v1/internal/msf-postgame/dispatch", headers={"X-Internal-Token": "correct-token"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body == {
+        "considered": 0, "selected_game_ids": [], "invoked_game_ids": [], "results": [], "enrolled_game_ids": [],
+        "paused": True,
     }
