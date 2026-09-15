@@ -109,9 +109,82 @@ tick, through the exact same unmodified claim/worker path every other
 game already goes through. No per-game worker logic, claim protection,
 retry limit, terminal-state exclusion, raw-preservation, or quarantine
 behavior changed by this feature.
+
+**Provider Pause State (2026-09-15, HQ-authorized "MANSA -- MSF PAUSE /
+BACKLOG-SAFE PROVIDER STATE").** MySportsFeeds is being intentionally
+canceled/paused for cost reasons -- a deliberate, planned, non-error
+provider lifecycle transition, not a failure this module needs to detect
+or work around. `MSF_POSTGAME_ENABLED` (read by `_msf_postgame_enabled()`,
+env var unset or any value other than a case-insensitive `"false"` means
+enabled -- the safe default if the variable is ever accidentally removed
+is "keep running", not "silently stop") is checked as the very first
+thing `dispatch_due_msf_postgame_games` does, before either phase and
+before any Supabase query at all. When paused, the function makes
+literally zero HTTP calls of any kind (no enrollment discovery read, no
+selection read, no `ensure_scheduled_row` insert, no worker invocation),
+logs one clearly-labeled warning distinguishing this from every other
+outcome, and returns immediately with `DispatchResult(considered=0,
+paused=True)`.
+
+The full provider lifecycle this design supports, all non-error states:
+
+1. **ACTIVE** -- `MSF_POSTGAME_ENABLED` unset/true. Normal operation,
+   exactly as built by every prior pass this session.
+2. **PAUSED** -- `MSF_POSTGAME_ENABLED=false`. Every dispatcher tick is a
+   clean, logged, zero-call no-op. No row anywhere is touched: no
+   `attempt_count` incremented, no game marked failed or quarantined, no
+   terminal state altered. Games that become newly eligible for
+   enrollment or newly due for capture *while paused* are simply not
+   discovered or acted on this tick -- they remain exactly as eligible on
+   every later tick, because both `select_unenrolled_eligible_games` and
+   `select_due_msf_postgame_games` are pure re-derivations from persisted
+   `games`/`game_provider_ids`/`game_postgame_ingestion_state` data every
+   time they run, never from any in-memory dispatcher state. Nothing
+   about pausing requires a hard-coded date range to "remember" what was
+   missed.
+3. **Backlog accumulates safely** -- the longer the pause lasts, the more
+   real, unenrolled/undue games simply wait, discoverable exactly as they
+   already are today for any existing backlog item (this session's own
+   NE@SEA discovery, Automatic Enrollment pass, is the live proof this
+   discovery path already handles an arbitrarily old backlog correctly).
+4. **RE-ENABLED** -- `MSF_POSTGAME_ENABLED` set back to unset/true (or the
+   variable removed). The very next scheduled tick resumes both phases
+   exactly as if no pause had happened -- no special "resume" code path,
+   because there was never a separate "paused" data state, only a paused
+   *dispatcher entry point*.
+5. **Bounded recovery** -- re-enabling does not burst-process the entire
+   accumulated backlog in one tick. `MAX_ENROLLMENTS_PER_DISPATCH_TICK`
+   (enrollment) and `MAX_GAMES_PER_DISPATCH_TICK` (real dispatch) already
+   bound every tick's work regardless of how large the backlog is, and
+   both selection queries are oldest-first-ordered, so recovery drains
+   the backlog in oldest-kickoff-first order across as many ticks as it
+   takes -- exactly the same bounded-workload discipline (Volume 2 §1.1
+   principle #11) already governing normal operation, requiring no new
+   scheduler, cap, or table.
+6. **Current operation** -- once the backlog is drained, ticks return to
+   look identical to state 1 (ACTIVE) again -- `considered=0` for a tick
+   with nothing due is indistinguishable, by design, from any other quiet
+   tick this pipeline has always had.
+
+**401/403 handling is unaffected by this feature and needed no code
+change.** `_default_fetch_boxscore` (`msf_postgame_worker.py`) already
+classifies a real MySportsFeeds 401/403 as `status="permanent_error"`,
+which `run_msf_postgame_capture` already turns into `capture_failed_
+permanent` with `error_classification="permanent"` and the real `last_
+http_status` preserved on the row -- a durable, queryable, already-
+distinguishable signal for "this game's credential/authorization is
+broken" that a paused-provider tick can never produce, because a paused
+tick makes no HTTP call to MySportsFeeds (or anywhere else) at all. The
+two states remain cleanly distinguishable after this feature exactly as
+they were before it: intentional pause is a `paused=True` `DispatchResult`
+with zero touched rows and a `_logger.warning` log line naming the pause;
+a real credential failure is a `capture_failed_permanent` row with a
+persisted `last_http_status` of 401/403. Nothing about this feature
+weakens, widens, or narrows that existing distinction.
 """
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -122,7 +195,16 @@ from app.persistence.game_postgame_ingestion_state import ensure_scheduled_row
 from app.workers.msf_call_control import HARD_CAP_ATTEMPTS, first_check_at
 from app.workers.msf_postgame_worker import MSFPostgameCaptureResult, run_msf_postgame_capture
 
+_logger = logging.getLogger(__name__)
+
 _PROVIDER_NAME = "mysportsfeeds"
+
+#: Provider pause switch (see module docstring's "Provider Pause State").
+#: Unset, or any value other than a case-insensitive `"false"`, means
+#: enabled -- deliberately fails open (keeps running) rather than fails
+#: closed, so a missing/misconfigured variable can never silently stop
+#: ingestion.
+MSF_POSTGAME_ENABLED_ENV_VAR = "MSF_POSTGAME_ENABLED"
 
 #: States a game can still be legitimately dispatched from. Excludes every
 #: terminal state (`confirmed_complete`/`partially_confirmed`/
@@ -174,6 +256,14 @@ class DispatchResult:
     invoked_game_ids: list[str] = field(default_factory=list)
     results: list[MSFPostgameCaptureResult] = field(default_factory=list)
     enrolled_game_ids: list[str] = field(default_factory=list)
+    paused: bool = False
+
+
+def _msf_postgame_enabled() -> bool:
+    """Fail-open: unset, empty, or anything other than a case-insensitive
+    `"false"` means enabled. See module docstring's "Provider Pause
+    State"."""
+    return os.environ.get(MSF_POSTGAME_ENABLED_ENV_VAR, "").strip().lower() != "false"
 
 
 def _auth_headers() -> dict:
@@ -346,7 +436,22 @@ async def dispatch_due_msf_postgame_games(
     left completely untouched. The next tick (this same function, called
     again later, by the same recurring cron schedule) picks both up from
     scratch via fresh discovery/selection calls; nothing about either cap
-    requires this module to remember anything between ticks."""
+    requires this module to remember anything between ticks.
+
+    **Pause check (module docstring's "Provider Pause State") happens
+    first, before either phase and before any Supabase query at all** --
+    when paused, this function is a full no-op: zero HTTP calls, zero
+    rows touched, one logged warning, immediate return."""
+    if not _msf_postgame_enabled():
+        _logger.warning(
+            "MSF postgame ingestion is intentionally PAUSED (%s=false) -- "
+            "skipping this dispatch tick with zero provider calls, zero "
+            "enrollment, zero state changes. This is an intentional "
+            "provider lifecycle state, not an error.",
+            MSF_POSTGAME_ENABLED_ENV_VAR,
+        )
+        return DispatchResult(considered=0, paused=True)
+
     now = now or datetime.now(timezone.utc)
     headers = _auth_headers()
 
@@ -383,6 +488,7 @@ async def dispatch_due_msf_postgame_games(
 __all__ = [
     "MAX_GAMES_PER_DISPATCH_TICK",
     "MAX_ENROLLMENTS_PER_DISPATCH_TICK",
+    "MSF_POSTGAME_ENABLED_ENV_VAR",
     "MSFPostgameDispatcherError",
     "DispatchResult",
     "select_due_msf_postgame_games",
