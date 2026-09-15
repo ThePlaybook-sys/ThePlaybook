@@ -18,6 +18,7 @@ from dataclasses import dataclass
 
 from app.agents.contract import AgentOutput
 from app.agents.probability_output import ProbabilityModelOutput
+from app.context_intelligence.context_package import ContextPackage
 from app.features.candidate import MarketCandidate
 from app.features.expected_value import EVResult
 from app.features.kelly import KellyResult
@@ -138,3 +139,13 @@ class SequentialDecisionContext:
     ev: EVResult | None = None
     risk: RiskAssessment | None = None
     kelly: KellyResult | None = None
+    #: The real, assembled historical Context Intelligence package for
+    #: `game_id` (and, when player-scoped evidence is relevant, a
+    #: specific player) -- `app.context_intelligence.context_package.
+    #: assemble_context_package`. `None` for every real caller today
+    #: (2026-09-15 build_evidence() Context Integration pass) -- no
+    #: production code path constructs one yet; `ProbabilityModelingAgent.
+    #: build_evidence` reads it when present and omits `contextual_
+    #: evidence` entirely when it is `None`, so this field's addition is
+    #: purely additive and changes no existing caller's behavior.
+    context_package: ContextPackage | None = None
