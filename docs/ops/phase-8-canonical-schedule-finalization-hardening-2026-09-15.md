@@ -362,3 +362,95 @@ New coverage added:
 - No provider call of any kind — SportsDataIO, Odds API, MySportsFeeds, or LLM.
 - Week 1 live backfill not executed (§6).
 - The 5 pre-existing wall-clock test failures not fixed (§7).
+
+---
+
+## 9. Full-season Schedule refresh — BLOCKED, call NOT spent (2026-09-15)
+
+**Directive:** MANSA HQ — "ONE AUTHORIZED FULL-SEASON SCHEDULE REFRESH".
+**Outcome: STOPPED before execution. Zero SportsDataIO calls spent.
+`MASTER_REFRESH_ENABLED` was never set to `true` and remains unset (paused).**
+
+### 9.1 The blocker — canonical identity, found in the pre-execution baseline
+
+`persist_schedule_entries` resolves a game's identity **solely** through
+`game_provider_ids` on `(provider_name='sportsdataio', game_external_id)`. Found → PATCH.
+Not found → INSERT a new canonical game and link it.
+
+Live dev holds **zero `sportsdataio` game mappings**:
+
+| Provider | Game mappings | …on manual-seed games | …on finalized games |
+|---|---|---|---|
+| `balldontlie` | 16 | 16 | 16 |
+| `mysportsfeeds` | 16 | 16 | 16 |
+| `the_odds_api` | 12 | 8 | 5 |
+| **`sportsdataio`** | **0** | — | — |
+
+**All 23 existing games — including all 16 Week 1 games finalized in §6 — have no
+SportsDataIO mapping.** `games.external_provider_id` doesn't help either: it is either null or
+`balldontlie:<id>`.
+
+So every one of the ~304 season entries would resolve as *not found* and be **INSERTed as a new
+canonical game**. The authorized refresh would have:
+
+- created ~304 new `games` rows;
+- given each of the 16 finalized Week 1 games a **second** canonical row — new, `scheduled`, no
+  score — sitting alongside the finalized one;
+- duplicated the 3 Week 5 games the same way;
+- left dev with **~19 real-world games represented twice**, one row final and one row scheduled.
+
+Verification item 5 ("no duplicate canonical games created") would have failed outright. Items 6
+and 7 would have passed only on a technicality: the finalized rows are never touched *because they
+are different rows*. Nothing is downgraded; the identity layer is split in half instead. For odds
+linking, grading and calibration — all of which key on `games.id` — that is worse than the Week 2
+gap it was meant to fix.
+
+### 9.2 Why this is not fixable inside the authorized scope
+
+This is the cross-provider reconciliation item the blueprint has deferred since Decision 2
+(2026-08-13), which explicitly rules out team/date fuzzy matching and records that no worker yet has
+authority to reconcile two providers' views of one real-world game.
+`app/persistence/schedule.py`'s own docstring has said so all along: *"What this deliberately does
+NOT do: reconcile two different providers independently discovering the same real-world game."*
+
+It cannot be pre-empted with a zero-call backfill either: mapping the 19 existing games to
+SportsDataIO requires SportsDataIO's `GameKey` for each, which only arrives **in the Schedule
+response itself** — by which point `persist_schedule_entries` has already inserted the duplicates.
+
+### 9.3 What was built and is ready
+
+Both are deployed and inert while the gate is paused, and neither spends anything:
+
+- `POST /v1/internal/schedule-refresh/run` → `run_schedule_refresh` (1 Schedule call, **0 roster
+  calls**; a test asserts exactly one provider call and that any roster request would raise).
+- `schedule-refresh` cron dispatch target, so invocation is config-only via the same
+  secret-safe mechanism used in §6.
+
+Tests: `sports-intel-layer` 945 passed / 5 failed (the same pre-existing 5 from §7);
+`apps/workers` 45 passed.
+
+### 9.4 Options — Mac's call, none taken
+
+1. **Reconcile first, then refresh (recommended).** Add a one-time, in-run reconciliation step to
+   the schedule path: for an entry with no `sportsdataio` mapping, match against an existing game on
+   `(home_team, away_team, scheduled_start` date`)` and, on a unique match, `link_provider_id`
+   instead of inserting. This is a blueprint deviation (Decision 2 rules out fuzzy matching) and
+   needs explicit authorization plus a CHANGELOG entry. It is narrow here: teams are already
+   normalized 32/32 to SportsDataIO abbreviations, and the match is exact on all three fields, not
+   fuzzy. Still 1 provider call.
+2. **Accept the duplicates and reconcile afterwards.** Spend the call, then merge ~19 duplicate
+   pairs. Not recommended — it splits identity first and repairs it under time pressure, with the
+   finalized rows at risk during the merge.
+3. **Refresh into a clean slate.** Only viable if the 19 manual-seed rows are disposable; they are
+   not — 16 carry real finalized scores and MSF/balldontlie mappings.
+
+**Recommendation: option 1.** It keeps the single call, preserves the 16 finalized games, and
+produces one canonical row per real-world game.
+
+### 9.5 State left behind
+
+- `MASTER_REFRESH_ENABLED` on `sports-intel-layer` dev: **unset → paused.** Never set to `true`.
+- Zero SportsDataIO, Odds API, MSF and LLM calls this pass.
+- No cron branch, schedule or target changed; `cron-msf-postgame` remains on
+  `msf-postgame-worker`.
+- Week 1's 16 finalized games untouched.

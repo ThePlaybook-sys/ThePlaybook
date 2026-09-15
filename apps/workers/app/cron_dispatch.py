@@ -107,6 +107,15 @@ _TARGET_PATHS = {
     #: cost, since it makes no provider call at all. Costs zero provider
     #: calls of any kind, so it is safe on any cadence.
     "canonical-finalization": "/v1/internal/canonical-finalization/run",
+    #: Master Refresh V2 (2026-09-15): the schedule-only refresh --
+    #: exactly ONE SportsDataIO Schedule call and zero roster calls,
+    #: versus up to 33 for the `master-refresh` target above. This is the
+    #: target a daily canonical-schedule cron should use; `master-refresh`
+    #: remains mapped for the combined run. Both are gated by
+    #: `MASTER_REFRESH_ENABLED` on `sports-intel-layer` itself, so a tick
+    #: against either spends nothing unless the refresh is explicitly
+    #: enabled there.
+    "schedule-refresh": "/v1/internal/schedule-refresh/run",
     #: Remaining unwired specialized workers: Player Props/Pregame -- see
     #: the Phase 3E specialized worker runtime invocation debt item
     #: recorded in PROGRESS.md.
