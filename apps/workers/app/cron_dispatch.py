@@ -97,6 +97,16 @@ _TARGET_PATHS = {
     #: already existed and were both already correct; nothing had ever
     #: called either automatically until this target/endpoint pair.
     "msf-postgame-worker": "/v1/internal/msf-postgame/dispatch",
+    #: Canonical Schedule + Finalization Hardening (2026-09-15): turns a
+    #: `confirmed_complete` MySportsFeeds postgame observation into a
+    #: finalized canonical game -- lives on `sports-intel-layer`, same as
+    #: `msf-postgame-worker`. Deliberately a SEPARATE target from that one
+    #: rather than a step inside it: the dispatcher is a full zero-call
+    #: no-op when `MSF_POSTGAME_ENABLED=false`, and finalization must keep
+    #: draining the already-captured backlog while ingestion is paused for
+    #: cost, since it makes no provider call at all. Costs zero provider
+    #: calls of any kind, so it is safe on any cadence.
+    "canonical-finalization": "/v1/internal/canonical-finalization/run",
     #: Remaining unwired specialized workers: Player Props/Pregame -- see
     #: the Phase 3E specialized worker runtime invocation debt item
     #: recorded in PROGRESS.md.

@@ -200,6 +200,30 @@ async def test_dispatch_msf_postgame_worker_posts_to_correct_path():
 
 
 @pytest.mark.asyncio
+@respx.mock
+async def test_dispatch_canonical_finalization_posts_to_correct_path():
+    """Canonical Schedule + Finalization Hardening (2026-09-15) -- another
+    `sports-intel-layer`-hosted target, deliberately separate from
+    `msf-postgame-worker` so finalization keeps draining the already-captured
+    backlog while MSF ingestion is paused for cost."""
+    route = respx.post(f"{BASE_URL}/v1/internal/canonical-finalization/run").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "considered": 16, "finalized": 16, "already_finalized": 0, "skipped": 0,
+                "duplicate_captures_collapsed": 0, "outcomes": [], "failures": [],
+            },
+        )
+    )
+    async with httpx.AsyncClient() as client:
+        result = await dispatch(
+            target="canonical-finalization", base_url=BASE_URL, internal_token="secret", client=client
+        )
+    assert result["finalized"] == 16
+    assert route.calls.last.request.headers["X-Internal-Token"] == "secret"
+
+
+@pytest.mark.asyncio
 async def test_dispatch_rejects_unknown_target():
     async with httpx.AsyncClient() as client:
         with pytest.raises(CronDispatchError):
