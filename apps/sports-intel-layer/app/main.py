@@ -20,6 +20,7 @@ from app.persistence.odds_snapshots import read_last_polled_at
 from app.persistence.weather_snapshots import read_last_polled_at as read_weather_last_polled_at
 from app.adapters.providers.gnews import GNewsNewsAdapter
 from app.workers.balldontlie_injury_worker import run_balldontlie_injury_worker
+from app.workers.canonical_finalization import run_canonical_finalization
 from app.workers.msf_postgame_dispatcher import dispatch_due_msf_postgame_games
 from app.workers.msf_postgame_worker import run_msf_postgame_capture
 from app.workers.news_worker import run_news_worker
@@ -635,6 +636,78 @@ async def internal_dispatch_msf_postgame() -> DispatchMSFPostgameResponse:
             )
             for r in result.results
         ],
+    )
+
+
+class CanonicalFinalizationOutcome(BaseModel):
+    game_id: str
+    status: str
+    final_score: dict | None
+    reason: str | None
+
+
+class RunCanonicalFinalizationResponse(BaseModel):
+    considered: int
+    finalized: int
+    already_finalized: int
+    skipped: int
+    duplicate_captures_collapsed: int
+    outcomes: list[CanonicalFinalizationOutcome]
+    failures: list[str]
+
+
+@app.post(
+    "/v1/internal/canonical-finalization/run",
+    dependencies=[Depends(require_internal_token)],
+    response_model=RunCanonicalFinalizationResponse,
+)
+async def internal_run_canonical_finalization() -> RunCanonicalFinalizationResponse:
+    """MSF -> canonical finalization (2026-09-15, HQ-authorized "CANONICAL
+    SCHEDULE + FINALIZATION HARDENING"): the permanent boundary that turns a
+    `confirmed_complete` MySportsFeeds postgame observation into a finalized
+    canonical game (`status='final'`, `final_score`, `finalized_at`).
+
+    Root cause this closes: `mark_game_finalized`/`update_final_score` were only
+    ever called by the *SportsDataIO* postgame path. The MSF path captured a
+    complete boxscore, marked the ingestion state terminal, and stopped -- so 16
+    real Week 1 games held real scores in `game_events.raw_payload` while their
+    canonical rows stayed `scheduled`/`live` with null `final_score`, which in
+    turn blocked every downstream grading and calibration step.
+
+    **Makes ZERO provider calls.** It reads only `game_postgame_ingestion_state`
+    and the `game_events` captures those rows already point at -- which is
+    exactly why it is a SEPARATE endpoint from `/v1/internal/msf-postgame/
+    dispatch` rather than a step inside it: finalization must keep draining the
+    already-captured backlog even while MSF ingestion is paused for cost
+    (`MSF_POSTGAME_ENABLED=false`), and folding it into that dispatcher would
+    have made it share the dispatcher's proven zero-call pause no-op and stop
+    too. It can therefore run on its own cron cadence, independent of provider
+    state, and costs nothing to run.
+
+    Thin HTTP-to-function adapter only, same discipline as every other
+    `/v1/internal/*` endpoint here -- all logic lives in
+    `app.workers.canonical_finalization`, which also owns its own Supabase
+    client/credential construction so this module never reads the service-role
+    key. Safe to call repeatedly: the write is guarded at the database level on
+    `finalized_at is null`, so a re-run reports `already_finalized` and changes
+    nothing."""
+    result = await run_canonical_finalization()
+    return RunCanonicalFinalizationResponse(
+        considered=result.considered,
+        finalized=result.finalized,
+        already_finalized=result.already_finalized,
+        skipped=result.skipped,
+        duplicate_captures_collapsed=result.duplicate_captures_collapsed,
+        outcomes=[
+            CanonicalFinalizationOutcome(
+                game_id=o.game_id,
+                status=o.status,
+                final_score=o.final_score,
+                reason=o.reason,
+            )
+            for o in result.outcomes
+        ],
+        failures=result.failures,
     )
 
 

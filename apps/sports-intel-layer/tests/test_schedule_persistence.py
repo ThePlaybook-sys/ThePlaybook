@@ -159,3 +159,124 @@ async def test_missing_venue_metadata_persists_as_null_not_fabricated():
     assert inserted_body["venue_lat"] is None
     assert inserted_body["venue_long"] is None
     assert inserted_body["venue_type"] is None
+
+
+# --------------------------------------------------------------------------
+# Final is terminal (2026-09-15, "CANONICAL SCHEDULE + FINALIZATION HARDENING").
+#
+# With Master Refresh V2 persisting the full season, every already-played game
+# is re-seen on every daily refresh -- and SportsDataIO can still describe a
+# played game as "Scheduled". A refresh must never undo a real finalization.
+# The guard is Postgres's own `finalized_at=is.null` filter, so these tests
+# mock that filter faithfully rather than ignoring the query params.
+# --------------------------------------------------------------------------
+
+
+def _mock_existing_mapping():
+    respx.get(f"{SUPABASE_URL}/rest/v1/game_provider_ids").mock(
+        return_value=httpx.Response(
+            200, json=[{"game_id": EXISTING_GAME_DB_ID, "provider_game_id": "202610130"}]
+        )
+    )
+
+
+def _mock_games_patch(*, finalized: bool):
+    """Faithful stand-in for the database: a PATCH filtered on
+    `finalized_at=is.null` matches zero rows when the game is finalized."""
+
+    def _respond(request: httpx.Request) -> httpx.Response:
+        guarded = request.url.params.get("finalized_at") == "is.null"
+        if guarded and finalized:
+            return httpx.Response(200, json=[])
+        return httpx.Response(200, json=[{"id": EXISTING_GAME_DB_ID}])
+
+    return respx.patch(f"{SUPABASE_URL}/rest/v1/games").mock(side_effect=_respond)
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_finalized_game_keeps_its_status_when_a_refresh_calls_it_scheduled():
+    _mock_existing_mapping()
+    patch_route = _mock_games_patch(finalized=True)
+
+    response = AdapterResponse(value=[_entry("202610130", status="scheduled")], source="sportsdataio")
+    created, updated = await persist_schedule_entries(response)
+
+    assert (created, updated) == (0, 1)
+    assert patch_route.call_count == 2  # guarded attempt, then the status-less retry
+
+    guarded_body = json.loads(patch_route.calls[0].request.content)
+    assert guarded_body["status"] == "scheduled"  # attempted...
+    assert patch_route.calls[0].request.url.params["finalized_at"] == "is.null"  # ...but guarded
+
+    retained_body = json.loads(patch_route.calls[1].request.content)
+    assert "status" not in retained_body  # the downgrade never lands
+    assert "final_score" not in retained_body and "finalized_at" not in retained_body
+    # Everything else about a played game still reconciles.
+    assert retained_body["stadium"] == "Lumen Field"
+    assert retained_body["week"] == 1
+    assert retained_body["venue_type"] == "outdoor"
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_unfinalized_game_still_gets_its_status_refreshed():
+    _mock_existing_mapping()
+    patch_route = _mock_games_patch(finalized=False)
+
+    response = AdapterResponse(value=[_entry("202610130", status="live")], source="sportsdataio")
+    created, updated = await persist_schedule_entries(response)
+
+    assert (created, updated) == (0, 1)
+    assert patch_route.call_count == 1  # no second write needed
+    assert json.loads(patch_route.calls.last.request.content)["status"] == "live"
+    assert patch_route.calls.last.request.url.params["finalized_at"] == "is.null"
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_the_guard_is_the_database_not_a_prior_read():
+    """No read-then-write window exists to race through: nothing is read to
+    decide whether to write `status` -- the filter travels with the write."""
+    _mock_existing_mapping()
+    games_get = respx.get(f"{SUPABASE_URL}/rest/v1/games").mock(
+        return_value=httpx.Response(200, json=[])
+    )
+    _mock_games_patch(finalized=False)
+
+    response = AdapterResponse(value=[_entry("202610130")], source="sportsdataio")
+    await persist_schedule_entries(response)
+
+    assert not games_get.called
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_a_failed_status_less_retry_is_raised_not_swallowed():
+    _mock_existing_mapping()
+
+    def _respond(request: httpx.Request) -> httpx.Response:
+        if request.url.params.get("finalized_at") == "is.null":
+            return httpx.Response(200, json=[])
+        return httpx.Response(500, text="db error")
+
+    respx.patch(f"{SUPABASE_URL}/rest/v1/games").mock(side_effect=_respond)
+
+    response = AdapterResponse(value=[_entry("202610130")], source="sportsdataio")
+    with pytest.raises(PersistenceError, match="finalized game"):
+        await persist_schedule_entries(response)
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_a_204_with_no_representation_is_treated_as_a_normal_update():
+    """PostgREST can answer 204 with no body; that is not evidence of a guard
+    hit, and must not trigger a spurious second write."""
+    _mock_existing_mapping()
+    patch_route = respx.patch(f"{SUPABASE_URL}/rest/v1/games").mock(
+        return_value=httpx.Response(204)
+    )
+
+    response = AdapterResponse(value=[_entry("202610130")], source="sportsdataio")
+    assert await persist_schedule_entries(response) == (0, 1)
+    assert patch_route.call_count == 1

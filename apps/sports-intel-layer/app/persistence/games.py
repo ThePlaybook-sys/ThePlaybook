@@ -152,6 +152,52 @@ async def update_final_score(
         )
 
 
+async def finalize_game(
+    client: httpx.AsyncClient,
+    headers: dict,
+    *,
+    game_id: str,
+    final_score: dict,
+    finalized_at: datetime,
+) -> bool:
+    """Atomically finalizes one canonical game -- `status='final'`,
+    `final_score`, and `finalized_at` in a SINGLE write -- and returns
+    whether this call is the one that did it.
+
+    Added for the MSF -> canonical finalization wiring (2026-09-15). It exists
+    alongside `mark_game_finalized`/`update_final_score` rather than replacing
+    them, because those two are separate PATCHes: a caller using them can crash
+    between the two and leave a game `final` with a null score, or scored but
+    never stamped. `app.workers.postgame_worker` sequences them carefully and
+    keeps working unchanged; new callers should prefer this one.
+
+    **Idempotency is enforced by the database, not by a prior read.** The PATCH
+    carries `finalized_at=is.null` as a server-side filter, so a game that is
+    already finalized matches zero rows and nothing is written at all -- the
+    original finalization moment can never be overwritten by a re-run, and
+    there is no read-then-write window for two processes to race through.
+    Returns `True` when a row was actually written, `False` when the game was
+    already finalized (a normal, expected outcome on any repeat run, not an
+    error).
+    """
+    response = await client.patch(
+        "/rest/v1/games",
+        params={"id": f"eq.{game_id}", "finalized_at": "is.null"},
+        json={
+            "status": "final",
+            "final_score": final_score,
+            "finalized_at": finalized_at.isoformat(),
+        },
+        headers={**headers, "Prefer": "return=representation"},
+    )
+    if response.status_code not in (200, 201, 204):
+        raise GamesQueryError(
+            f"failed to finalize game {game_id}: {response.status_code} {response.text}"
+        )
+    rows = response.json() if response.content else []
+    return bool(rows)
+
+
 async def set_unresolved_poll_attempts(
     client: httpx.AsyncClient, headers: dict, *, game_id: str, attempts: int
 ) -> None:

@@ -79,6 +79,9 @@ SLATE_SIZE = 13  # same approved Sunday-slate peak as tests/test_load_concurrenc
 def _headers_env(monkeypatch):
     monkeypatch.setenv("SUPABASE_URL", SUPABASE_URL)
     monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "test-service-role-key")
+    # V2 (2026-09-15): Master Refresh is explicit-opt-in. This suite measures a
+    # RUNNING refresh at scale, so it opts in.
+    monkeypatch.setenv("MASTER_REFRESH_ENABLED", "true")
 
 
 def _slate_teams() -> list[tuple[str, str]]:

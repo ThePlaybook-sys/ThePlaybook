@@ -57,6 +57,9 @@ def demo_env(monkeypatch):
     monkeypatch.setenv("SUPABASE_URL", DEMO_SUPABASE_URL)
     monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "test-service-role-key")
     monkeypatch.setenv("INTERNAL_SERVICE_TOKEN", TOKEN)
+    # V2 (2026-09-15): Master Refresh is explicit-opt-in, and a Demo scenario
+    # step drives a real refresh against the in-memory Supabase fake.
+    monkeypatch.setenv("MASTER_REFRESH_ENABLED", "true")
 
 
 # -- internal-token auth guard --
