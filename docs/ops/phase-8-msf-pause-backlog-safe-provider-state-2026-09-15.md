@@ -236,3 +236,51 @@ already-running authorized automation (zero made by this pass). No
 unrelated cleanup. No redesign or removal of the MSF postgame pipeline.
 No manual DEN@KC action (moot -- already `confirmed_complete`). The live
 `MSF_POSTGAME_ENABLED` Railway variable was **not** flipped by this pass.
+
+## Addendum (2026-09-15, 09:56 UTC) -- MSF Cancellation Finalization
+
+MANSA HQ directive: "MSF CANCELLATION FINALIZATION." The MySportsFeeds
+subscription has now actually been canceled. Real access remains available
+through **September 17, 2026**. This addendum records status only --
+**no code, configuration, or Railway variable was changed by this pass.**
+
+**Provider status of record:**
+
+> **CANCELED -- ACCESS THROUGH SEPT 17 -- THEN INTENTIONALLY PAUSED.**
+
+**Instructions in force until the cutoff:**
+
+- `MSF_POSTGAME_ENABLED` remains **unset** on `sports-intel-layer` --
+  existing automation (dispatch, enrollment, real per-game capture)
+  continues operating exactly as it has all session, unmodified.
+- No increase in polling cadence, no additional/manual calls, no
+  deliberate consumption of remaining access -- the existing bounded
+  cadence (`MAX_GAMES_PER_DISPATCH_TICK=2`, `MAX_ENROLLMENTS_PER_
+  DISPATCH_TICK=20`, the unchanged `*/15 * * * *` cron schedule) is left
+  exactly as-is.
+- Nothing deleted: MSF credentials, `game_provider_ids` mappings,
+  `game_postgame_ingestion_state` history, `game_events` raw captures,
+  and the enrollment/dispatcher code (`app/workers/msf_postgame_
+  dispatcher.py`, `app/workers/msf_postgame_worker.py`, `app/persistence/
+  game_postgame_ingestion_state.py`) are all untouched and will remain so.
+
+**Action required before/at the Sept 17 cutoff** (not performed by this
+pass -- a future, explicit action): set `MSF_POSTGAME_ENABLED=false` on
+the `sports-intel-layer` Railway service (Section 7 of the base report
+above), then verify the next natural cron tick returns `paused=True`
+with zero MSF calls and a successful (non-CRASHED) cron exit -- the
+mechanism proving this (Section 3 of the base report: `paused` field,
+zero-HTTP-call behavior, existing cron health reporting) is already
+built, tested, and merged; only the live variable flip and its live
+verification remain, deliberately deferred to the cutoff itself.
+
+**Restoration intent (recorded, not built):** MSF is intended to be
+restored later. When it is, re-enabling is simply unsetting/reverting
+`MSF_POSTGAME_ENABLED` -- the existing bounded, oldest-first backlog
+recovery (Section 4 of the base report: `MAX_ENROLLMENTS_PER_DISPATCH_
+TICK`/`MAX_GAMES_PER_DISPATCH_TICK` + both selection queries' existing
+ordering) already handles whatever backlog accumulates during the pause,
+with no new code required at that time either.
+
+Per HQ's explicit instruction, this addendum only records status --
+no implementation phase was begun or is authorized by this pass.
