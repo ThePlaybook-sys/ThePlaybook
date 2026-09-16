@@ -54,9 +54,139 @@ import os
 import sys
 
 import httpx
+import sentry_sdk
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 _logger = logging.getLogger("cron_dispatch")
+
+
+# ===========================================================================
+# Sentry (2026-09-16, "CRON SENTRY + ODDS API BUDGET ARMING")
+# ===========================================================================
+#
+# WHY THIS MODULE NEEDED ITS OWN INIT. Every FastAPI service in this project
+# already calls `sentry_sdk.init()` in its own `app/main.py`, and
+# `apps/workers/app/main.py` is no exception -- but the cron services do not
+# run it. Their start command is `python -m app.cron_dispatch`, a DIFFERENT
+# entry point in the SAME image, so the SDK was installed
+# (`sentry-sdk[fastapi]` in requirements.txt) and never initialized. The
+# 2026-09-16 coverage audit found the consequence: nine cron services, the
+# entire schedule -> odds -> recommendation -> grading pipeline, reporting
+# nothing at all, while three of them crashed silently for hours.
+#
+# The coverage boundary was never "which app" -- it was "FastAPI entry point
+# vs. cron entry point", and this is the cron side of it.
+#
+# FLUSH IS NOT OPTIONAL HERE. Sentry's transport is asynchronous and
+# background-threaded, which is fine for a long-lived web process but not for
+# a finite job that calls `sys.exit` seconds later: without an explicit
+# flush, a captured event can be discarded before it ever leaves the
+# container. Every exit path below flushes.
+
+#: Statuses that are NORMAL OPERATION and must never raise a Sentry event,
+#: per HQ's explicit list: paused/disabled, successful-empty, budget or
+#: throttle pauses, and ordinary success. A cron that correctly does nothing
+#: is not an error, and treating it as one would train the alert to be
+#: ignored -- which costs more than having no alert at all.
+_NON_ERROR_STATUSES = frozenset(
+    {
+        "success",
+        "completed",
+        "paused",
+        "disabled",
+        "skipped",
+        "no_eligible_run",
+        # The Odds Worker's own two deliberate, named stop conditions. Both
+        # mean "the guard worked", which is the system behaving correctly.
+        "skipped_credit_guard",
+        "skipped_daily_budget",
+    }
+)
+
+
+def _init_sentry() -> None:
+    """Initializes Sentry for a cron process, with the identity tags the
+    coverage audit found missing.
+
+    `dsn` is read with `.get`, matching every other service in this project:
+    an unset DSN disables the SDK rather than crashing a cron job over
+    telemetry configuration. Telemetry must never be the reason a scheduled
+    job fails to run.
+
+    **The DSN value is supplied as a Railway variable REFERENCE** rather than
+    a copied literal, so it is resolved server-side at deploy time and never
+    passes through a session, a log line, or this repository.
+    """
+    sentry_sdk.init(
+        dsn=os.environ.get("SENTRY_DSN"),
+        send_default_pii=False,
+        environment=os.environ.get("RAILWAY_ENVIRONMENT_NAME", "dev"),
+        # Release attribution. RAILWAY_GIT_COMMIT_SHA is the value we
+        # actually want (it maps an event to a commit); the deployment id is
+        # a weaker but still useful fallback that at least distinguishes one
+        # build from another. Both may legitimately be absent, in which case
+        # Sentry simply records no release -- never a fabricated one.
+        release=os.environ.get("RAILWAY_GIT_COMMIT_SHA")
+        or os.environ.get("RAILWAY_DEPLOYMENT_ID")
+        or None,
+    )
+    # The audit's §6 finding: four services shared one Sentry project with no
+    # way to tell them apart, because Sentry's default `server_name` on
+    # Railway is an opaque container id. These two tags make an event
+    # attributable to a service AND to the specific job it was running, which
+    # is what makes a per-service or per-target alert rule possible at all.
+    sentry_sdk.set_tag("service", os.environ.get("RAILWAY_SERVICE_NAME", "unknown-cron"))
+    sentry_sdk.set_tag("cron_target", os.environ.get("CRON_DISPATCH_TARGET", "unset"))
+
+
+def _flush() -> None:
+    """Flushes pending events before the process exits. Bounded so a Sentry
+    outage can never hold a cron job open indefinitely."""
+    try:
+        sentry_sdk.flush(timeout=5.0)
+    except Exception:  # pragma: no cover - telemetry must never fail the job
+        _logger.warning("sentry flush failed", exc_info=True)
+
+
+def result_failure_summary(result: dict) -> tuple[str, str] | None:
+    """Classifies a 2xx worker payload as reportable or not.
+
+    Returns `(level, summary)` when the worker reported real trouble, or
+    `None` when it reported normal operation.
+
+    **This is the half of cron monitoring that HTTP status codes cannot
+    see, and the reason the odds credit leak went unnoticed for hours.**
+    Workers in this project are deliberately written never to raise --
+    `run_odds_worker`'s own docstring says "Always returns an
+    `OddsWorkerResult`, never raises" -- so a total failure arrives as a
+    `status` field inside a **200 OK**. Without this function, a worker could
+    fail on every single cycle and Sentry would never see an event, because
+    nothing ever threw.
+
+    Two levels, deliberately distinguished:
+
+    * `error`   -- `status="failed"`: the cycle did not do its job. This is
+                   the case HQ named explicitly.
+    * `warning` -- a status outside the known-good set that also carries a
+                   non-empty `failures` list (in practice `partial`): the
+                   cycle partly worked. **HQ's directive did not name this
+                   case either way**, so it is reported at a lower severity
+                   rather than silently dropped -- twelve consecutive
+                   `partial` cycles were exactly the shape of the credit
+                   leak, and a `partial` that carries failures is not
+                   "successful processing" by any reading. Flagged as a
+                   judgment call for HQ to overrule.
+    """
+    status = result.get("status")
+    if status == "failed":
+        detail = result.get("error") or result.get("failures") or "no detail reported"
+        return "error", f"worker reported status=failed: {detail}"
+    if status in _NON_ERROR_STATUSES:
+        return None
+    failures = result.get("failures")
+    if failures:
+        return "warning", f"worker reported status={status!r} with failures: {failures}"
+    return None
 
 _TARGET_PATHS = {
     "recommendation-worker": "/v1/internal/recommendation-worker/run",
@@ -158,10 +288,24 @@ async def dispatch(*, target: str, base_url: str, internal_token: str, client: h
 
 
 async def _run() -> int:
-    target = os.environ["CRON_DISPATCH_TARGET"]
-    base_url = os.environ["CRON_DISPATCH_BASE_URL"]
-    internal_token = os.environ["INTERNAL_SERVICE_TOKEN"]
+    # Invalid configuration (a missing required variable) raises KeyError
+    # here, at module-entry, before anything else can run -- one of the three
+    # pre-init windows the coverage audit named. It is captured explicitly
+    # rather than left to an excepthook, because the job exits immediately
+    # afterwards and an unflushed event is a lost event.
+    try:
+        target = os.environ["CRON_DISPATCH_TARGET"]
+        base_url = os.environ["CRON_DISPATCH_BASE_URL"]
+        internal_token = os.environ["INTERNAL_SERVICE_TOKEN"]
+    except KeyError as exc:
+        _logger.error("cron_dispatch misconfigured: missing required variable %s", exc)
+        sentry_sdk.capture_exception(exc)
+        return 1
 
+    # Re-tag now that the target is known: `_init_sentry` runs before this
+    # and reads the same variable, but re-setting it here keeps the tag
+    # correct even if initialization order ever changes.
+    sentry_sdk.set_tag("cron_target", target)
     _logger.info("cron_dispatch starting target=%s base_url=%s", target, base_url)
     try:
         # 600s (was 120s until the msf-postgame-worker target, 2026-09-14):
@@ -175,15 +319,57 @@ async def _run() -> int:
         async with httpx.AsyncClient(timeout=600.0) as client:
             result = await dispatch(target=target, base_url=base_url, internal_token=internal_token, client=client)
     except CronDispatchError as exc:
+        # Covers every dispatch-side failure in one place, because
+        # `dispatch` already normalizes them: an unknown/invalid target, a
+        # transport failure (DNS, connect, timeout, a malformed base URL --
+        # the exact shape that had cron-weather-worker crashing every 15
+        # minutes unseen), and any non-2xx response from the internal
+        # endpoint.
         _logger.error("cron_dispatch failed target=%s error=%s", target, exc)
+        sentry_sdk.capture_exception(exc)
         return 1
+    except Exception as exc:
+        # Anything genuinely unhandled. Captured and re-reported rather than
+        # allowed to reach a bare traceback, so the event is flushed before
+        # the process dies.
+        _logger.exception("cron_dispatch crashed target=%s", target)
+        sentry_sdk.capture_exception(exc)
+        return 1
+
+    # A 2xx does NOT mean the work succeeded -- see `result_failure_summary`.
+    reportable = result_failure_summary(result)
+    if reportable is not None:
+        level, summary = reportable
+        with sentry_sdk.new_scope() as scope:
+            scope.set_level(level)
+            scope.set_context("worker_result", result)
+            sentry_sdk.capture_message(f"cron target {target}: {summary}")
+        _logger.error("cron_dispatch target=%s reported failure: %s", target, summary)
+        # Still exit 0: the dispatch itself worked, and the worker returned a
+        # well-formed answer. Marking the Railway deployment CRASHED for a
+        # structured worker failure would conflate two different conditions
+        # and would make a budget pause look like a broken job. Sentry is now
+        # the channel for this, which is the whole point of the change.
+        _logger.info("cron_dispatch completed target=%s result=%s", target, result)
+        return 0
 
     _logger.info("cron_dispatch succeeded target=%s result=%s", target, result)
     return 0
 
 
 def main() -> None:
-    exit_code = asyncio.run(_run())
+    _init_sentry()
+    # Defaults to failure: if `_run` itself dies in a way it could not
+    # report, the job must exit non-zero rather than let an unbound name
+    # turn a real failure into a different, more confusing one.
+    exit_code = 1
+    try:
+        exit_code = asyncio.run(_run())
+    except BaseException as exc:  # noqa: BLE001 - last resort before exit
+        _logger.exception("cron_dispatch aborted before it could report")
+        sentry_sdk.capture_exception(exc)
+    finally:
+        _flush()
     sys.exit(exit_code)
 
 
