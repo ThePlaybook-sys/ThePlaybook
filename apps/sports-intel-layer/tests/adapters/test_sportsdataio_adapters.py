@@ -16,6 +16,7 @@ here asserts they reconcile mathematically -- see PROVENANCE.md).
 """
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 
 import httpx
@@ -266,6 +267,117 @@ async def test_schedule_unrecognized_venue_type_is_isolated_and_skipped(caplog):
         response = await adapter.fetch_schedule("2026REG")
     assert response.value == []
     assert "skipping malformed/unrecognized schedule row" in caplog.text
+
+
+# ------------------------------------------------------------
+# Venue alias tolerance (2026-09-16, "SPORTSDATAIO VENUE ALIAS FIX")
+#
+# The first real full-season ingestion persisted 271 games instead of 272.
+# SportsDataIO spelled ONE row's StadiumDetails.Type "Retractable Dome" (with a
+# space) while spelling that same stadium "RetractableDome" on its other eight
+# home games. The strict allowlist refused it -- correctly, but it cost a real
+# game (GameKey 202610902, CIN @ ATL, Week 9).
+#
+# Separator and case are formatting of a value, not the value. These prove the
+# three CONFIRMED concepts resolve however they are cosmetically spelled, while
+# a genuinely unknown concept still raises.
+# ------------------------------------------------------------
+
+
+def _schedule_payload_with_venue_type(raw_type):
+    """ONE real captured schedule row, with only StadiumDetails.Type swapped, so
+    the assertions are about that row alone (schedules_normal.json holds
+    several)."""
+    row = json.loads(json.dumps(load("schedules_normal.json")[0]))
+    row["StadiumDetails"]["Type"] = raw_type
+    return [row]
+
+
+@pytest.mark.asyncio
+@respx.mock
+@pytest.mark.parametrize(
+    "raw_type",
+    [
+        "RetractableDome",       # the spelling already confirmed from live data
+        "Retractable Dome",      # the exact production value that cost us a game
+        "retractable dome",
+        "RETRACTABLE DOME",
+        "  RetractableDome  ",
+    ],
+)
+async def test_schedule_venue_type_resolves_through_cosmetic_spelling(raw_type):
+    respx.get(f"{BASE_URL}/v3/nfl/scores/json/Schedules/2026REG").mock(
+        return_value=httpx.Response(200, json=_schedule_payload_with_venue_type(raw_type))
+    )
+    adapter = SportsDataIOScheduleAdapter(client=_client(), api_key=API_KEY)
+    response = await adapter.fetch_schedule("2026REG")
+
+    assert len(response.value) == 1, f"{raw_type!r} must not be skipped"
+    assert response.value[0].venue_type == "retractable_dome"
+
+
+@pytest.mark.asyncio
+@respx.mock
+@pytest.mark.parametrize(
+    ("raw_type", "expected"),
+    [("Outdoor", "outdoor"), ("out door", "outdoor"), ("Dome", "dome"), ("DOME", "dome")],
+)
+async def test_the_other_two_confirmed_venue_types_are_equally_tolerant(raw_type, expected):
+    respx.get(f"{BASE_URL}/v3/nfl/scores/json/Schedules/2026REG").mock(
+        return_value=httpx.Response(200, json=_schedule_payload_with_venue_type(raw_type))
+    )
+    adapter = SportsDataIOScheduleAdapter(client=_client(), api_key=API_KEY)
+    response = await adapter.fetch_schedule("2026REG")
+
+    assert response.value[0].venue_type == expected
+
+
+@pytest.mark.asyncio
+@respx.mock
+@pytest.mark.parametrize("raw_type", ["OpenAirWithPartialCanopy", "Open Air", "Retractable", "Roof"])
+async def test_a_genuinely_unknown_venue_concept_still_raises(raw_type, caplog):
+    """The allowlist is NOT loosened. Only cosmetic respellings of the three
+    confirmed concepts resolve; a different concept -- including a partial
+    match like "Retractable" -- is still refused, logged and skipped."""
+    respx.get(f"{BASE_URL}/v3/nfl/scores/json/Schedules/2026REG").mock(
+        return_value=httpx.Response(200, json=_schedule_payload_with_venue_type(raw_type))
+    )
+    adapter = SportsDataIOScheduleAdapter(client=_client(), api_key=API_KEY)
+    with caplog.at_level("WARNING"):
+        response = await adapter.fetch_schedule("2026REG")
+
+    assert response.value == []
+    assert "skipping malformed/unrecognized schedule row" in caplog.text
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_a_non_string_venue_type_is_refused_not_coerced():
+    respx.get(f"{BASE_URL}/v3/nfl/scores/json/Schedules/2026REG").mock(
+        return_value=httpx.Response(200, json=_schedule_payload_with_venue_type(42))
+    )
+    adapter = SportsDataIOScheduleAdapter(client=_client(), api_key=API_KEY)
+    response = await adapter.fetch_schedule("2026REG")
+    assert response.value == []
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_the_one_refused_row_no_longer_costs_a_game_in_a_multi_row_response():
+    """Regression for the real incident shape: a season response where one row
+    carries the spaced spelling must now persist EVERY row, not n-1."""
+    payload = load("schedules_normal.json")
+    spaced = json.loads(json.dumps(payload[0]))
+    spaced["GameKey"] = "202610902"
+    spaced["StadiumDetails"]["Type"] = "Retractable Dome"
+    respx.get(f"{BASE_URL}/v3/nfl/scores/json/Schedules/2026REG").mock(
+        return_value=httpx.Response(200, json=[payload[0], spaced])
+    )
+    adapter = SportsDataIOScheduleAdapter(client=_client(), api_key=API_KEY)
+    response = await adapter.fetch_schedule("2026REG")
+
+    assert len(response.value) == 2
+    assert {e.game_external_id for e in response.value} == {"202610130", "202610902"}
 
 
 @pytest.mark.asyncio

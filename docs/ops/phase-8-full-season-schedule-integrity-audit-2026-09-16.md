@@ -141,3 +141,54 @@ the Odds Worker proof depends on is sound:
 The missing game cannot affect odds collection for Week 2, and the gap is loud and recorded rather
 than silent. I would fix the allowlist before the next enabled refresh, but it is not a blocker for
 proceeding.
+
+---
+
+## Addendum — venue alias fix APPLIED (2026-09-16)
+
+**Directive:** MANSA HQ — "SPORTSDATAIO VENUE ALIAS FIX". **Zero provider calls.**
+
+> **Note:** that directive's message was **truncated mid-sentence** ("…while the strict venue
+> allowlist recognizes the known equivalent spelling"). The fix itself was unambiguous — named in
+> the title, root cause confirmed in the body, and already proposed and accepted — so it is applied
+> here. Anything the message went on to say (in particular whether the recovery Schedule call is
+> authorized) was **not** acted on. See "Not done" below.
+
+### What changed
+
+`app/adapters/providers/sportsdataio.py` — `_normalize_venue_type` now matches on the value with
+**whitespace removed and case folded**, via a new `_VENUE_TYPE_BY_COSMETIC_KEY` derived from the
+existing `_VENUE_TYPE_MAP`.
+
+**The allowlist is not loosened.** It is still exactly the same three CONFIRMED concepts —
+`Outdoor`, `Dome`, `RetractableDome`. What changed is that separator and letter-case are now treated
+as *formatting of* a value rather than part of it. A genuinely different concept still raises,
+is logged, and the row is still isolated rather than aborting the fetch.
+
+The reasoning, recorded in the code: the strict allowlist was not wrong to refuse
+`'Retractable Dome'` — refusing unknown strings is what kept this honest and loud. It was refusing
+a *cosmetic respelling of something it already knew*, and that distinction is what cost a real game.
+
+### Tests — 15 added, all driven by the real production value
+
+| Test | Proves |
+|---|---|
+| `…resolves_through_cosmetic_spelling` (5 cases) | `RetractableDome`, **`Retractable Dome`** (the exact value that cost us the game), `retractable dome`, `RETRACTABLE DOME`, padded — all → `retractable_dome` |
+| `…other_two_confirmed_venue_types_are_equally_tolerant` (4) | `Outdoor`/`out door`/`Dome`/`DOME` resolve too |
+| `…genuinely_unknown_venue_concept_still_raises` (4) | `OpenAirWithPartialCanopy`, `Open Air`, **`Retractable`**, `Roof` still refused — a *partial* match is not a match |
+| `…non_string_venue_type_is_refused_not_coerced` | `42` refused, never coerced |
+| `…one_refused_row_no_longer_costs_a_game_in_a_multi_row_response` | regression in the real incident shape: a 2-row response where one carries the spaced spelling now persists **both**, not n−1 |
+
+The pre-existing `test_schedule_unrecognized_venue_type_is_isolated_and_skipped` still passes
+unchanged — its fixture uses `OpenAirWithPartialCanopy`, a genuinely unknown concept.
+
+**Suite: `sports-intel-layer` 994 passed / 5 failed** — the same pre-existing wall-clock failures in
+`test_odds_cadence_persistence.py`, unrelated. Up from 979; +15 tests, zero new failures.
+
+### Not done — needs authorization
+
+- **No provider call made.** The missing game (`202610902`, CIN @ ATL, Week 9) is **still absent**;
+  the season is still 271. The fix means the next enabled Schedule refresh will admit it, but that
+  refresh has not been authorized or run.
+- `MASTER_REFRESH_ENABLED` untouched (**false**); `cron-schedule-refresh` untouched (`0 9 * * *`).
+- No odds, recommendations, rosters, or Railway changes.

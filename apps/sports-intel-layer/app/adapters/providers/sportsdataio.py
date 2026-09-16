@@ -232,6 +232,27 @@ _VENUE_TYPE_MAP = {
     "RetractableDome": "retractable_dome",
 }
 
+#: Cosmetic-spelling tolerance for the SAME three confirmed concepts
+#: (2026-09-16, HQ-authorized "SPORTSDATAIO VENUE ALIAS FIX").
+#:
+#: The first real full-season Schedule ingestion cost us a genuine game.
+#: SportsDataIO emitted `"Retractable Dome"` -- with a space -- on exactly ONE
+#: row out of 272 (GameKey 202610902, CIN @ ATL, Week 9), while spelling the
+#: identical venue `"RetractableDome"` on that same stadium's other eight home
+#: games. The strict allowlist correctly refused the unknown string, logged it,
+#: and isolated the row -- and the season persisted 271 games instead of 272.
+#:
+#: The lesson is NOT that the allowlist was too strict. It is that separator
+#: and letter-case are *formatting* of a value, not the value itself. This map
+#: is keyed on each confirmed value with whitespace removed and case folded, so
+#: any cosmetic respelling of a KNOWN concept resolves, while a genuinely
+#: unknown concept still raises exactly as before. No new venue type is
+#: admitted here -- it is the same three, spelled flexibly.
+_VENUE_TYPE_BY_COSMETIC_KEY = {
+    "".join(raw.split()).casefold(): normalized
+    for raw, normalized in _VENUE_TYPE_MAP.items()
+}
+
 _logger = logging.getLogger("sports-intel-layer.adapters.sportsdataio")
 
 #: CONFIRMED FROM PROVIDER DOCUMENTATION (Mac, 2026-08-12): SportsDataIO's
@@ -503,17 +524,29 @@ class SportsDataIOScheduleAdapter(ScheduleAdapter):
         treats that as a legitimate "unknown," never guessed. A *present
         but unrecognized* value still raises, same discipline as
         _normalize_status/_normalize_season_type -- an unmapped value is
-        never silently passed through."""
+        never silently passed through.
+
+        **Cosmetic spelling is tolerated; unknown concepts are not**
+        (2026-09-16). Lookup is on the value with whitespace removed and case
+        folded, so `"RetractableDome"`, `"Retractable Dome"` and
+        `"RETRACTABLE DOME"` all resolve to the one confirmed concept -- see
+        `_VENUE_TYPE_BY_COSMETIC_KEY` for why that cost a real game. A value
+        that is not one of the three confirmed concepts still raises."""
         if raw_venue_type is None:
             return None
-        if raw_venue_type not in _VENUE_TYPE_MAP:
+        cosmetic_key = (
+            "".join(raw_venue_type.split()).casefold()
+            if isinstance(raw_venue_type, str)
+            else None
+        )
+        if cosmetic_key not in _VENUE_TYPE_BY_COSMETIC_KEY:
             raise ProviderDataError(
                 f"unrecognized StadiumDetails.Type {raw_venue_type!r} -- only "
-                f"{sorted(_VENUE_TYPE_MAP)} are CONFIRMED from live data, "
-                "not silently mapped",
+                f"{sorted(_VENUE_TYPE_MAP)} are CONFIRMED from live data "
+                "(matched ignoring whitespace and case), not silently mapped",
                 provider=self.provider_name,
             )
-        return _VENUE_TYPE_MAP[raw_venue_type]
+        return _VENUE_TYPE_BY_COSMETIC_KEY[cosmetic_key]
 
 
 class SportsDataIOTeamStatsAdapter(TeamStatsAdapter, _WeeklyBulkCacheMixin):
