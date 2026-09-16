@@ -202,12 +202,37 @@ where the write lands.
 
 ---
 
-## `cron-news-worker` natural tick
+## `cron-news-worker` natural tick — OBSERVED, and it succeeded
 
-**Not available during this pass.** Its schedule is `0 */4 * * *`; the next tick is **20:00 UTC**
-and this work completed at ~19:13 UTC. It was **not triggered**. Still an observation item — its
-fix (a rebuild carrying the 600s client timeout, replacing a stale 2026-09-13 image that still
-used 120s) is deployed and healthy, but unverified until that tick runs.
+The 20:00 UTC tick fired while this session was still open and was observed **read-only**. It was
+not triggered.
+
+```
+2026-09-16 20:02:27  cron_dispatch starting target=news-worker
+                     base_url=https://sports-intel-layer-dev.up.railway.app
+2026-09-16 20:02:29  POST .../v1/internal/news-worker/run "HTTP/1.1 200 OK"
+2026-09-16 20:02:29  cron_dispatch succeeded target=news-worker result={'status': 'success',
+                     'games_considered': 16, 'teams_considered': 32, 'teams_due': 0,
+                     'teams_skipped_not_due': 32, 'teams_unresolved': [],
+                     'failures': [], 'error': None}
+```
+
+Railway agrees: `lastExecutionStatus: succeeded` at `2026-09-16T20:02:30.724Z`, zero failures,
+`state: cronSucceeded`. **The crash loop that had been running since 16:05 is over.**
+
+**One honest qualification.** This tick completed in **1.2 seconds** because `teams_due: 0` — every
+team was correctly throttled by the News Worker's own cadence, so no GNews fetch happened. That
+proves the dispatcher is healthy and the service is no longer crashing, but it does **not**
+independently re-prove the 120s-`ReadTimeout` diagnosis, because nothing slow ran. The evidence
+for that diagnosis remains what it was: a failure at exactly 120 seconds with an empty httpx
+message, on an image built one day before the timeout went 120s → 600s. The first tick that
+actually fetches will be the conclusive one — and if it still times out, the fault is in the
+endpoint rather than the dispatcher, and **Sentry will now report it** instead of it being
+invisible.
+
+A second, quieter confirmation: this run produced **no Sentry event**, which is correct. `success`
+is on the non-reportable list shipped earlier today, so the new cron instrumentation stayed silent
+on a healthy cron exactly as designed.
 
 ---
 
