@@ -57,8 +57,22 @@ from app.adapters.providers.the_odds_api import TheOddsApiOddsAdapter
 from app.persistence.game_identity import GameIdentityError, resolve_game_ids
 from app.persistence.games import GamesQueryError, list_games_in_window, set_unresolved_poll_attempts
 from app.persistence.odds_api_credit_ledger import CREDITS_PER_CALL, CreditLedgerError, read_credit_ledger, record_call
+from app.persistence.odds_api_daily_call_budget import (
+    DailyCallBudgetError,
+    read_calls_used,
+    utc_budget_date,
+)
+from app.persistence.odds_api_daily_call_budget import record_call as record_daily_call
 from app.persistence.odds_game_linking import ProviderEventIdentity, resolve_and_link_odds_events
 from app.persistence.odds_snapshots import PersistenceError, persist_odds_lines
+from app.persistence.odds_worker_poll_state import PollState, PollStateError, record_attempt
+from app.workers.odds_backoff import (
+    OUTCOME_PROVIDER_FAILURE,
+    OUTCOME_SUCCESS,
+    OUTCOME_UNRESOLVED,
+    backoff_elapsed,
+    next_failure_count,
+)
 from app.workers.windows import Window, classify_window, should_poll, ttl_seconds
 
 _PROVIDER_NAME = "the_odds_api"
@@ -71,6 +85,31 @@ _PROVIDER_NAME = "the_odds_api"
 #: `_check_credit_guard`'s own docstring).
 _CREDIT_BUDGET_ENV_VAR = "THE_ODDS_API_MONTHLY_CREDIT_BUDGET"
 _CREDIT_FLOOR_ENV_VAR = "THE_ODDS_API_MIN_REMAINING_CREDITS"
+
+#: Odds Worker Cost Hardening (2026-09-16). A HARD per-UTC-day ceiling on
+#: provider calls, complementary to the monthly guard above rather than a
+#: replacement for it: the monthly ledger stops the PERIOD being overrun,
+#: this stops a single legal-but-expensive day consuming the whole
+#: allocation before the period guard ever objects. Under the current */15
+#: cron a day can legally reach 96 calls / 288 credits.
+#:
+#: Same explicit-configuration discipline as the monthly guard: an unset
+#: value is NEVER defaulted to an invented number. Unset means "no daily
+#: ceiling configured", which this worker reports as a disclosed no-op
+#: rather than silently enforcing a made-up limit.
+_DAILY_CALL_BUDGET_ENV_VAR = "ODDS_API_MAX_CALLS_PER_DAY"
+
+#: How many of the day's calls are held back for games close to kickoff.
+#: Once `calls_used` reaches `max_calls - reserve`, the remaining calls are
+#: spent ONLY on a cycle where at least one due game has left the FAR tier.
+#:
+#: This is the whole priority mechanism, and it is shaped by the cost model
+#: rather than bolted on: one bulk call serves every due game at once, so
+#: there is nothing to rank WITHIN a call -- the only meaningful question is
+#: whether THIS cycle is worth a call at all. Reserving the tail of the day's
+#: budget for ramp-tier cycles answers exactly that. Unset means zero
+#: reserve, i.e. no prioritization, which is today's behaviour.
+_DAILY_RESERVE_ENV_VAR = "ODDS_API_DAILY_CALL_RESERVE_FOR_RAMP"
 
 #: Phase 7 Controlled Real Odds Activation safety fix (2026-09-07), after
 #: a real incident: 3 manually-seeded games that never linked to a real
@@ -103,16 +142,25 @@ _CANDIDATE_WINDOW_DAYS = 7
 
 @dataclass
 class OddsWorkerResult:
-    status: str  # "success" | "partial" | "failed" | "skipped_credit_guard"
+    #: "success" | "partial" | "failed" | "skipped_credit_guard"
+    #: | "skipped_daily_budget"
+    status: str
     games_considered: int = 0
     games_due: int = 0
     games_skipped_not_due: int = 0
+    #: Games that cadence WOULD have polled but which are still inside their
+    #: failure backoff window. Reported separately from
+    #: `games_skipped_not_due` so a slate being suppressed by repeated
+    #: failures can never look like a slate that is simply up to date.
+    games_skipped_backoff: int = 0
     lines_persisted: int = 0
     newly_linked: int = 0
     unresolved_events: list[str] = field(default_factory=list)
     failures: list[str] = field(default_factory=list)
     error: str | None = None
     credits_used_this_period: int | None = None
+    #: Provider calls spent on the current UTC day, after this cycle.
+    daily_calls_used: int | None = None
 
 
 async def _check_credit_guard(supabase_client: httpx.AsyncClient, headers: dict) -> tuple[bool, int | None]:
@@ -135,6 +183,131 @@ async def _check_credit_guard(supabase_client: httpx.AsyncClient, headers: dict)
     used = ledger["credits_used_this_period"] if ledger else 0
     remaining = budget - used
     return remaining > floor, used
+
+
+async def _check_daily_call_budget(
+    supabase_client: httpx.AsyncClient,
+    headers: dict,
+    *,
+    now: datetime,
+    due_windows: list[Window],
+) -> tuple[bool, int | None, str | None]:
+    """Returns `(allowed, calls_used_today, denial_reason)` for the hard
+    per-UTC-day call ceiling.
+
+    Fails OPEN when `ODDS_API_MAX_CALLS_PER_DAY` is unset -- an unconfigured
+    ceiling is a disclosed no-op, never an invented number, exactly as
+    `_check_credit_guard` treats its own two variables. Fails CLOSED once the
+    day's calls are spent.
+
+    **The reserve is the priority mechanism.** One bulk call serves every due
+    game at once, so there is nothing to rank within a call; the only
+    meaningful decision is whether this cycle deserves one. Once
+    `calls_used >= max_calls - reserve`, the tail of the day's budget is
+    released only for a cycle with at least one due game out of the FAR tier
+    -- i.e. inside two hours of kickoff, where market movement is worth the
+    most and a missed poll cannot be made up later.
+    """
+    budget_raw = os.environ.get(_DAILY_CALL_BUDGET_ENV_VAR)
+    if budget_raw is None:
+        return True, None, None
+
+    max_calls = int(budget_raw)
+    reserve_raw = os.environ.get(_DAILY_RESERVE_ENV_VAR)
+    reserve = int(reserve_raw) if reserve_raw is not None else 0
+
+    today = utc_budget_date(now)
+    calls_used = await read_calls_used(
+        supabase_client, headers, provider_name=_PROVIDER_NAME, budget_date=today
+    )
+
+    if calls_used >= max_calls:
+        return (
+            False,
+            calls_used,
+            f"daily call budget exhausted: {calls_used}/{max_calls} calls used on {today}",
+        )
+
+    discretionary_limit = max_calls - reserve
+    if reserve > 0 and calls_used >= discretionary_limit:
+        has_ramp_game = any(w is not Window.FAR for w in due_windows)
+        if not has_ramp_game:
+            return (
+                False,
+                calls_used,
+                (
+                    f"daily discretionary budget spent ({calls_used}/{discretionary_limit}); "
+                    f"remaining {reserve} call(s) reserved for games inside 2h of kickoff, "
+                    f"and no due game has left the FAR tier"
+                ),
+            )
+
+    return True, calls_used, None
+
+
+async def _record_attempts(
+    supabase_client: httpx.AsyncClient,
+    headers: dict,
+    *,
+    now: datetime,
+    due_games: list[dict],
+    poll_state: dict[str, PollState],
+    captured_game_ids: set,
+    outcome: str | None = None,
+    failure_reason: str | None = None,
+    linked_game_ids: set | None = None,
+) -> list[str]:
+    """Records one attempt row per due game and returns any write failures.
+
+    Called ONLY after a real provider round-trip -- a cycle that made no call
+    attempted nothing, and stamping an attempt for it would push healthy
+    games into a backoff they did not earn.
+
+    `outcome`, when given, applies to every due game (the provider-failure
+    case, where nothing can be attributed per game). Otherwise the outcome is
+    derived per game: captured this round -> success, everything else ->
+    unresolved, with a reason that distinguishes "we have no event for this
+    game at all" from "we have its event but it returned no lines".
+
+    Write failures are returned rather than raised, matching this worker's
+    established per-step isolation: failing to record an attempt must never
+    discard odds a successful fetch already returned.
+    """
+    linked_game_ids = linked_game_ids or set()
+    failures: list[str] = []
+    for game in due_games:
+        game_id = game["id"]
+        captured = game_id in captured_game_ids
+        if outcome is not None:
+            game_outcome = outcome
+            reason = failure_reason
+        elif captured:
+            game_outcome = OUTCOME_SUCCESS
+            reason = None
+        else:
+            game_outcome = OUTCOME_UNRESOLVED
+            reason = (
+                "linked provider event returned no odds lines this cycle"
+                if game_id in linked_game_ids
+                else "no resolvable provider event matched this game"
+            )
+
+        existing = poll_state.get(game_id)
+        current = existing.consecutive_failure_count if existing is not None else 0
+        try:
+            await record_attempt(
+                supabase_client,
+                headers,
+                game_id=game_id,
+                provider_name=_PROVIDER_NAME,
+                attempted_at=now,
+                outcome=game_outcome,
+                consecutive_failure_count=next_failure_count(current=current, outcome=game_outcome),
+                failure_reason=reason,
+            )
+        except PollStateError as exc:
+            failures.append(f"poll state update failed for {game_id}: {exc}")
+    return failures
 
 
 def _auth_headers() -> dict:
@@ -162,6 +335,7 @@ async def run_odds_worker(
     last_polled_at: dict[str, datetime] | None = None,
     target_game_ids: list[str] | None = None,
     odds_adapter: OddsAdapter | None = None,
+    poll_state: dict[str, PollState] | None = None,
 ) -> OddsWorkerResult:
     """Runs one Odds Worker cycle. Always returns an `OddsWorkerResult`,
     never raises -- same finite-job shape as `run_master_refresh`.
@@ -195,6 +369,7 @@ async def run_odds_worker(
     cache_backend = cache_backend or InMemoryCacheBackend()
     now = now or datetime.now(timezone.utc)
     last_polled_at = last_polled_at or {}
+    poll_state = poll_state or {}
 
     today: date = now.date()
     try:
@@ -210,6 +385,7 @@ async def run_odds_worker(
     target_set = set(target_game_ids) if target_game_ids is not None else None
     due_games: list[dict] = []
     skipped = 0
+    skipped_backoff = 0
     for game in games:
         if target_set is not None:
             if game["id"] in target_set:
@@ -229,13 +405,49 @@ async def run_odds_worker(
             # games (manual_seed=false) are never affected by this check.
             skipped += 1
             continue
-        if should_poll(now=now, kickoff=kickoff, last_polled_at=last_polled_at.get(game["id"])):
-            due_games.append(game)
-        else:
+
+        # Cost + Failure Hardening (2026-09-16). Due-selection now consults
+        # BOTH halves of a game's history, because they answer different
+        # questions and conflating them is what caused the 2026-09-16 leak:
+        #
+        #   last SUCCESS  -> "is fresh odds data due for this game?" (cadence)
+        #   last ATTEMPT  -> "have we already tried recently and failed?"
+        #                    (backoff)
+        #
+        # Cadence is fed ONLY by a real capture, never by a bare attempt, so
+        # an unresolved poll can never masquerade as fresh odds data. Backoff
+        # can only ever SUPPRESS a poll cadence would have allowed -- it can
+        # never cause one.
+        state = poll_state.get(game["id"])
+        # Fall back to the snapshot-derived timestamp when this game has no
+        # poll-state row yet. Without this, every game that captured before
+        # this feature shipped would read as never-successful on the first
+        # run afterwards and come due at once, spending a call to rediscover
+        # what `odds_snapshots` already knows.
+        last_success = (
+            state.last_success_at
+            if state is not None and state.last_success_at is not None
+            else last_polled_at.get(game["id"])
+        )
+        if not should_poll(now=now, kickoff=kickoff, last_polled_at=last_success):
             skipped += 1
+            continue
+        if state is not None and not backoff_elapsed(
+            now=now,
+            last_attempt_at=state.last_attempt_at,
+            consecutive_failure_count=state.consecutive_failure_count,
+        ):
+            skipped_backoff += 1
+            continue
+        due_games.append(game)
 
     if not due_games:
-        return OddsWorkerResult(status="success", games_considered=len(games), games_skipped_not_due=skipped)
+        return OddsWorkerResult(
+            status="success",
+            games_considered=len(games),
+            games_skipped_not_due=skipped,
+            games_skipped_backoff=skipped_backoff,
+        )
 
     # Phase 7 Controlled Real Odds Activation (2026-09-07): checked AFTER
     # deciding something is due (a guard-skip is a real, named outcome
@@ -252,6 +464,7 @@ async def run_odds_worker(
             games_considered=len(games),
             games_due=len(due_games),
             games_skipped_not_due=skipped,
+            games_skipped_backoff=skipped_backoff,
             credits_used_this_period=credits_used,
         )
 
@@ -262,6 +475,41 @@ async def run_odds_worker(
     due_windows = [classify_window(now=now, kickoff=_parse_datetime(g["scheduled_start"])) for g in due_games]
     dynamic_ttl = min(ttl_seconds(w) for w in due_windows)
 
+    # Cost Hardening (2026-09-16): the per-day ceiling, checked AFTER the
+    # monthly guard (a blown month is the more serious condition and should
+    # be the reported one) and BEFORE any provider call. A budget stop is a
+    # normal, named outcome -- it returns cleanly so the cron exits 0 rather
+    # than CRASHING, the same discipline `master_refresh`'s paused status
+    # already follows.
+    try:
+        budget_allowed, daily_calls_used, budget_reason = await _check_daily_call_budget(
+            supabase_client, headers, now=now, due_windows=due_windows
+        )
+    except DailyCallBudgetError as exc:
+        return OddsWorkerResult(
+            status="failed",
+            games_considered=len(games),
+            games_due=len(due_games),
+            games_skipped_not_due=skipped,
+            games_skipped_backoff=skipped_backoff,
+            credits_used_this_period=credits_used,
+            error=f"daily call budget read failed: {exc}",
+        )
+    if not budget_allowed:
+        # No attempt is recorded for these games: no provider call was made,
+        # so nothing was attempted, and recording one would wrongly push
+        # healthy games into a backoff they did not earn.
+        return OddsWorkerResult(
+            status="skipped_daily_budget",
+            games_considered=len(games),
+            games_due=len(due_games),
+            games_skipped_not_due=skipped,
+            games_skipped_backoff=skipped_backoff,
+            credits_used_this_period=credits_used,
+            daily_calls_used=daily_calls_used,
+            error=budget_reason,
+        )
+
     odds_adapter = odds_adapter or TheOddsApiOddsAdapter(client=the_odds_api_client, api_key=the_odds_api_key)
     caching = CachingAdapter(odds_adapter, cache_backend, ttl_seconds=dynamic_ttl)
     try:
@@ -269,8 +517,32 @@ async def run_odds_worker(
             "fetch_odds", [], response_model=AdapterResponse[list[OddsLine]]
         )
     except ProviderError as exc:
+        # The call itself failed, so nothing can be attributed to any
+        # individual game -- but every due game WAS attempted, and recording
+        # that is the whole point of the attempt/success split. Without it a
+        # provider outage would leave every game reading as never-polled and
+        # hammering the provider on every tick for as long as the outage
+        # lasted.
+        attempt_failures = await _record_attempts(
+            supabase_client,
+            headers,
+            now=now,
+            due_games=due_games,
+            poll_state=poll_state,
+            captured_game_ids=set(),
+            outcome=OUTCOME_PROVIDER_FAILURE,
+            failure_reason=f"provider call failed: {exc}",
+        )
         return OddsWorkerResult(
-            status="failed", games_considered=len(games), games_due=len(due_games), error=f"Odds fetch failed: {exc}"
+            status="failed",
+            games_considered=len(games),
+            games_due=len(due_games),
+            games_skipped_not_due=skipped,
+            games_skipped_backoff=skipped_backoff,
+            credits_used_this_period=credits_used,
+            daily_calls_used=daily_calls_used,
+            failures=attempt_failures,
+            error=f"Odds fetch failed: {exc}",
         )
 
     # Record real credit usage -- ONLY for a genuine provider round-trip,
@@ -285,6 +557,17 @@ async def run_odds_worker(
             credits_used_this_period = await record_call(supabase_client, headers, provider_name=_PROVIDER_NAME, credits=CREDITS_PER_CALL)
         except CreditLedgerError as exc:
             ledger_failures.append(f"credit ledger write failed: {exc}")
+        # Same "real round-trip only" rule as the credit ledger above: a
+        # cache hit costs nothing and must not consume the day's ceiling.
+        try:
+            daily_calls_used = await record_daily_call(
+                supabase_client,
+                headers,
+                provider_name=_PROVIDER_NAME,
+                budget_date=utc_budget_date(now),
+            )
+        except DailyCallBudgetError as exc:
+            ledger_failures.append(f"daily call budget write failed: {exc}")
 
     events_by_provider_id: dict[str, OddsLine] = {}
     for line in response.value:
@@ -351,12 +634,50 @@ async def run_odds_worker(
                 attempt_failures.append(f"unresolved_poll_attempts update failed for {game['id']}: {exc}")
 
     persisted = 0
+    persistence_error: str | None = None
     failures: list[str] = list(ledger_failures) + attempt_failures
     if lines_to_persist:
         try:
             persisted = await persist_odds_lines(AdapterResponse(value=lines_to_persist, source=response.source))
         except PersistenceError as exc:
+            persistence_error = str(exc)
             failures.append(f"persistence failed: {exc}")
+
+    # Cost + Failure Hardening (2026-09-16): stamp every due game's attempt,
+    # success or not. This is what stops an unresolvable game coming due on
+    # every single tick forever. A game that captured resets to zero
+    # failures and returns to ordinary cadence immediately; a game that did
+    # not backs off deterministically.
+    #
+    # Deliberately keyed off `captured_game_ids` -- what actually persisted
+    # -- rather than off the absence of an `unresolved_events` entry. Those
+    # entries are keyed by the PROVIDER's event id, which by definition
+    # could not be resolved to a game_id, so they can never be attributed
+    # back to a specific canonical game.
+    #
+    # A persistence failure is NOT a success for any game, however many
+    # lines the provider returned: nothing landed. It is recorded as a
+    # uniform non-success for the whole due set, with the persistence error
+    # itself as the reason, so the failure is preserved rather than dropped
+    # AND a repeating persistence fault backs off instead of paying for a
+    # provider call every tick to throw the results away.
+    failures.extend(
+        await _record_attempts(
+            supabase_client,
+            headers,
+            now=now,
+            due_games=due_games,
+            poll_state=poll_state,
+            captured_game_ids=set() if persistence_error else captured_game_ids,
+            outcome=OUTCOME_UNRESOLVED if persistence_error else None,
+            failure_reason=(
+                f"odds lines fetched but persistence failed: {persistence_error}"
+                if persistence_error
+                else None
+            ),
+            linked_game_ids=set(already_linked.values()),
+        )
+    )
 
     status = "partial" if (failures or unresolved) else "success"
 
@@ -365,9 +686,11 @@ async def run_odds_worker(
         games_considered=len(games),
         games_due=len(due_games),
         games_skipped_not_due=skipped,
+        games_skipped_backoff=skipped_backoff,
         lines_persisted=persisted,
         newly_linked=newly_linked,
         credits_used_this_period=credits_used_this_period,
+        daily_calls_used=daily_calls_used,
         unresolved_events=unresolved,
         failures=failures,
     )
