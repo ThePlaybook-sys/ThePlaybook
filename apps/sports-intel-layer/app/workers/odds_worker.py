@@ -43,6 +43,7 @@ processing" requirement.
 """
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
@@ -56,7 +57,15 @@ from app.adapters.models import AdapterResponse, OddsLine
 from app.adapters.providers.the_odds_api import TheOddsApiOddsAdapter
 from app.persistence.game_identity import GameIdentityError, resolve_game_ids
 from app.persistence.games import GamesQueryError, list_games_in_window, set_unresolved_poll_attempts
-from app.persistence.odds_api_credit_ledger import CREDITS_PER_CALL, CreditLedgerError, read_credit_ledger, record_call
+from app.persistence.odds_api_credit_ledger import (
+    CREDITS_PER_CALL,
+    CreditLedgerError,
+    effective_used_credits,
+    read_credit_ledger,
+    reconcile_provider_usage,
+    record_call,
+    utc_period_key,
+)
 from app.persistence.odds_api_daily_call_budget import (
     DailyCallBudgetError,
     read_calls_used,
@@ -74,6 +83,8 @@ from app.workers.odds_backoff import (
     next_failure_count,
 )
 from app.workers.windows import Window, classify_window, should_poll, ttl_seconds
+
+_logger = logging.getLogger("sports-intel-layer.odds_worker")
 
 _PROVIDER_NAME = "the_odds_api"
 
@@ -163,24 +174,38 @@ class OddsWorkerResult:
     daily_calls_used: int | None = None
 
 
-async def _check_credit_guard(supabase_client: httpx.AsyncClient, headers: dict) -> tuple[bool, int | None]:
-    """Returns `(allowed, credits_used_this_period)`. Fails OPEN (allowed
+async def _check_credit_guard(
+    supabase_client: httpx.AsyncClient, headers: dict, *, period_key: str
+) -> tuple[bool, int | None]:
+    """Returns `(allowed, used_credits_this_period)`. Fails OPEN (allowed
     the call) only when the guard itself isn't configured -- both
     `THE_ODDS_API_MONTHLY_CREDIT_BUDGET` and `THE_ODDS_API_MIN_REMAINING_
     CREDITS` must be set, or nothing is enforced; neither is ever
     defaulted to an invented number. Once both are configured, fails
-    CLOSED (blocks the call) the moment `budget - credits_used <= floor`
-    -- computed from this worker's own deterministic call-counting
-    ledger (`app.persistence.odds_api_credit_ledger`), never from a
-    parsed, ASSUMED vendor header."""
+    CLOSED (blocks the call) the moment `budget - used <= floor`.
+
+    **Scoped to `period_key` (2026-09-16).** The vendor resets usage credits
+    on the first of every month, so the guard now asks "how much has been
+    used *this UTC month*" instead of "ever". A new month has no ledger row,
+    which reads as zero -- rollover costs no provider call and no reset
+    logic, and a stale prior-period row can never block it because it is
+    never read.
+
+    Usage comes from `effective_used_credits`, which prefers the vendor's own
+    `x-requests-used` when we have it and falls back to our deterministic
+    count otherwise. That preference is what makes the guard correct on BOTH
+    sides of the reset boundary rather than only one.
+    """
     budget_raw = os.environ.get(_CREDIT_BUDGET_ENV_VAR)
     floor_raw = os.environ.get(_CREDIT_FLOOR_ENV_VAR)
     if budget_raw is None or floor_raw is None:
         return True, None
     budget = int(budget_raw)
     floor = int(floor_raw)
-    ledger = await read_credit_ledger(supabase_client, headers, provider_name=_PROVIDER_NAME)
-    used = ledger["credits_used_this_period"] if ledger else 0
+    ledger = await read_credit_ledger(
+        supabase_client, headers, provider_name=_PROVIDER_NAME, period_key=period_key
+    )
+    used = effective_used_credits(ledger)
     remaining = budget - used
     return remaining > floor, used
 
@@ -370,6 +395,11 @@ async def run_odds_worker(
     now = now or datetime.now(timezone.utc)
     last_polled_at = last_polled_at or {}
     poll_state = poll_state or {}
+    # The UTC calendar month this cycle belongs to. Computed once, from the
+    # clock, and used for every ledger read and write below -- so crossing a
+    # month boundary selects a new period with no reset step, no provider
+    # call, and no way for a half-applied rollover to exist.
+    period_key = utc_period_key(now)
 
     today: date = now.date()
     try:
@@ -453,7 +483,9 @@ async def run_odds_worker(
     # deciding something is due (a guard-skip is a real, named outcome
     # distinct from "nothing was due"), BEFORE the real provider call.
     try:
-        guard_allowed, credits_used = await _check_credit_guard(supabase_client, headers)
+        guard_allowed, credits_used = await _check_credit_guard(
+            supabase_client, headers, period_key=period_key
+        )
     except CreditLedgerError as exc:
         return OddsWorkerResult(
             status="failed", games_considered=len(games), games_due=len(due_games), error=f"credit guard read failed: {exc}"
@@ -554,7 +586,13 @@ async def run_odds_worker(
     ledger_failures: list[str] = []
     if not response.from_cache:
         try:
-            credits_used_this_period = await record_call(supabase_client, headers, provider_name=_PROVIDER_NAME, credits=CREDITS_PER_CALL)
+            credits_used_this_period = await record_call(
+                supabase_client,
+                headers,
+                provider_name=_PROVIDER_NAME,
+                credits=CREDITS_PER_CALL,
+                period_key=period_key,
+            )
         except CreditLedgerError as exc:
             ledger_failures.append(f"credit ledger write failed: {exc}")
         # Same "real round-trip only" rule as the credit ledger above: a
@@ -568,6 +606,43 @@ async def run_odds_worker(
             )
         except DailyCallBudgetError as exc:
             ledger_failures.append(f"daily call budget write failed: {exc}")
+
+        # Provider header reconciliation (2026-09-16). The vendor is
+        # authoritative about its own quota, so its `x-requests-used` is
+        # recorded for this period and preferred by the guard from here on.
+        # It is stored ALONGSIDE our count, never over it, so a disagreement
+        # stays visible and auditable instead of being silently resolved.
+        #
+        # This is what makes the month boundary safe in both directions: if
+        # the vendor has not reset yet at 00:05 on the 1st, our brand-new row
+        # reads 0 while the vendor still reports nearly a full month's usage,
+        # and trusting only ourselves would overspend a real allowance. If the
+        # vendor resets slightly early, the reverse protects us from blocking
+        # spending that is genuinely allowed.
+        #
+        # Gated on `from_cache` for the same reason the two ledgers are: a
+        # cache hit made no round-trip, so any quota on it is a stale echo.
+        quota = response.provider_quota
+        if quota is not None and quota.requests_used is not None:
+            try:
+                discrepancy = await reconcile_provider_usage(
+                    supabase_client,
+                    headers,
+                    provider_name=_PROVIDER_NAME,
+                    requests_used=quota.requests_used,
+                    requests_remaining=quota.requests_remaining,
+                    requests_last=quota.requests_last,
+                    local_used=credits_used_this_period,
+                    period_key=period_key,
+                )
+                if discrepancy:
+                    # Reported, never silently ignored -- and surfaced as a
+                    # worker failure entry so the cron's Sentry capture sees
+                    # it rather than it living only in a log line.
+                    _logger.warning("odds credit reconciliation discrepancy: %s", discrepancy)
+                    ledger_failures.append(f"credit reconciliation: {discrepancy}")
+            except CreditLedgerError as exc:
+                ledger_failures.append(f"credit reconciliation failed: {exc}")
 
     events_by_provider_id: dict[str, OddsLine] = {}
     for line in response.value:

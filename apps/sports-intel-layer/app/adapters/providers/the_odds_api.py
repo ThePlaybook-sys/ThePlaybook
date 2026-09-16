@@ -45,7 +45,7 @@ from app.adapters.errors import (
     ProviderRateLimitError,
     ProviderUnavailableError,
 )
-from app.adapters.models import AdapterResponse, DiscoveredEvent, OddsLine, PlayerProp
+from app.adapters.models import AdapterResponse, DiscoveredEvent, OddsLine, PlayerProp, ProviderQuota
 
 #: ASSUMED: NFL's sport key on this provider.
 _SPORT_KEY = "americanfootball_nfl"
@@ -123,24 +123,69 @@ async def _get(
             f"unexpected status {response.status_code}: {response.text}", provider=provider_name
         )
     # Phase 7 Milestone 7.0B (2026-09-02), §6 quota-economics finding: this
-    # adapter previously captured no rate-limit/quota signal on a
-    # successful response at all. ASSUMED header names (long-published,
-    # stable convention for this provider; not independently re-verified
-    # live -- same ASSUMED tier as the rest of this module's header
-    # handling, per this file's own provenance note above) -- logged only,
-    # never raised on or parsed into any typed field, so an absent/renamed
-    # header degrades to silently logging nothing rather than breaking the
-    # call this milestone cares most about keeping safe.
-    remaining = response.headers.get("x-requests-remaining")
-    used = response.headers.get("x-requests-used")
-    if remaining is not None or used is not None:
+    # adapter previously captured no rate-limit/quota signal on a successful
+    # response at all, then captured it as log text only.
+    #
+    # UPDATED 2026-09-16 (odds credit-ledger monthly rollover): these three
+    # header names are now CONFIRMED from the vendor's official
+    # documentation, supplied by HQ alongside the monthly-reset rule -- they
+    # are no longer in this module's ASSUMED tier. They are parsed into a
+    # typed `ProviderQuota` and drive real credit reconciliation, which is
+    # why `_parse_quota_header` is strict: an absent or malformed header
+    # degrades to "no signal" and falls back to our own deterministic count,
+    # never to a fabricated number, and never breaks the call.
+    quota = parse_provider_quota(response)
+    if quota is not None:
         _logger.info(
-            "the_odds_api quota: requests_remaining=%s requests_used=%s (provider=%s)",
-            remaining,
-            used,
+            "the_odds_api quota: requests_remaining=%s requests_used=%s requests_last=%s (provider=%s)",
+            quota.requests_remaining,
+            quota.requests_used,
+            quota.requests_last,
             provider_name,
         )
     return response
+
+
+def _parse_quota_header(response: httpx.Response, name: str) -> int | None:
+    """Reads one quota header as a non-negative int, or `None`.
+
+    Strict on purpose. A missing, blank, non-numeric or negative value yields
+    `None` -- "no signal" -- never a coerced or defaulted number. For a
+    spending guard the dangerous failure is inventing a LOW value, which would
+    read as an unused allowance; `None` degrades to our own deterministic
+    count instead, which is the safe direction.
+    """
+    raw = response.headers.get(name)
+    if raw is None:
+        return None
+    try:
+        value = int(str(raw).strip())
+    except (TypeError, ValueError):
+        _logger.warning("the_odds_api quota header %s was not an integer: %r", name, raw)
+        return None
+    if value < 0:
+        _logger.warning("the_odds_api quota header %s was negative: %r", name, raw)
+        return None
+    return value
+
+
+def parse_provider_quota(response: httpx.Response) -> ProviderQuota | None:
+    """Extracts the provider's own quota report, or `None` if it sent none.
+
+    **Header names are now CONFIRMED** from The Odds API's official
+    documentation (2026-09-16, supplied by HQ alongside the reset rule) --
+    previously they were flagged ASSUMED and were logged only, never parsed
+    into a typed field. They now feed real reconciliation, so they are parsed
+    defensively (see `_parse_quota_header`) rather than trusted blindly: an
+    absent or malformed header must degrade to "no signal", never break the
+    call, and never fabricate a value.
+    """
+    used = _parse_quota_header(response, "x-requests-used")
+    remaining = _parse_quota_header(response, "x-requests-remaining")
+    last = _parse_quota_header(response, "x-requests-last")
+    if used is None and remaining is None and last is None:
+        return None
+    return ProviderQuota(requests_used=used, requests_remaining=remaining, requests_last=last)
 
 
 def _parse_json_array(response: httpx.Response, *, provider_name: str) -> list[dict]:
@@ -262,6 +307,12 @@ class TheOddsApiOddsAdapter(OddsAdapter):
             value=lines,
             source=self.provider_name,
             provider_reported_at=_parse_timestamp(latest_update),
+            # The vendor's own quota state for THIS round-trip, carried up so
+            # the Odds Worker can reconcile it against our count. Only the
+            # bulk odds path attaches it: that is the only call this project
+            # spends real credits on, so it is the only one whose quota report
+            # is worth acting on.
+            provider_quota=parse_provider_quota(response),
         )
 
     async def fetch_events(self) -> AdapterResponse[list[DiscoveredEvent]]:

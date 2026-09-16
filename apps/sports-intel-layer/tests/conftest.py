@@ -46,6 +46,8 @@ POLL_STATE_GET = "default_odds_poll_state_get"
 POLL_STATE_POST = "default_odds_poll_state_post"
 DAILY_BUDGET_GET = "default_odds_daily_budget_get"
 DAILY_BUDGET_INCREMENT = "default_odds_daily_budget_increment"
+CREDIT_LEDGER_INCREMENT = "default_odds_credit_ledger_increment"
+CREDIT_LEDGER_RECONCILE = "default_odds_credit_ledger_reconcile"
 
 
 def release_default_route(*names: str) -> None:
@@ -82,6 +84,19 @@ def _default_odds_hardening_routes():
     router.route(
         method="POST", path="/rest/v1/rpc/increment_odds_api_daily_calls", name=DAILY_BUDGET_INCREMENT
     ).mock(return_value=httpx.Response(200, json=1))
+    # Monthly-period credit ledger (2026-09-16). Writes moved from a
+    # read-then-write upsert on the table to two atomic RPCs, so every test
+    # that exercises a real fetch now touches these paths. Both defaults are
+    # inert: a low credit count that cannot trip any guard, and a
+    # reconciliation that records nothing interesting.
+    router.route(
+        method="POST", path="/rest/v1/rpc/increment_odds_api_credits", name=CREDIT_LEDGER_INCREMENT
+    ).mock(return_value=httpx.Response(200, json=3))
+    router.route(
+        method="POST",
+        path="/rest/v1/rpc/reconcile_odds_api_provider_usage",
+        name=CREDIT_LEDGER_RECONCILE,
+    ).mock(return_value=httpx.Response(200, json=3))
     try:
         yield
     finally:

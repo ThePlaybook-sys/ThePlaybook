@@ -40,6 +40,30 @@ class FreshnessStatus(str, Enum):
 T = TypeVar("T")
 
 
+class ProviderQuota(BaseModel):
+    """A provider's own report of its quota state, as returned on a
+    quota-bearing response (2026-09-16, odds credit-ledger monthly rollover).
+
+    Every field is optional and is NEVER fabricated: an absent or unparseable
+    header yields `None`, which downstream code must treat as "no signal". A
+    fabricated zero would read as a completely unused allowance, which for a
+    spending guard is the single most dangerous value to invent.
+
+    Currently populated only by The Odds API (`x-requests-used` /
+    `x-requests-remaining` / `x-requests-last`), but deliberately
+    provider-neutral: this is the shape any metered vendor's quota report
+    takes, not a mirror of one vendor's header names.
+    """
+
+    #: Credits the provider says have been used in ITS current period. The
+    #: authoritative signal for the credit guard when present -- it is the
+    #: only value that is correct on both sides of a monthly reset boundary.
+    requests_used: int | None = None
+    requests_remaining: int | None = None
+    #: What the provider says the most recent request itself cost.
+    requests_last: int | None = None
+
+
 class AdapterResponse(BaseModel, Generic[T]):
     """The envelope every adapter call returns, regardless of category.
 
@@ -83,6 +107,13 @@ class AdapterResponse(BaseModel, Generic[T]):
     provider_reported_at: datetime | None = None
     from_cache: bool = False
     status: FreshnessStatus = FreshnessStatus.FRESH
+    #: The provider's own quota report for this call, when it supplies one
+    #: (2026-09-16). Optional and defaulted, so every existing adapter and
+    #: caller is unaffected. Meaningless on a cache hit -- no round-trip
+    #: happened, so any value here would be a stale echo of an earlier call;
+    #: callers must gate on `from_cache` exactly as credit recording already
+    #: does.
+    provider_quota: ProviderQuota | None = None
 
 
 class OddsLine(BaseModel):
