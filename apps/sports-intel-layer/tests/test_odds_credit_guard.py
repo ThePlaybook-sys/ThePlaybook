@@ -13,6 +13,7 @@ import respx
 
 from app.adapters.cache import InMemoryCacheBackend
 from app.workers.odds_worker import run_odds_worker
+from tests.conftest import CREDIT_LEDGER_INCREMENT, release_default_route
 from tests.test_odds_worker import (
     DB_GAME_KC_BAL,
     _game_row,
@@ -74,8 +75,12 @@ async def test_guard_allows_call_when_remaining_above_floor(monkeypatch):
     respx.get(f"{SUPABASE_URL}/rest/v1/odds_api_credit_ledger").mock(
         return_value=httpx.Response(200, json=[{"credits_used_this_period": 100}])  # remaining = 400 > 50
     )
-    respx.post(f"{SUPABASE_URL}/rest/v1/odds_api_credit_ledger").mock(
-        return_value=httpx.Response(201, json=[{"credits_used_this_period": 103}])
+    # 2026-09-16: the increment moved from a read-then-write upsert on the
+    # table to an atomic RPC, so the period ledger is concurrency-safe. The
+    # behaviour under test is unchanged -- only where the write lands.
+    release_default_route(CREDIT_LEDGER_INCREMENT)
+    respx.post(f"{SUPABASE_URL}/rest/v1/rpc/increment_odds_api_credits").mock(
+        return_value=httpx.Response(200, json=103)
     )
     respx.post(f"{SUPABASE_URL}/rest/v1/odds_snapshots").mock(return_value=httpx.Response(201))
     odds_route = respx.get(ODDS_URL).mock(return_value=_odds_response())
@@ -131,8 +136,9 @@ async def test_cache_hit_never_records_credit_usage(monkeypatch):
     _mock_games(_ONE_GAME)
     _mock_team_provider_ids()
     _mock_game_provider_ids()
-    ledger_post = respx.post(f"{SUPABASE_URL}/rest/v1/odds_api_credit_ledger").mock(
-        return_value=httpx.Response(201, json=[{"credits_used_this_period": 3}])
+    release_default_route(CREDIT_LEDGER_INCREMENT)
+    ledger_post = respx.post(f"{SUPABASE_URL}/rest/v1/rpc/increment_odds_api_credits").mock(
+        return_value=httpx.Response(200, json=3)
     )
     respx.get(f"{SUPABASE_URL}/rest/v1/odds_api_credit_ledger").mock(return_value=httpx.Response(200, json=[]))
     respx.post(f"{SUPABASE_URL}/rest/v1/odds_snapshots").mock(return_value=httpx.Response(201))
