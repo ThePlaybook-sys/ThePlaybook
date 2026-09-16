@@ -166,6 +166,49 @@ def ttl_seconds(window: Window) -> int:
     return _TTL_SECONDS[window]
 
 
+#: The cron period the Odds Worker is actually dispatched on
+#: (`cron-odds-worker`, `*/15 * * * *`). NOT a cadence value and not a
+#: Blueprint number -- an observed deployment fact, recorded here so the
+#: helper below can state the truth instead of leaving it emergent.
+CRON_DISPATCH_PERIOD_SECONDS = 900
+
+
+def effective_poll_interval_seconds(
+    window: Window, *, cron_period_seconds: int = CRON_DISPATCH_PERIOD_SECONDS
+) -> int | None:
+    """The interval this window can ACTUALLY achieve, given that a worker
+    dispatched by cron cannot run more often than the cron fires.
+
+    **This is reporting, not behaviour.** `should_poll` is unchanged and
+    still uses `poll_interval_seconds`; it makes no difference to it, because
+    a 120-second interval evaluated once every 900 seconds already behaves
+    exactly like a 900-second one. The difference is that the floor stops
+    being an invisible emergent property of the deployment and becomes
+    something a caller can read, report and reason about.
+
+    Why this matters (2026-09-16 cost hardening): three of the five active
+    tiers are floored today.
+
+        FAR      86400s -> 86400s   honoured
+        RAMP_2H   3600s ->  3600s   honoured
+        RAMP_60M   900s ->   900s   honoured, exactly at the floor
+        RAMP_15M   300s ->   900s   FLOORED (3x coarser than specified)
+        RAMP_5M    120s ->   900s   FLOORED (7.5x coarser than specified)
+
+    So RAMP_60M, RAMP_15M and RAMP_5M are operationally indistinguishable
+    from one another right now -- all three poll at most once per cron tick.
+    The tier values are NOT changed here: the boundaries are CONFIRMED from
+    Volume 2 §8 and the intervals are a long-standing documented assumption,
+    so silently rewriting them to match a deployment detail would be exactly
+    the undocumented drift this project's versioning discipline exists to
+    prevent. The honest move is to make the gap visible and report it.
+    """
+    interval = _POLL_INTERVAL_SECONDS[window]
+    if interval is None:
+        return None
+    return max(interval, cron_period_seconds)
+
+
 def should_poll(*, now: datetime, kickoff: datetime, last_polled_at: datetime | None) -> bool:
     """True if a poll is due right now: `kickoff`'s window has a poll
     interval (isn't STOPPED) and either nothing has been polled yet or at

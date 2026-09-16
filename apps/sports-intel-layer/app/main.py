@@ -17,6 +17,8 @@ from app.master_refresh.production_clients import (
 )
 from app.master_refresh.run import run_master_refresh, run_schedule_refresh
 from app.persistence.odds_snapshots import read_last_polled_at
+from app.persistence.odds_worker_poll_state import PollStateError
+from app.persistence.odds_worker_poll_state import read_poll_state_from_env as read_odds_poll_state
 from app.persistence.weather_snapshots import read_last_polled_at as read_weather_last_polled_at
 from app.adapters.providers.gnews import GNewsNewsAdapter
 from app.workers.balldontlie_injury_worker import run_balldontlie_injury_worker
@@ -196,11 +198,19 @@ class RunOddsWorkerResponse(BaseModel):
     games_considered: int
     games_due: int
     games_skipped_not_due: int
+    #: Cost + Failure Hardening (2026-09-16). Defaulted so an older caller
+    #: parsing this shape keeps working, and surfaced at all so a slate held
+    #: back by repeated failures is visible in the cron log rather than
+    #: looking indistinguishable from a slate that is simply up to date.
+    games_skipped_backoff: int = 0
     lines_persisted: int
     newly_linked: int
     unresolved_events: list[str]
     failures: list[str]
     error: str | None
+    #: Provider calls spent on the current UTC day. None when no daily
+    #: ceiling is configured and no call was made this cycle.
+    daily_calls_used: int | None = None
 
 
 @app.post(
@@ -278,23 +288,44 @@ async def internal_run_odds_worker() -> RunOddsWorkerResponse:
 
     async with supabase_client, the_odds_api_client:
         last_polled_at = await read_last_polled_at()
+        # Cost + Failure Hardening (2026-09-16): real attempt state, so
+        # due-selection can tell "never polled" apart from "polled and could
+        # not be used". A read failure here degrades to the previous
+        # cadence-only behaviour rather than failing the run -- losing
+        # backoff for one cycle costs at most one extra provider call,
+        # whereas failing the run costs every game's odds. The degradation
+        # is reported, never silent.
+        poll_state: dict = {}
+        poll_state_error: str | None = None
+        try:
+            poll_state = await read_odds_poll_state()
+        except PollStateError as exc:
+            poll_state_error = f"odds poll state unavailable, backoff disabled this cycle: {exc}"
+
         result = await run_odds_worker(
             supabase_client=supabase_client,
             the_odds_api_client=the_odds_api_client,
             the_odds_api_key=the_odds_api_key,
             last_polled_at=last_polled_at,
+            poll_state=poll_state,
         )
+        if poll_state_error:
+            result.failures = [*result.failures, poll_state_error]
+            if result.status == "success":
+                result.status = "partial"
 
     return RunOddsWorkerResponse(
         status=result.status,
         games_considered=result.games_considered,
         games_due=result.games_due,
         games_skipped_not_due=result.games_skipped_not_due,
+        games_skipped_backoff=result.games_skipped_backoff,
         lines_persisted=result.lines_persisted,
         newly_linked=result.newly_linked,
         unresolved_events=result.unresolved_events,
         failures=result.failures,
         error=result.error,
+        daily_calls_used=result.daily_calls_used,
     )
 
 
