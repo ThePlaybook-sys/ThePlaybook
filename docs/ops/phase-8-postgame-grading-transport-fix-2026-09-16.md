@@ -217,7 +217,18 @@ spend.
 | 2 | `cron-postgame-grading` deployment healthy | ✅ `aa60a341` SUCCESS 00:41:49 UTC, commit `66cc484` |
 | 3 | Next natural tick reaches `ai-orchestrator` | ✅ **six consecutive clean ticks** |
 | 4 | No Sentry transport error | ✅ none — `succeeded`, which is non-reportable |
-| 5 | No other active cron has the same pattern | ⚠️ 6 of 8 proven clean, 2 not yet observable |
+| 5 | No other active cron has the same pattern | ✅ **8 of 8 proven clean** — closed 2026-09-17, see below |
+
+> **Item 5 closed (2026-09-17 09:15 UTC).** The two daily crons ticked and both read clean:
+> `cron-recommendation-worker` at 06:19:40 and `cron-adaptive-weighting` at 08:00:46, each with
+> `base_url=http://worker-scheduled.railway.internal:8080` — **scheme and port present**. Both also
+> exercised the `AI_ORCHESTRATOR_URL` fix on their own paths for the first time and **both reached
+> `ai-orchestrator`**: adaptive-weighting returned `status: 'completed'` with a real 15-agent
+> response payload (all `rejected_insufficient_sample`, `sample_size: 0`, no weight mutated, no LLM);
+> recommendation-worker returned a real payload too — 257 games, all HTTP 500 on a **separate**
+> blocker (`REFERENCE_SPORTSBOOK_PREFERENCE` unset), which is transport succeeding and configuration
+> failing. **No active cron carries a malformed base URL.** Full detail in
+> `phase-8-permanent-master-refresh-enablement-2026-09-16.md`, Findings A and B.
 
 ### 3 — the proof
 
