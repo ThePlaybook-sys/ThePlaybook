@@ -148,6 +148,49 @@ def _flush() -> None:
         _logger.warning("sentry flush failed", exc_info=True)
 
 
+#: Payload keys that hold a worker's per-item results. Deliberately
+#: generic rather than a Recommendation-Worker special case: every worker
+#: in this project reports the same shape -- a list of dicts, each with a
+#: `status` and/or an `error` -- so one rule covers grading's `legs` and
+#: `products`, recommendation's `games`, and anything later that follows
+#: the house convention.
+_NESTED_RESULT_KEYS = ("games", "legs", "products", "items")
+
+
+def _nested_failure_census(result: dict) -> tuple[int, int, str] | None:
+    """Counts per-item failures across every known nested collection.
+
+    Returns `(failed, total, sample_error)` when at least one item failed,
+    or `None` when there is nothing nested to judge -- which includes the
+    genuinely healthy case where every item succeeded, so a clean
+    `completed` run stays silent exactly as before.
+
+    An item counts as failed when it carries `status="failed"` or a
+    non-null `error`. Both are checked because the two worker families
+    differ: postgame grading sets a per-leg `status`, while the
+    Recommendation Worker's per-game entries carry the error text.
+    """
+    failed = 0
+    total = 0
+    sample: str | None = None
+    for key in _NESTED_RESULT_KEYS:
+        items = result.get(key)
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            total += 1
+            error = item.get("error")
+            if item.get("status") == "failed" or error:
+                failed += 1
+                if sample is None:
+                    sample = str(error) if error else "status=failed with no detail reported"
+    if not failed:
+        return None
+    return failed, total, sample or "no detail reported"
+
+
 def result_failure_summary(result: dict) -> tuple[str, str] | None:
     """Classifies a 2xx worker payload as reportable or not.
 
@@ -181,6 +224,22 @@ def result_failure_summary(result: dict) -> tuple[str, str] | None:
     if status == "failed":
         detail = result.get("error") or result.get("failures") or "no detail reported"
         return "error", f"worker reported status=failed: {detail}"
+
+    # Nested failures are checked BEFORE the known-good status set, not
+    # after it. Ordering is the whole fix: on 2026-09-17 the
+    # Recommendation Worker reported `status="completed"` while every one
+    # of its 257 games carried an `error`, and because "completed" is a
+    # member of `_NON_ERROR_STATUSES` this function returned `None`
+    # without ever looking inside. A total failure can wear a success
+    # status, so the payload has to be inspected before the label is
+    # trusted.
+    nested = _nested_failure_census(result)
+    if nested is not None:
+        failed, total, sample = nested
+        scope = "every item" if failed == total else f"{failed} of {total} items"
+        level = "error" if failed == total else "warning"
+        return level, f"worker reported status={status!r} but {scope} failed: {sample}"
+
     if status in _NON_ERROR_STATUSES:
         return None
     failures = result.get("failures")

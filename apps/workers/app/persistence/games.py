@@ -14,14 +14,62 @@ class GamesReadError(Exception):
     """Raised when a `games` read fails on Supabase's side."""
 
 
-async def read_eligible_game_ids(client: httpx.AsyncClient, headers: dict) -> list[str]:
-    """Returns the `id` of every currently `status='scheduled'` game --
-    never `live`/`final`/`postponed`/`canceled`, matching `ai-
-    orchestrator`'s `PREGAME_WORKFLOW_ELIGIBLE_STATUSES` exactly.
-    Returns `[]` when none exist -- never fabricated."""
+#: How far ahead a game must kick off to be a recommendation candidate at
+#: all. A worker-level scoping decision that deliberately reuses the SAME
+#: numeric value as Master Refresh's canonical `[today, today + 7 days)`
+#: operating horizon (Volume 2 §8 v4.4, stated once in
+#: `sports-intel-layer`'s `app.master_refresh.slate`), for the same
+#: practical reason the Odds Worker's own `_CANDIDATE_WINDOW_DAYS` does:
+#: Master Refresh only prepares `daily_game_intelligence` this far out, and
+#: the specialized workers only poll odds/injuries/weather this far out, so
+#: there is nothing for a recommendation to be built FROM beyond it. This
+#: is not a reinterpretation of that horizon -- per its own docstring it
+#: "governs Master Refresh's own game-identity/assembly work only" -- it is
+#: this worker declaring its own, numerically aligned.
+#:
+#: **This constant is the fix for a real, live selection defect
+#: (2026-09-17).** Before it, this read filtered on `status='scheduled'`
+#: and nothing else, so the 06:15 cron selected **every remaining game in
+#: the season** -- 257 of them, kicking off from that morning through
+#: 2027-01-10 -- and dispatched one `ai-orchestrator` call per game. A
+#: recommendation run must never process an entire season merely because
+#: those games exist canonically.
+RECOMMENDATION_WINDOW_DAYS = 7
+
+
+async def read_eligible_game_ids(client: httpx.AsyncClient, headers: dict, *, now: datetime) -> list[str]:
+    """Returns the `id` of every game eligible for a recommendation this
+    cycle. Three filters, all deterministic and all enforced in the query
+    rather than in Python, so an unbounded slate can never reach the
+    dispatch loop in the first place:
+
+    1. `status='scheduled'` -- never `live`/`final`/`postponed`/`canceled`,
+       matching `ai-orchestrator`'s `PREGAME_WORKFLOW_ELIGIBLE_STATUSES`
+       exactly. A completed game can never enter recommendation
+       processing; there is nothing to recommend about a game that has
+       already been played.
+    2. `scheduled_start >= now` -- genuinely upcoming. `status` alone is
+       not sufficient: a game whose provider never moved it off
+       `scheduled` stays "eligible" forever under a status-only filter,
+       which is exactly how two 2026-08 fixtures were still being
+       dispatched in mid-September.
+    3. `scheduled_start < now + RECOMMENDATION_WINDOW_DAYS` -- inside the
+       authorized horizon. Beyond it there are no fresh odds, no
+       assembled intelligence, and therefore nothing a committee could
+       reason over; dispatching anyway spends the game-level fan-out to
+       produce a guaranteed `no_configured_sportsbook_has_fresh_data`.
+
+    Returns `[]` when none qualify -- never fabricated, and an empty slate
+    is a legitimate, non-error outcome (most of the week, for NFL)."""
+    window_end = now + timedelta(days=RECOMMENDATION_WINDOW_DAYS)
     response = await client.get(
         "/rest/v1/games",
-        params={"status": "eq.scheduled", "select": "id"},
+        params={
+            "status": "eq.scheduled",
+            "scheduled_start": [f"gte.{now.isoformat()}", f"lt.{window_end.isoformat()}"],
+            "select": "id",
+            "order": "scheduled_start.asc",
+        },
         headers=headers,
     )
     if response.status_code != 200:

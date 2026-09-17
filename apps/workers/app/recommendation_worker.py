@@ -29,7 +29,9 @@ to decide WHICH games are eligible this cycle and call the one endpoint
 that does the real work, once per game."""
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 
 import httpx
 
@@ -46,6 +48,49 @@ from app.persistence.master_refresh_runs import read_latest_eligible_run
 WORKER_PROMPT_VERSION = "v1"
 WORKER_AGENT_VERSION = "v1"
 
+#: Hard ceiling on how many games one natural run may dispatch. **This is
+#: a safety bound, not a scheduling policy** -- under the eligibility
+#: contract in `read_eligible_game_ids` a real NFL slate inside the 7-day
+#: horizon is ~16 games, so this is never reached in normal operation. It
+#: exists so that a future selection defect, a bad migration, or a
+#: mis-set clock cannot turn one scheduling mistake into hundreds of LLM
+#: calls, the way the 2026-09-17 06:15 run turned a status-only filter
+#: into 257 dispatches.
+#:
+#: **DERIVED, not a Blueprint number** -- the same class of decision as
+#: `app.persistence.games.GRADING_CANDIDATE_LOOKBACK_DAYS`, and disclosed
+#: the same way: an NFL week is at most 16 games, and a 7-day window can
+#: straddle the tail of one week and the leading Thursday of the next, so
+#: 20 leaves headroom for a legitimate straddle while still being an order
+#: of magnitude below a full season. Overridable via
+#: `RECOMMENDATION_MAX_GAMES_PER_RUN` without a deploy. **Flagged for HQ
+#: confirmation** -- the mechanism is the important half; the exact
+#: number is a product judgment.
+DEFAULT_MAX_GAMES_PER_RUN = 20
+
+#: How many consecutive dispatch failures carrying the SAME error end the
+#: run. A deterministic misconfiguration -- an unset
+#: `REFERENCE_SPORTSBOOK_PREFERENCE`, a bad internal token, a missing
+#: model row -- fails identically on every game, so continuing past the
+#: first few proves nothing and costs real work: on 2026-09-17 it burned
+#: 257 dispatches and left 256 orphan marker rows to produce exactly one
+#: fact, which the third game already knew. A transient per-game failure
+#: does not repeat its message verbatim, so it does not trip this.
+CONSECUTIVE_IDENTICAL_FAILURE_LIMIT = 3
+
+
+def max_games_per_run() -> int:
+    """`RECOMMENDATION_MAX_GAMES_PER_RUN` when set to a positive integer,
+    otherwise `DEFAULT_MAX_GAMES_PER_RUN`. A malformed or non-positive
+    value falls back to the default rather than raising -- this is a
+    safety ceiling, and a typo in it must not itself become an outage."""
+    raw = os.environ.get("RECOMMENDATION_MAX_GAMES_PER_RUN", "")
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return DEFAULT_MAX_GAMES_PER_RUN
+    return value if value > 0 else DEFAULT_MAX_GAMES_PER_RUN
+
 
 @dataclass
 class GameCycleResult:
@@ -58,7 +103,15 @@ class GameCycleResult:
 
 @dataclass
 class WorkerCycleResult:
-    status: str  # "no_eligible_run" | "completed"
+    #: "no_eligible_run" | "completed" | "failed"
+    #:
+    #: `"failed"` is the FAIL-CLOSED outcome: the run refused to dispatch
+    #: anything (the slate exceeded `max_games_per_run`) or stopped
+    #: dispatching partway (`CONSECUTIVE_IDENTICAL_FAILURE_LIMIT`). It is
+    #: deliberately the one status `cron_dispatch` already reports to
+    #: Sentry at `error` level, so a bound being hit is never silent and
+    #: is never dressed up as a complete run.
+    status: str
     run_id: str | None
     games: list[GameCycleResult] = field(default_factory=list)
     #: Milestone 5.1 -- the Strategy Engine's slate-level finalization
@@ -69,6 +122,28 @@ class WorkerCycleResult:
     #: to retroactively mark a game's own dispatch as failed.
     strategy: dict | None = None
     strategy_error: str | None = None
+    #: Set only when `status="failed"`. Names which bound stopped the run
+    #: and what it saw, so the Sentry event is actionable without needing
+    #: the log.
+    error: str | None = None
+    #: How many games the eligibility contract selected, BEFORE any bound
+    #: was applied. Reported even on a fail-closed run -- the whole point
+    #: of the ceiling is that the number which tripped it is visible.
+    games_selected: int = 0
+    #: Games never attempted because the run stopped early. Non-zero means
+    #: this run is explicitly INCOMPLETE; it is never presented as a full
+    #: slate.
+    games_not_attempted: int = 0
+
+
+def _failure_signature(error: str, *, game_id: str) -> str:
+    """The comparable shape of a dispatch failure, with this game's own id
+    removed. `AiOrchestratorCallError` embeds `game_id=...` in its
+    message, so two games hitting the identical deterministic fault
+    produce two different strings; stripping the id is what lets the
+    consecutive-failure breaker recognise one fault repeating rather than
+    a series of unrelated ones."""
+    return error.replace(game_id, "<game_id>")
 
 
 def build_correlation_id(*, run_id: str, game_id: str) -> str:
@@ -87,6 +162,7 @@ async def run_recommendation_worker_cycle(
     internal_token: str,
     prompt_version: str = WORKER_PROMPT_VERSION,
     agent_version: str = WORKER_AGENT_VERSION,
+    now: datetime | None = None,
 ) -> WorkerCycleResult:
     """Runs one full Recommendation Worker cycle. Returns `status=
     "no_eligible_run"` (empty `games`) when no Master Refresh run has
@@ -98,10 +174,35 @@ async def run_recommendation_worker_cycle(
     if run is None:
         return WorkerCycleResult(status="no_eligible_run", run_id=None, games=[])
 
-    game_ids = await read_eligible_game_ids(supabase_client, supabase_headers)
+    game_ids = await read_eligible_game_ids(supabase_client, supabase_headers, now=now or datetime.now(timezone.utc))
+    selected = len(game_ids)
+
+    # FAIL CLOSED, before a single dispatch. A slate larger than the
+    # ceiling is not truncated and run anyway -- silent truncation would
+    # report a "complete" cycle that quietly skipped games, which is the
+    # failure mode this bound exists to prevent, not a milder version of
+    # it. Nothing is dispatched, nothing is marked, and the status is the
+    # one Sentry reports.
+    ceiling = max_games_per_run()
+    if selected > ceiling:
+        return WorkerCycleResult(
+            status="failed",
+            run_id=run["id"],
+            games=[],
+            games_selected=selected,
+            games_not_attempted=selected,
+            error=(
+                f"eligible slate of {selected} games exceeds the run ceiling of {ceiling} "
+                f"(RECOMMENDATION_MAX_GAMES_PER_RUN) -- refusing to dispatch. A slate this "
+                f"large means the eligibility contract is wrong, not that the week is busy."
+            ),
+        )
 
     games: list[GameCycleResult] = []
-    for game_id in game_ids:
+    consecutive_identical: int = 0
+    last_error: str | None = None
+    halt_error: str | None = None
+    for index, game_id in enumerate(game_ids):
         correlation_id = build_correlation_id(run_id=run["id"], game_id=game_id)
         try:
             response = await run_game_recommendation(
@@ -114,8 +215,34 @@ async def run_recommendation_worker_cycle(
                 agent_version=agent_version,
             )
         except AiOrchestratorCallError as exc:
-            games.append(GameCycleResult(game_id=game_id, correlation_id=correlation_id, status="failed", error=str(exc)))
+            error = str(exc)
+            games.append(GameCycleResult(game_id=game_id, correlation_id=correlation_id, status="failed", error=error))
+            # A deterministic misconfiguration fails identically on every
+            # game. `_failure_signature` strips the per-game id so that
+            # "the same fault" is recognised across different games --
+            # without it, every message differs by its game_id and the
+            # breaker never trips on exactly the case it is for.
+            signature = _failure_signature(error, game_id=game_id)
+            consecutive_identical = consecutive_identical + 1 if signature == last_error else 1
+            last_error = signature
+            if consecutive_identical >= CONSECUTIVE_IDENTICAL_FAILURE_LIMIT:
+                halt_error = (
+                    f"halted after {consecutive_identical} consecutive identical failures "
+                    f"({consecutive_identical}/{selected} games attempted): {error}. "
+                    f"This is a deterministic fault, not a per-game one -- continuing would "
+                    f"repeat it on every remaining game and create one orphan marker row each."
+                )
+                return WorkerCycleResult(
+                    status="failed",
+                    run_id=run["id"],
+                    games=games,
+                    games_selected=selected,
+                    games_not_attempted=selected - (index + 1),
+                    error=halt_error,
+                )
             continue
+        consecutive_identical = 0
+        last_error = None
         games.append(GameCycleResult(game_id=game_id, correlation_id=correlation_id, status="dispatched", response=response))
 
     # Milestone 5.1: finalize the Strategy Engine's slate-level decision
@@ -162,4 +289,12 @@ async def run_recommendation_worker_cycle(
         except AiOrchestratorCallError as exc:
             strategy_error = str(exc)
 
-    return WorkerCycleResult(status="completed", run_id=run["id"], games=games, strategy=strategy_result, strategy_error=strategy_error)
+    return WorkerCycleResult(
+        status="completed",
+        run_id=run["id"],
+        games=games,
+        strategy=strategy_result,
+        strategy_error=strategy_error,
+        games_selected=selected,
+        games_not_attempted=0,
+    )
