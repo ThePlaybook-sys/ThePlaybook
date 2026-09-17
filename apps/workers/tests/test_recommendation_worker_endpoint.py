@@ -18,7 +18,7 @@ def _set_env(monkeypatch):
     monkeypatch.setenv("INTERNAL_SERVICE_TOKEN", "correct-token")
     monkeypatch.setenv("SUPABASE_URL", SUPABASE_URL)
     monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "test-service-role-key")
-    monkeypatch.setenv("RAILWAY_SERVICE_AI_ORCHESTRATOR_URL", AI_ORCHESTRATOR_URL)
+    monkeypatch.setenv("AI_ORCHESTRATOR_URL", AI_ORCHESTRATOR_URL)
 
 
 def test_run_requires_internal_token(monkeypatch):
