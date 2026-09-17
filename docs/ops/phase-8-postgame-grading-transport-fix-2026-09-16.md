@@ -214,10 +214,63 @@ spend.
 | # | Required | Result |
 |---|---|---|
 | 1 | Corrected URL includes the proper scheme | ✅ `http://ai-orchestrator.railway.internal:8080` |
-| 2 | `cron-postgame-grading` deployment healthy | ✅ (see below) |
-| 3 | Next natural tick reaches `ai-orchestrator` | ⏳ (see below) |
-| 4 | No Sentry transport error | ⏳ (see below) |
+| 2 | `cron-postgame-grading` deployment healthy | ✅ `aa60a341` SUCCESS 00:41:49 UTC, commit `66cc484` |
+| 3 | Next natural tick reaches `ai-orchestrator` | ✅ **six consecutive clean ticks** |
+| 4 | No Sentry transport error | ✅ none — `succeeded`, which is non-reportable |
 | 5 | No other active cron has the same pattern | ⚠️ 6 of 8 proven clean, 2 not yet observable |
+
+### 3 — the proof
+
+`worker-scheduled` deployment **`ea8dd74c-45cf-4674-b545-394dc2e44a4b` SUCCESS at 00:40:49 UTC**,
+commit `66cc484`. Every tick since has completed:
+
+| Tick (UTC) | Dispatcher line | Result |
+|---|---|---|
+| 02:01:17 | `cron_dispatch **succeeded**` | `status: 'completed'`, 16/16 `graded`, `error: None` |
+| 02:31:45 | `succeeded` | same |
+| 03:02:08 | `succeeded` | same |
+| 03:32:51 | `succeeded` | same |
+| 04:02:35 | `succeeded` | same |
+| 04:30:57 | `succeeded` | same |
+
+The 02:01 line in full, against the 23:31 failure it replaces:
+
+```
+02:01:17 INFO cron_dispatch succeeded target=postgame-grading result={'status': 'completed',
+         'game_ids': [...16 ids...],
+         'response': {'games': [{'game_id': ..., 'status': 'graded', 'legs': [],
+                                 'no_bet_products': [], 'products': []}, ...x16],
+                      'bankroll_preservation_products': [],
+                      'postgame_reviews_generated': 0, 'postgame_reviews_failed': 0,
+                      'postgame_reviews_skipped': 0},
+         'error': None}
+```
+
+Four things that line settles at once. The dispatcher logs **`succeeded`**, not `reported failure`
+— so the worker returned `completed`, not `failed`. **`'response'` is a real payload** rather than
+`None`, which means `ai-orchestrator` was genuinely reached, ran, and answered. All **16 games came
+back `graded`**, so the endpoint did the work rather than erroring past it. And `'error': None`.
+
+### 4 — Sentry
+
+**No event, correctly.** `cron_dispatch`'s `result_failure_summary` returns `None` for a
+`completed` status with no failures, and `succeeded` is on the non-reportable list shipped this
+morning. The instrumentation that found this bug also stays quiet now it is fixed — which is the
+whole point of the non-reportable list, and the reason the eventual alert will still mean something.
+
+### The LLM prediction held
+
+Predicted before the fix went live: `postgame_reviews_generated: 0`. **Observed: 0 generated, 0
+failed, 0 skipped** on all six ticks. Zero is the count on all three because every game returned
+empty `products`, so the narrative branch was never entered at all — the routing-rule gate behind
+it was never even reached. **No LLM call, no provider call, on any tick.**
+
+Worth recording plainly for a later pass, since it is a real finding rather than a problem with this
+fix: the 16 games grade clean but produce **no legs and no product rollups**. Dev holds 4
+recommendations; none of them attaches to these 16 finalized games in a reconciliation-eligible
+way. So grading is now *working and reaching nothing*. That is the expected state for an
+environment with no real graded recommendations yet (PROGRESS.md has said so since Milestone 5.5),
+and it is exactly what Week 2's forward-looking slate is meant to change. Flagged, not acted on.
 
 ### 5 — the sweep across all 8 active crons
 
