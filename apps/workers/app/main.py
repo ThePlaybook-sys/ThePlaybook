@@ -25,6 +25,33 @@ sentry_sdk.init(
 app = FastAPI(title="The Playbook — Background Workers")
 
 
+def _ai_orchestrator_base_url() -> str:
+    """The base URL every internal call to `ai-orchestrator` is built
+    from, read from this service's own `AI_ORCHESTRATOR_URL` -- the same
+    name `api-gateway` already uses (`app.internal_client`).
+
+    This used to read Railway's `RAILWAY_SERVICE_AI_ORCHESTRATOR_URL`,
+    and that was a real, live defect (2026-09-16). Railway auto-injects a
+    variable of that exact name onto every service in the project, and
+    its value is a bare public domain with **no scheme**, which httpx
+    rejects with "Request URL is missing an 'http://' or 'https://'
+    protocol." The variable was never deliberately configured here --
+    PROGRESS.md records it as a known-missing, flagged-for-decision item
+    since Phase 4 -- but `os.environ[...]` never raised `KeyError`,
+    because Railway's own injection silently satisfied the lookup. So a
+    URL the project believed was absent was present and wrong, and
+    postgame grading failed once every thirty minutes inside a 200 OK for
+    hours before cron Sentry instrumentation surfaced it.
+
+    Setting an explicit service variable of that same name does NOT fix
+    it: Railway's injection still wins (verified live on dev, the tick
+    after failed identically). An application-owned name is therefore the
+    only correct fix -- and it restores the property that matters, that a
+    genuinely unset URL fails loudly here rather than quietly at the
+    transport layer."""
+    return os.environ["AI_ORCHESTRATOR_URL"]
+
+
 @app.get("/health")
 def health() -> dict:
     return {"status": "ok", "service": "workers"}
@@ -58,7 +85,7 @@ async def internal_run_recommendation_cycle() -> RunRecommendationCycleResponse:
     Master Refresh; this endpoint itself never self-schedules, mirroring
     `ai-orchestrator`'s own internal endpoint (which never self-schedules
     either). Reachable only via `INTERNAL_SERVICE_TOKEN`."""
-    ai_orchestrator_base_url = os.environ["RAILWAY_SERVICE_AI_ORCHESTRATOR_URL"]
+    ai_orchestrator_base_url = _ai_orchestrator_base_url()
     internal_token = os.environ["INTERNAL_SERVICE_TOKEN"]
 
     headers = supabase_client.auth_headers()
@@ -102,7 +129,7 @@ async def internal_run_postgame_grading_cycle() -> RunPostgameGradingCycleRespon
     the Recommendation Worker's own trigger, Milestone 4.9) calls this on
     a schedule; this endpoint itself never self-schedules. Reachable
     only via `INTERNAL_SERVICE_TOKEN`."""
-    ai_orchestrator_base_url = os.environ["RAILWAY_SERVICE_AI_ORCHESTRATOR_URL"]
+    ai_orchestrator_base_url = _ai_orchestrator_base_url()
     internal_token = os.environ["INTERNAL_SERVICE_TOKEN"]
 
     headers = supabase_client.auth_headers()
@@ -136,7 +163,7 @@ async def internal_run_adaptive_weighting_cycle() -> RunAdaptiveWeightingCycleRe
     Grading Worker's own triggers) calls this on a schedule; this
     endpoint never self-schedules. Reachable only via
     `INTERNAL_SERVICE_TOKEN`."""
-    ai_orchestrator_base_url = os.environ["RAILWAY_SERVICE_AI_ORCHESTRATOR_URL"]
+    ai_orchestrator_base_url = _ai_orchestrator_base_url()
     internal_token = os.environ["INTERNAL_SERVICE_TOKEN"]
 
     async with httpx.AsyncClient(timeout=120.0) as orchestrator_client:
