@@ -36,6 +36,24 @@ class GamesReadError(Exception):
 #: those games exist canonically.
 RECOMMENDATION_WINDOW_DAYS = 7
 
+#: How close to kickoff a game must be before it may enter its FIRST paid
+#: recommendation cycle (HQ Recomputation V1 owner decision, 2026-09-18).
+#:
+#: **This does not replace the 7-day horizon above, and the two are not the
+#: same kind of rule.** `RECOMMENDATION_WINDOW_DAYS` is the canonical
+#: operating horizon every specialized worker shares -- what the system
+#: prepares data for. This is an ADDITIONAL, narrower gate on *expensive
+#: inference specifically*: a game can be fully prepared, fully eligible,
+#: and still not worth paying a committee for until kickoff is close
+#: enough that the lines and context have settled. Both bounds are sent in
+#: the query so the intent stays legible rather than collapsing into
+#: whichever number happens to be smaller.
+#:
+#: **The boundary is inclusive**: a game exactly 36h out IS eligible. Stated
+#: explicitly because "at exactly 36 hours" is a case HQ asked to be
+#: deterministic, and `<=` vs `<` is the whole of that determinism.
+FIRST_PAID_RUN_WINDOW_HOURS = 36
+
 
 async def read_eligible_game_ids(client: httpx.AsyncClient, headers: dict, *, now: datetime) -> list[str]:
     """Returns the `id` of every game eligible for a recommendation this
@@ -58,15 +76,29 @@ async def read_eligible_game_ids(client: httpx.AsyncClient, headers: dict, *, no
        assembled intelligence, and therefore nothing a committee could
        reason over; dispatching anyway spends the game-level fan-out to
        produce a guaranteed `no_configured_sportsbook_has_fresh_data`.
+    4. `scheduled_start <= now + FIRST_PAID_RUN_WINDOW_HOURS` -- close
+       enough to kickoff to be worth paying a committee for at all (HQ
+       Recomputation V1). An additional gate on expensive inference, not a
+       replacement for the horizon above.
 
     Returns `[]` when none qualify -- never fabricated, and an empty slate
     is a legitimate, non-error outcome (most of the week, for NFL)."""
     window_end = now + timedelta(days=RECOMMENDATION_WINDOW_DAYS)
+    paid_run_cutoff = now + timedelta(hours=FIRST_PAID_RUN_WINDOW_HOURS)
     response = await client.get(
         "/rest/v1/games",
         params={
             "status": "eq.scheduled",
-            "scheduled_start": [f"gte.{now.isoformat()}", f"lt.{window_end.isoformat()}"],
+            # Three bounds, all in the query. `gte`/`lt` are the canonical
+            # 7-day horizon; `lte` is the additional 36-hour first-paid-run
+            # gate (HQ Recomputation V1). Sent separately rather than
+            # pre-collapsed to whichever is smaller, so the horizon is
+            # preserved rather than replaced.
+            "scheduled_start": [
+                f"gte.{now.isoformat()}",
+                f"lt.{window_end.isoformat()}",
+                f"lte.{paid_run_cutoff.isoformat()}",
+            ],
             "select": "id",
             # Chronological, per Volume 5's "Neutral ordering (HQ Final
             # Decision 1): game-scoped cards order by
