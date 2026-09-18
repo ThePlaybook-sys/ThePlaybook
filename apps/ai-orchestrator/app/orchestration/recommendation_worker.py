@@ -75,7 +75,11 @@ from app.orchestration.consensus import (
 from app.orchestration.cycle import run_bankroll_coach_evaluation, run_candidate_evaluation, run_recommendation_cycle
 from app.persistence.games import get_game
 from app.persistence.odds_snapshots import read_odds_snapshots
-from app.persistence.recommendations import mark_recommendation_cycle_completed, read_recommendation_by_correlation_id
+from app.persistence.recommendations import (
+    mark_recommendation_cycle_completed,
+    read_completed_paid_cycle_for_game,
+    read_recommendation_by_correlation_id,
+)
 from app.persistence.subscriptions import read_active_subscribers
 
 #: The 6 game-level (Milestone 4.4) Context & Data agents -- run once per
@@ -333,6 +337,27 @@ async def run_game_recommendation(
             fan_out_status="skipped_already_computed",
             sportsbook_used=None,
             game_skipped_reason=None,
+            candidates=[],
+            status="skipped_already_computed",
+        )
+
+    # HQ Recomputation V1 (2026-09-18): one successful paid cycle per
+    # canonical game, and `run_id` is explicitly NOT the reason a game
+    # becomes eligible again. The check above is correlation-scoped and so
+    # only ever protects a retry within ONE master_refresh_run; this one is
+    # keyed on the game itself and therefore holds across days.
+    #
+    # Defence in depth: `apps/workers` already excludes completed games
+    # from the slate. This is the same rule at the service that actually
+    # spends, so a caller that skipped that filter still cannot buy a
+    # second committee run for a finished game. Zero LLM calls either way.
+    completed_paid = await read_completed_paid_cycle_for_game(client, headers, game_id=game_id)
+    if completed_paid is not None:
+        return GameRecommendationResult(
+            recommendation_id=completed_paid["id"],
+            fan_out_status="skipped_already_computed",
+            sportsbook_used=None,
+            game_skipped_reason="game_already_completed_a_paid_cycle",
             candidates=[],
             status="skipped_already_computed",
         )

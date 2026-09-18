@@ -37,6 +37,7 @@ import httpx
 
 from app.ai_orchestrator_client import AiOrchestratorCallError, finalize_slate_strategy, run_game_recommendation
 from app.persistence.games import read_eligible_game_ids
+from app.persistence.recommendations import read_game_ids_with_completed_paid_cycle
 from app.persistence.master_refresh_runs import read_latest_eligible_run
 
 #: `recommendations.prompt_version`/`.agent_version` are a separate,
@@ -180,6 +181,10 @@ class WorkerCycleResult:
     #: this run is explicitly INCOMPLETE; it is never presented as a full
     #: slate.
     games_not_attempted: int = 0
+    #: Games skipped because they already completed a paid intelligence
+    #: cycle (HQ Recomputation V1). Not failures and not deferred -- they
+    #: are finished, and in V1 nothing reopens them automatically.
+    games_completed_previously: int = 0
     #: Eligible games deliberately held back by the activation throttle
     #: (`RECOMMENDATION_MAX_GAMES_PER_CYCLE`). These are NOT failures and
     #: are NOT marked -- they are untouched, and the next cycle takes them
@@ -228,6 +233,25 @@ async def run_recommendation_worker_cycle(
         return WorkerCycleResult(status="no_eligible_run", run_id=None, games=[])
 
     game_ids = await read_eligible_game_ids(supabase_client, supabase_headers, now=now or datetime.now(timezone.utc))
+
+    # HQ Recomputation V1 (2026-09-18): one successful paid cycle per
+    # canonical game. Excluded BEFORE the ceiling and the throttle, because
+    # an already-completed game is not part of this cycle's work at all --
+    # counting it toward either bound would misreport the slate.
+    #
+    # Game-scoped and run_id-independent by construction: the evidence is
+    # `recommendations.cycle_completed_at` keyed on `games.id`, so a new
+    # `master_refresh_run` tomorrow cannot reopen a finished game. That is
+    # precisely the loop this rule closes -- three refresh runs in three
+    # days would otherwise have re-run the whole committee three times on
+    # identical evidence.
+    already_paid = await read_game_ids_with_completed_paid_cycle(
+        supabase_client, supabase_headers, game_ids=game_ids
+    )
+    completed_previously = len(already_paid)
+    if already_paid:
+        game_ids = [gid for gid in game_ids if gid not in already_paid]
+
     selected = len(game_ids)
 
     # FAIL CLOSED, before a single dispatch. A slate larger than the
@@ -244,6 +268,7 @@ async def run_recommendation_worker_cycle(
             games=[],
             games_selected=selected,
             games_not_attempted=selected,
+            games_completed_previously=completed_previously,
             error=(
                 f"eligible slate of {selected} games exceeds the run ceiling of {ceiling} "
                 f"(RECOMMENDATION_MAX_GAMES_PER_RUN) -- refusing to dispatch. A slate this "
@@ -302,6 +327,7 @@ async def run_recommendation_worker_cycle(
                     games_selected=selected,
                     games_not_attempted=selected - (index + 1),
                     games_deferred=deferred,
+                    games_completed_previously=completed_previously,
                     error=halt_error,
                 )
             continue
@@ -365,4 +391,5 @@ async def run_recommendation_worker_cycle(
         games_selected=selected,
         games_not_attempted=deferred,
         games_deferred=deferred,
+        games_completed_previously=completed_previously,
     )

@@ -140,6 +140,55 @@ async def read_recommendation_by_correlation_id(client: httpx.AsyncClient, heade
     return rows[0] if rows else None
 
 
+async def read_completed_paid_cycle_for_game(client: httpx.AsyncClient, headers: dict, *, game_id: str) -> dict | None:
+    """HQ Recomputation V1 (2026-09-18). Returns the earliest
+    `recommendations` row for this CANONICAL GAME that reached
+    `cycle_completed_at`, or `None` if the game has never completed a paid
+    intelligence cycle.
+
+    **Why this exists alongside the correlation-scoped check above.** That
+    one is keyed on `f"{master_refresh_run_id}:{game_id}"`, and a new
+    `master_refresh_runs` row is created every morning -- so it is a
+    crash-retry protection within one run and provably never fires across
+    days. HQ's V1 rule is that `run_id` must not be the semantic reason a
+    game becomes eligible again, so this check is keyed on the game itself.
+
+    This is defence in depth: `apps/workers` already filters completed
+    games out of the slate before dispatching. This is the same rule
+    enforced at the service that actually spends, so a caller that has not
+    filtered -- a manual call, a future scheduler, a bug -- still cannot
+    buy a second committee run for a finished game.
+
+    Ordered by `created_at` ascending and limited to one: if a game
+    somehow holds several completed rows, the FIRST is the authoritative
+    paid cycle and the one whose id should be reported back.
+    """
+    response = await client.get(
+        "/rest/v1/recommendations",
+        params={
+            "game_id": f"eq.{game_id}",
+            "cycle_completed_at": "not.is.null",
+            "select": "id,cycle_completed_at",
+            "order": "created_at.asc",
+            "limit": "1",
+        },
+        headers=headers,
+    )
+    if response.status_code != 200:
+        raise RecommendationsError(
+            f"failed to read completed paid cycle for game_id={game_id!r}: {response.status_code} {response.text}"
+        )
+    rows = response.json()
+    if not rows:
+        return None
+    # Belt and braces: the `not.is.null` filter above is server-side, but a
+    # row is only treated as a completed paid cycle if it actually carries
+    # the timestamp. A guard that spends money on the strength of a filter
+    # it did not verify is a guard that fails silently when the query
+    # changes shape.
+    return rows[0] if rows[0].get("cycle_completed_at") is not None else None
+
+
 async def mark_recommendation_cycle_completed(
     client: httpx.AsyncClient, headers: dict, *, recommendation_id: str, completed_at_iso: str
 ) -> None:
