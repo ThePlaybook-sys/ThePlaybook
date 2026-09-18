@@ -149,3 +149,107 @@ Full suites: **sports-intel-layer 1086 passed**, **workers 101 passed**, with th
 ## BOUNDARY COMPLIANCE
 
 MSF not re-enabled and not touched. No SportsDataIO call, and its postgame worker not enabled — still the audit's UNKNOWN. Zero provider calls this pass. No probability, scoring, or EV semantics touched. The armed recommendation proof was not altered, cancelled, or triggered; `REFERENCE_SPORTSBOOK_PREFERENCE` and `MAX_LLM_CALLS_PER_GAME` remain as set, and the natural 06:15 UTC tick on 2026-09-19 is untouched. No unrelated repairs: the `postgame_worker`'s own process-local dict is left as-is (HQ said not to enable it; the foundation it needs now exists), and the 5 pre-existing wall-clock test failures remain unfixed and out of scope.
+
+---
+
+# ADDENDUM — ACTIVATION AND FIRST NATURAL LIVE FINALIZATION (2026-09-18, same day)
+
+**Directive:** MANSA — ACTIVATE BALLDONTLIE FINALIZATION + NATURAL LIVE PROOF. Authorized for DEV.
+**Result: Gates 1–4 all passed.** The first real Week 2 finalization is done, from a natural cron tick, at a cost of **one** provider request.
+
+## GATE 1 — PAUSED TRANSPORT PROOF (PASS)
+
+The 20:02 UTC tick, on the still-unset gate:
+
+```
+cron_dispatch starting target=balldontlie-finalization base_url=http://sports-intel-layer.railway.internal:8080
+HTTP Request: POST .../v1/internal/balldontlie-finalization/run "HTTP/1.1 200 OK"
+cron_dispatch succeeded result={'status': 'paused', 'games_considered': 0, 'provider_requests': 0, ...}
+```
+
+Deployment SUCCESS, exit 0, not CRASHED. **Transport correct on the first try** — the base URL carries its `http://` scheme and the `:8080` port, which is the exact defect that had `cron-weather-worker` crashing every 15 minutes unseen; it was avoided here by reading the working shape out of the 2026-09-16 ops record rather than guessing. **Zero BALLDONTLIE calls. Zero Sentry events** — `paused` is a member of `_NON_ERROR_STATUSES`, verified in source, so an inert tick is silent by design rather than by luck.
+
+## GATE 2 — ACTIVATION (PASS)
+
+| | |
+|---|---|
+| Flag | `BALLDONTLIE_FINALIZATION_ENABLED=true` — the name that exists in code (`_enabled()`), not renamed |
+| Service | `sports-intel-layer`, dev — the service the gate is read on |
+| Deploy | `skipDeploys` NOT passed, since the deployment is the point. Deployment `762103d2` **SUCCESS** 20:24:09 UTC |
+
+Unchanged, as instructed: `*/30` cadence, rate controls, `CHECKPOINT_OFFSETS`, `MAX_ATTEMPTS=6`, canonical finalization semantics, grading cadence.
+
+## GATE 3 — FIRST NATURAL LIVE CYCLE (PASS) — the 20:31 UTC tick, not manually invoked
+
+```
+result={'status': 'success', 'games_considered': 1, 'weeks_fetched': ['2'],
+        'provider_requests': 1, 'finalized': ['30e2d64f-...'],
+        'not_final_yet': [], 'unresolved': [], 'already_finalized': [],
+        'failures': [], 'error': None}
+```
+
+| Measure | Value |
+|---|---|
+| Games considered | **1** — DET @ BUF was the only canonical game past kickoff+3h, unfinalized, inside the 4-day lookback |
+| Weeks requested | **1** (week 2) |
+| **Exact BALLDONTLIE HTTP requests** | **1** |
+| Games returned | **16** (the whole week, in that one request) |
+| `scheduled` games ignored | 15 — the Sunday/Monday slate, correctly untouched |
+| `in_progress` games ignored | 0 (none were live) |
+| Final games detected | **1** |
+| Mappings resolved | 1, exact — provider game id `1392232` |
+| Raw evidence | `game_events` row `928394ac-e183-481d-9b42-f8de515c6bc1`, full 16-row week payload |
+| Canonical finalizations | **1** |
+| Conflicts / refusals | 0 |
+| Sentry events | 0 |
+
+### The nine verifications
+
+1. **Terminal state** — `provider_status: "Final"`, `is_final: true`. Only 1 of the 16 rows was final; the gate is `status_state`, not score presence.
+2. **Identity exact** — matched on (kickoff `2026-09-18 00:15:00+00`, home `BUF`), zero tolerance. No fuzzy matching anywhere.
+3. **Score COPIED** — provider `visitor_team_score: 31`, `home_team_score: 41` → `games.final_score = {"away": 31, "home": 41}`. Byte-identical; nothing summed or derived.
+4. **Raw evidence exists** — and was written **before** the canonical score, so no final score exists in this system without the payload that justifies it.
+5. **Status** `final`.
+6. **`final_score`** populated.
+7. **`finalized_at`** = `2026-09-18 20:31:12.35135+00`, written exactly once (identical to the evidence row's `captured_at`).
+8. **Second natural tick performed no duplicate work** — see D.
+9. **No Week 1 game overwritten** — all 16 still stamped `2026-09-15 20:16:13.594649+00`, the original backfill instant, every one of them.
+
+**DET 31 @ BUF 41.** First MANSA canonical finalization from a live provider on a natural cadence.
+
+## GATE 3D — IDEMPOTENCY (PASS)
+
+The 21:00 UTC tick, unprompted:
+
+```
+result={'status': 'success', 'games_considered': 0, 'provider_requests': 0, 'finalized': [], ...}
+```
+
+**Duplicate writes: 0. Duplicate provider requests: 0.** The game left the candidate set the moment `finalized_at` was stamped, so the second tick had nothing to claim and issued no request — the `finalized_at is null` filter doing exactly the work it was put there for. Checkpoint state: `state=confirmed_complete`, `attempt_count=1`, which the database trigger now forbids from ever decreasing or reopening.
+
+**One honest note on `checkpoints_done`:** it is `[]` on this row, and that is correct rather than a miss. This path is single-shot — claim, fetch, finalize, `confirmed_complete` — and never enters the six-checkpoint corrections schedule, so it records no labels. The column exists for a corrections-style provider (the SportsDataIO model); BALLDONTLIE finalization is bounded by the terminal state instead.
+
+## GATE 4 — GRADING HANDOFF (PASS)
+
+The 21:31 UTC `cron-postgame-grading` tick, natural, unprompted:
+
+- **17 games seen** — up from 16 before this pass, and the new one is `30e2d64f-...`, **DET @ BUF**, `status: 'graded'`.
+- Recommendation legs found: **0**. Grade events written: **0**. Errors: **0**. `postgame_reviews_generated/failed/skipped`: 0/0/0. Status `completed`.
+
+Nothing scoreable yet, which is not a grading failure — it is the expected state until a game carries a real pre-kickoff MANSA prediction. **What this proves is the handoff**: a game finalized by BALLDONTLIE at 20:31 was visible to the grading pipeline by 21:31, with no manual step in between. The finalization → grading link is live.
+
+## GATE 5 — RECOMMENDATION PROOF (UNDISTURBED)
+
+Not touched, not triggered. `REFERENCE_SPORTSBOOK_PREFERENCE` and `MAX_LLM_CALLS_PER_GAME` unchanged; the one-game throttle, the 36h first-paid-run gate and Recomputation V1 are all as shipped. Next natural tick **2026-09-19 06:15 UTC**. Exact LLM calls to date: **0** (`recommendation_agent_outputs` still 3 rows, all 2026-08-07).
+
+## GATE 6 — END-TO-END SETTLEMENT (PENDING, BY DESIGN)
+
+Needs a game carrying a frozen pre-kickoff prediction. The earliest possible is a Sunday 2026-09-20 17:00 UTC game, recommended at tomorrow's 06:15 tick and finalized by this worker the same evening.
+
+## RATE LIMIT — AND ONE GAP WORTH NAMING
+
+One request inside its minute, against a limit of 5/min — **20% of that minute's budget, 1 of a 7,200/day capacity.** But stated precisely: the finalization evidence envelope records the endpoint, the params and the full payload, and **does not capture the response headers**, so I have no live `x-ratelimit-remaining` reading from *this* call. The 5/min figure is from the 2026-09-11 capture, which did record headers. Reported rather than quietly fixed — adding header capture is an evidence improvement, not a rate control, and this directive said not to touch rate controls.
+
+## BOUNDARY COMPLIANCE
+
+MSF still paused, untouched. SportsDataIO postgame still disabled and unclassified. No manual endpoint invocation — every result above came from a natural cron tick. No cadence, ceiling, offset, retry limit, finalization semantic or grading cadence changed. Recommendation proof untouched. No STOP condition triggered: no quota surprise, no rate-limit violation, no ambiguous identity, no score conflict, no in-progress game treated as final, no duplicate finalization, no checkpoint regression, no unbounded retry, no provider multiplication, no Sentry failure.
