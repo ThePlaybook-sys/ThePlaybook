@@ -120,7 +120,11 @@ class CandidateRunResult:
 
 @dataclass
 class GameRecommendationResult:
-    recommendation_id: str
+    #: `None` only for `status="skipped_ineligible"` -- the deterministic
+    #: pre-LLM gate returns before any `recommendations` row is created,
+    #: because nothing was computed and the next cycle must be free to
+    #: retry once odds arrive.
+    recommendation_id: str | None
     fan_out_status: str
     sportsbook_used: str | None
     game_skipped_reason: str | None
@@ -333,6 +337,61 @@ async def run_game_recommendation(
             status="skipped_already_computed",
         )
 
+    # ---------------------------------------------------------------
+    # DETERMINISTIC PRE-LLM ELIGIBILITY GATE (2026-09-18).
+    #
+    # Everything from here to the fan-out is free: database reads and
+    # pure functions, no model request of any kind. It runs FIRST, and
+    # that ordering is the whole point of this block.
+    #
+    # It used to run second. The 6-agent game-level fan-out executed
+    # before candidate generation, so a game with no odds, stale odds, or
+    # no configured reference sportsbook still cost 6 LLM calls to
+    # discover it was ineligible -- and an unset
+    # `REFERENCE_SPORTSBOOK_PREFERENCE` raised only AFTER the committee
+    # had already run. On 2026-09-17 that shape meant 257 games each
+    # invoked the fan-out before anything could stop them.
+    #
+    # Nothing about scoring, probability, EV or candidate construction
+    # changes here -- `generate_candidates_for_game` is called with the
+    # identical arguments it always was, and still owns sportsbook
+    # selection and freshness. Only WHEN it is called has changed.
+    # ---------------------------------------------------------------
+    odds_rows = [_parse_captured_at(r) for r in await read_odds_snapshots(client, headers, game_id=game_id)]
+    candidate_generation = generate_candidates_for_game(
+        game_id=game_id,
+        home_team=game["home_team"],
+        away_team=game["away_team"],
+        kickoff=_parse_kickoff(game),
+        now=now,
+        odds_rows=odds_rows,
+        reference_sportsbook_preference=reference_sportsbook_preference(),
+    )
+
+    # No candidates means no work a committee could do. Return before any
+    # agent runs, with the reason `generate_candidates_for_game` already
+    # computed -- `no_configured_sportsbook_has_fresh_data` when no
+    # preferred book had fresh V1-market data, which covers "no odds at
+    # all", "stale odds", and "reference sportsbook unavailable" alike.
+    #
+    # `cycle_completed_at` is deliberately NOT marked and no
+    # `recommendations` row is created: nothing was computed, so the next
+    # cycle must be free to try again once odds arrive. That is also what
+    # stops a deterministically-ineligible game from accumulating one
+    # orphan marker row per run.
+    if not candidate_generation.candidates:
+        return GameRecommendationResult(
+            recommendation_id=None,
+            fan_out_status="skipped_ineligible",
+            sportsbook_used=candidate_generation.sportsbook_used,
+            game_skipped_reason=candidate_generation.game_skipped_reason or "no_candidates_generated",
+            candidates=[],
+            status="skipped_ineligible",
+        )
+
+    # ---------------------------------------------------------------
+    # Past this line, and only past it, LLM work is authorized.
+    # ---------------------------------------------------------------
     recommendation_id, fan_out_result = await run_recommendation_cycle(
         client,
         headers,
@@ -347,17 +406,6 @@ async def run_game_recommendation(
         retry_engine=retry_engine,
     )
     participation = build_participation_metadata(fan_out_result)
-
-    odds_rows = [_parse_captured_at(r) for r in await read_odds_snapshots(client, headers, game_id=game_id)]
-    candidate_generation = generate_candidates_for_game(
-        game_id=game_id,
-        home_team=game["home_team"],
-        away_team=game["away_team"],
-        kickoff=_parse_kickoff(game),
-        now=now,
-        odds_rows=odds_rows,
-        reference_sportsbook_preference=reference_sportsbook_preference(),
-    )
 
     subscribers = await read_active_subscribers(client, headers)
     elite_tier_present = any(subscriber["tier"] == "elite" for subscriber in subscribers)
