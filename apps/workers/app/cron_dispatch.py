@@ -312,6 +312,25 @@ _TARGET_PATHS = {
     #: against either spends nothing unless the refresh is explicitly
     #: enabled there.
     "schedule-refresh": "/v1/internal/schedule-refresh/run",
+    #: BALLDONTLIE canonical finalization (2026-09-18). The completed-game
+    #: -> final_score -> finalized_at link that MSF's pause left with no
+    #: active path, and that the SportsDataIO postgame audit could not fill
+    #: because that provider's quota state is unknown.
+    #:
+    #: Its own cron service rather than a lodger on an existing one: this is
+    #: a distinct responsibility (finalize completed games) from grading
+    #: (`postgame-grading`, which CONSUMES finalized games and would deadlock
+    #: on itself if it also produced them) and from MSF capture
+    #: (`msf-postgame-worker`, a different, currently paused provider).
+    #:
+    #: Cost is bounded by the worker, not by the cadence: it issues ONE
+    #: provider request per distinct NFL week that has at least one claimable
+    #: unfinalized game, and zero requests when there are none -- so a
+    #: midweek tick is free and a full Sunday slate costs one call.
+    #: Gated by `BALLDONTLIE_FINALIZATION_ENABLED` on `sports-intel-layer`
+    #: itself, so a tick against this target spends nothing unless
+    #: finalization is explicitly enabled there.
+    "balldontlie-finalization": "/v1/internal/balldontlie-finalization/run",
     #: Remaining unwired specialized workers: Player Props/Pregame -- see
     #: the Phase 3E specialized worker runtime invocation debt item
     #: recorded in PROGRESS.md.
