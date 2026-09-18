@@ -408,7 +408,15 @@ async def test_same_run_same_game_completed_result_skips_second_committee_comput
 @respx.mock
 async def test_same_run_same_game_failed_incomplete_result_permits_retry(monkeypatch):
     monkeypatch.setenv("REFERENCE_SPORTSBOOK_PREFERENCE", "draftkings")
-    _mock_common(game=_game_row(), odds_rows=[])
+    # Qualifying odds, so this test exercises RETRY semantics rather than
+    # the deterministic pre-LLM gate (2026-09-18). It previously passed
+    # `odds_rows=[]`, which now short-circuits before the committee -- a
+    # correct new behaviour, but not what this test is about.
+    _mock_common(game=_game_row(), odds_rows=[{
+        "sportsbook": "draftkings", "market_type": "moneyline",
+        "line_data": {"outcomes": [{"name": "KC", "price": -150}]},
+        "captured_at": "2026-09-21T17:00:00+00:00",
+    }])
     # A `recommendations` row already exists for this correlation (Milestone
     # 4.9's own upsert created it on the FIRST, crashed attempt), but
     # `cycle_completed_at` is still NULL -- the cycle never reached its end.
@@ -425,6 +433,9 @@ async def test_same_run_same_game_failed_incomplete_result_permits_retry(monkeyp
         result = await run_game_recommendation(
             client, _headers(), game_id="g1", correlation_id="corr-1", prompt_version="v1", agent_version="v1",
             routing_rules=_routing_rules(), adapter_registry=registry,
+            # Pinned so the odds above are fresh against the kickoff tier
+            # rather than against wall-clock, which would rot this test.
+            now=datetime.fromisoformat("2026-09-21T17:00:00+00:00"),
         )
 
     # Retry permitted: the committee actually ran (game-level fan-out
@@ -440,7 +451,15 @@ async def test_same_run_same_game_failed_incomplete_result_permits_retry(monkeyp
 @respx.mock
 async def test_new_run_same_game_permits_new_computation(monkeypatch):
     monkeypatch.setenv("REFERENCE_SPORTSBOOK_PREFERENCE", "draftkings")
-    _mock_common(game=_game_row(), odds_rows=[])
+    # Qualifying odds, so this test exercises RETRY semantics rather than
+    # the deterministic pre-LLM gate (2026-09-18). It previously passed
+    # `odds_rows=[]`, which now short-circuits before the committee -- a
+    # correct new behaviour, but not what this test is about.
+    _mock_common(game=_game_row(), odds_rows=[{
+        "sportsbook": "draftkings", "market_type": "moneyline",
+        "line_data": {"outcomes": [{"name": "KC", "price": -150}]},
+        "captured_at": "2026-09-21T17:00:00+00:00",
+    }])
     # A DIFFERENT correlation_id (new master_refresh_run_id + same
     # game_id) -- genuinely never seen before, per-`eq.` filtering means
     # this returns `[]` regardless of what a PRIOR run's correlation_id
@@ -455,6 +474,9 @@ async def test_new_run_same_game_permits_new_computation(monkeypatch):
         result = await run_game_recommendation(
             client, _headers(), game_id="g1", correlation_id="run-2:g1", prompt_version="v1", agent_version="v1",
             routing_rules=_routing_rules(), adapter_registry=registry,
+            # Pinned so the odds above are fresh against the kickoff tier
+            # rather than against wall-clock, which would rot this test.
+            now=datetime.fromisoformat("2026-09-21T17:00:00+00:00"),
         )
 
     assert result.status == "computed"

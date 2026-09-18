@@ -65,14 +65,15 @@ def test_run_game_returns_404_when_game_not_found(monkeypatch):
 
 @respx.mock
 def test_run_game_success_round_trip_with_no_qualifying_sportsbook(monkeypatch):
-    """Zero `ANTHROPIC_API_KEY`/`OPENAI_API_KEY` configured (this test's
-    default, matching CI/local dev where no live keys exist) -- the
-    endpoint still builds and returns a real response; every LLM-calling
-    step degrades to an isolated per-agent/per-candidate failure rather
-    than the endpoint itself erroring out. Uses the "no odds data"
-    shortcut (candidate generation skips the whole game) to keep this
-    round-trip's mock surface small -- the full multi-candidate pipeline
-    is already covered directly against `run_game_recommendation`."""
+    """No odds data for the game, so the DETERMINISTIC PRE-LLM GATE
+    (2026-09-18) refuses it before any agent runs.
+
+    This test previously asserted that a `recommendations` row was still
+    created (`r1`) -- which was true, and was the defect: the game-level
+    fan-out and its marker row happened BEFORE candidate generation could
+    establish the game was ineligible. The assertions below are the new,
+    correct contract: no cycle, no marker row, no agent output, and an
+    explicit reason."""
     _set_env(monkeypatch)
     respx.get(f"{SUPABASE_URL}/rest/v1/model_routing_rules").mock(return_value=httpx.Response(200, json=_routing_rule_rows()))
     respx.get(f"{SUPABASE_URL}/rest/v1/model_registry").mock(return_value=httpx.Response(200, json=[]))
@@ -88,9 +89,9 @@ def test_run_game_success_round_trip_with_no_qualifying_sportsbook(monkeypatch):
     respx.get(f"{SUPABASE_URL}/rest/v1/odds_snapshots").mock(return_value=httpx.Response(200, json=[]))
     respx.get(f"{SUPABASE_URL}/rest/v1/subscriptions").mock(return_value=httpx.Response(200, json=[]))
     respx.get(f"{SUPABASE_URL}/rest/v1/recommendations").mock(return_value=httpx.Response(200, json=[]))
-    respx.post(f"{SUPABASE_URL}/rest/v1/recommendations").mock(return_value=httpx.Response(201, json=[{"id": "r1"}]))
+    rec_post = respx.post(f"{SUPABASE_URL}/rest/v1/recommendations").mock(return_value=httpx.Response(201, json=[{"id": "r1"}]))
     respx.patch(f"{SUPABASE_URL}/rest/v1/recommendations").mock(return_value=httpx.Response(204))
-    respx.post(f"{SUPABASE_URL}/rest/v1/recommendation_agent_outputs").mock(return_value=httpx.Response(201, json=[{}]))
+    agent_outputs = respx.post(f"{SUPABASE_URL}/rest/v1/recommendation_agent_outputs").mock(return_value=httpx.Response(201, json=[{}]))
     mock_prompt_registry_route(SUPABASE_URL)
 
     response = client.post(
@@ -101,6 +102,11 @@ def test_run_game_success_round_trip_with_no_qualifying_sportsbook(monkeypatch):
 
     assert response.status_code == 200
     body = response.json()
-    assert body["recommendation_id"] == "r1"
+    assert body["status"] == "skipped_ineligible"
+    assert body["recommendation_id"] is None, "no cycle was created, so there is no id to report"
     assert body["game_skipped_reason"] == "no_configured_sportsbook_has_fresh_data"
     assert body["candidates"] == []
+    # The point of the reorder: an ineligible game costs nothing and
+    # leaves nothing behind.
+    assert agent_outputs.call_count == 0, "no agent may run before the deterministic gate passes"
+    assert rec_post.call_count == 0, "an ineligible game must not leave an orphan marker row"

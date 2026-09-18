@@ -22,6 +22,8 @@ from app.orchestration.postgame_review_narrative import generate_and_persist_pos
 from app.orchestration.reconstruction import ReconstructionError, reconstruct_recommendation_product
 from app.orchestration.recommendation_worker import RecommendationWorkerError, run_game_recommendation
 from app.orchestration.strategy_finalize import finalize_slate_strategy
+from app.config import max_llm_calls_per_game
+from app.models.budget import CallBudget, LlmBudgetExceededError, budgeted_registry
 from app.persistence.model_config import list_active_model_routing_rules, list_active_models
 
 sentry_sdk.init(
@@ -92,7 +94,9 @@ class CandidateRunResponseItem(BaseModel):
 
 
 class RunGameRecommendationResponse(BaseModel):
-    recommendation_id: str
+    #: `None` for `status="skipped_ineligible"` (the deterministic pre-LLM
+    #: gate) -- no cycle was created, so there is no id to report.
+    recommendation_id: str | None
     fan_out_status: str
     sportsbook_used: str | None
     game_skipped_reason: str | None
@@ -146,6 +150,12 @@ async def internal_run_game_recommendation(payload: RunGameRecommendationRequest
         model_rows = await list_active_models(client, headers)
         model_providers = {row["model_name"]: row["provider"] for row in model_rows}
 
+        # The hard outbound ceiling for THIS game, enforced at the adapter
+        # boundary rather than inferred from an assumed fan-out shape. See
+        # `app.models.budget` for why counting anywhere higher is not
+        # sufficient: the retry engine can turn one intention into several
+        # real requests, and only `complete()` reaches a provider.
+        budget = CallBudget(limit=max_llm_calls_per_game())
         try:
             result = await run_game_recommendation(
                 client,
@@ -155,11 +165,17 @@ async def internal_run_game_recommendation(payload: RunGameRecommendationRequest
                 prompt_version=payload.prompt_version,
                 agent_version=payload.agent_version,
                 routing_rules=routing_rules,
-                adapter_registry=_build_real_adapter_registry(),
+                adapter_registry=budgeted_registry(_build_real_adapter_registry(), budget),
                 model_providers=model_providers,
             )
         except RecommendationWorkerError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except LlmBudgetExceededError as exc:
+            # 429, not 500: this is a deliberate refusal by a control, not
+            # a fault. The caller records it per-game and keeps going, and
+            # `cron_dispatch`'s nested-failure census makes it Sentry-
+            # visible rather than letting it hide inside a 2xx.
+            raise HTTPException(status_code=429, detail=str(exc)) from exc
 
     return RunGameRecommendationResponse(
         recommendation_id=result.recommendation_id,
