@@ -26,6 +26,32 @@ check-then-insert, not an upsert -- an upsert against
 capture or already `confirmed_complete` if called again by mistake. The
 row this table exists to protect is exactly the kind of state an upsert
 would put at risk.
+
+**Provider-independent since 2026-09-18** (HQ "Persistent Checkpoint
+Foundation"). Every function below takes `provider_name` as a keyword with
+a `mysportsfeeds` default, so the three existing MSF callers are unchanged
+byte for byte while the same durable state machine now serves any
+final-score provider. This is not a generalization for its own sake: the
+SportsDataIO postgame audit found that worker holding its checkpoint
+progress in a process-local dict, which a cron forgets on every tick --
+a persistence defect that belongs to *any* provider driven by a stateless
+cron, so it is fixed once, here, rather than per vendor.
+
+The table was already provider-*shaped* (a `provider_name` column, a
+`UNIQUE (game_id, provider_name)` key) but provider-*locked* (`check
+(provider_name in ('mysportsfeeds'))`). Migration
+`20260918190000_generic_postgame_checkpoint_foundation` unlocks it to a
+closed allow-list and adds `checkpoints_done`.
+
+**Three invariants are enforced by a database trigger, not by this
+module** -- deliberately, per Volume 3's append-only-via-trigger rule,
+because a guarantee that lives only in Python is a guarantee any future
+caller can skip: `checkpoints_done` may only grow, `attempt_count` may
+only grow, and `confirmed_complete` may never reopen. So a duplicate cron
+tick, a container restart, or a careless generic `update_ingestion_state`
+cannot hand back an attempt budget or re-buy a checkpoint already paid
+for. This module's job is to make the correct write easy; the trigger's
+job is to make the incorrect one impossible.
 """
 from __future__ import annotations
 
@@ -33,6 +59,8 @@ from datetime import datetime
 
 import httpx
 
+#: Kept as the default for every function so the MSF callers that predate
+#: the generic foundation continue to work without passing it.
 _PROVIDER_NAME = "mysportsfeeds"
 
 
@@ -43,15 +71,15 @@ class IngestionStateError(Exception):
 
 
 async def get_ingestion_state(
-    client: httpx.AsyncClient, headers: dict, *, game_id: str
+    client: httpx.AsyncClient, headers: dict, *, game_id: str, provider_name: str = _PROVIDER_NAME
 ) -> dict | None:
     """Reads the current `game_postgame_ingestion_state` row for
-    (game_id, mysportsfeeds), or `None` if none exists yet."""
+    (game_id, provider_name), or `None` if none exists yet."""
     response = await client.get(
         "/rest/v1/game_postgame_ingestion_state",
         params={
             "game_id": f"eq.{game_id}",
-            "provider_name": f"eq.{_PROVIDER_NAME}",
+            "provider_name": f"eq.{provider_name}",
             "select": "*",
         },
         headers=headers,
@@ -66,14 +94,21 @@ async def get_ingestion_state(
 
 
 async def ensure_scheduled_row(
-    client: httpx.AsyncClient, headers: dict, *, game_id: str, first_eligible_at: datetime
+    client: httpx.AsyncClient,
+    headers: dict,
+    *,
+    game_id: str,
+    first_eligible_at: datetime,
+    provider_name: str = _PROVIDER_NAME,
 ) -> dict:
     """Check-then-insert: creates a fresh `state='scheduled'` row for
-    (game_id, mysportsfeeds) with `next_eligible_attempt_at =
+    (game_id, provider_name) with `next_eligible_attempt_at =
     first_eligible_at` if none exists yet; otherwise returns the existing
     row untouched (never overwrites in-flight or terminal state -- see
     module docstring). Returns the row either way."""
-    existing = await get_ingestion_state(client, headers, game_id=game_id)
+    existing = await get_ingestion_state(
+        client, headers, game_id=game_id, provider_name=provider_name
+    )
     if existing is not None:
         return existing
 
@@ -81,7 +116,7 @@ async def ensure_scheduled_row(
         "/rest/v1/game_postgame_ingestion_state",
         json={
             "game_id": game_id,
-            "provider_name": _PROVIDER_NAME,
+            "provider_name": provider_name,
             "state": "scheduled",
             "next_eligible_attempt_at": first_eligible_at.isoformat(),
         },
@@ -90,7 +125,9 @@ async def ensure_scheduled_row(
     if insert_response.status_code == 409:
         # A genuine concurrent-caller race -- another process created the
         # row between our GET and this POST. Re-read rather than raise.
-        row = await get_ingestion_state(client, headers, game_id=game_id)
+        row = await get_ingestion_state(
+            client, headers, game_id=game_id, provider_name=provider_name
+        )
         if row is not None:
             return row
     if insert_response.status_code not in (200, 201):
@@ -102,7 +139,12 @@ async def ensure_scheduled_row(
 
 
 async def promote_due_scheduled_row(
-    client: httpx.AsyncClient, headers: dict, *, game_id: str, now: datetime
+    client: httpx.AsyncClient,
+    headers: dict,
+    *,
+    game_id: str,
+    now: datetime,
+    provider_name: str = _PROVIDER_NAME,
 ) -> None:
     """Flips a due `state='scheduled'` row to `'eligible_for_postgame_check'`
     -- the first arrow in the design's own chain
@@ -114,7 +156,7 @@ async def promote_due_scheduled_row(
         "/rest/v1/game_postgame_ingestion_state",
         params={
             "game_id": f"eq.{game_id}",
-            "provider_name": f"eq.{_PROVIDER_NAME}",
+            "provider_name": f"eq.{provider_name}",
             "state": "eq.scheduled",
             "next_eligible_attempt_at": f"lte.{now.isoformat()}",
         },
@@ -129,7 +171,12 @@ async def promote_due_scheduled_row(
 
 
 async def claim_game_for_capture(
-    client: httpx.AsyncClient, headers: dict, *, game_id: str, now: datetime
+    client: httpx.AsyncClient,
+    headers: dict,
+    *,
+    game_id: str,
+    now: datetime,
+    provider_name: str = _PROVIDER_NAME,
 ) -> dict | None:
     """Atomically claims one game for a capture attempt: `UPDATE ... SET
     state='capture_in_progress', last_attempt_at=now WHERE
@@ -146,7 +193,7 @@ async def claim_game_for_capture(
         "/rest/v1/game_postgame_ingestion_state",
         params={
             "game_id": f"eq.{game_id}",
-            "provider_name": f"eq.{_PROVIDER_NAME}",
+            "provider_name": f"eq.{provider_name}",
             "state": "eq.eligible_for_postgame_check",
             "next_eligible_attempt_at": f"lte.{now.isoformat()}",
         },
@@ -202,7 +249,12 @@ async def read_confirmed_complete_states(
 
 
 async def update_ingestion_state(
-    client: httpx.AsyncClient, headers: dict, *, game_id: str, **fields
+    client: httpx.AsyncClient,
+    headers: dict,
+    *,
+    game_id: str,
+    provider_name: str = _PROVIDER_NAME,
+    **fields,
 ) -> None:
     """Generic field-level update for (game_id, mysportsfeeds) --
     `app.workers.msf_postgame_worker` uses this for every state
@@ -217,7 +269,7 @@ async def update_ingestion_state(
         return
     response = await client.patch(
         "/rest/v1/game_postgame_ingestion_state",
-        params={"game_id": f"eq.{game_id}", "provider_name": f"eq.{_PROVIDER_NAME}"},
+        params={"game_id": f"eq.{game_id}", "provider_name": f"eq.{provider_name}"},
         json=fields,
         headers=headers,
     )
@@ -228,12 +280,85 @@ async def update_ingestion_state(
         )
 
 
+async def read_checkpoints_done(
+    client: httpx.AsyncClient,
+    headers: dict,
+    *,
+    game_id: str,
+    provider_name: str = _PROVIDER_NAME,
+) -> frozenset[str]:
+    """Returns the set of checkpoint labels this (game, provider) has
+    already completed -- the durable replacement for
+    `app.workers.postgame_worker`'s process-local
+    `ReconciliationGameState.checks_done`.
+
+    Returns an EMPTY set when no row exists, which is the honest answer:
+    a game nobody has scheduled a check for has completed no checkpoints.
+    That is also why this returns a `frozenset` -- it is fed straight to
+    `app.workers.reconciliation.due_checkpoints`, whose `checks_done`
+    parameter is already typed that way, so no adapter layer is needed
+    between persistence and the schedule.
+    """
+    row = await get_ingestion_state(
+        client, headers, game_id=game_id, provider_name=provider_name
+    )
+    if row is None:
+        return frozenset()
+    return frozenset(row.get("checkpoints_done") or [])
+
+
+async def record_checkpoints_done(
+    client: httpx.AsyncClient,
+    headers: dict,
+    *,
+    game_id: str,
+    labels: set[str] | frozenset[str],
+    provider_name: str = _PROVIDER_NAME,
+    now: datetime | None = None,
+) -> frozenset[str]:
+    """Durably records that `labels` have now been completed for this
+    (game, provider), and returns the full resulting set.
+
+    **Unions rather than replaces.** It re-reads the stored set and writes
+    the union, so a caller that knows only about the checkpoint it just
+    finished cannot erase one finished by an earlier process. The database
+    trigger refuses a shrinking write outright, so a bug here surfaces as a
+    loud `IngestionStateError` rather than as a silently re-purchased
+    provider call -- but this function is written so that never has to fire
+    in the first place.
+
+    A no-op returning the stored set when `labels` adds nothing new, so a
+    duplicate cron tick costs one read and no write.
+
+    `now`, when given, is also stamped as `last_attempt_at`, since in every
+    real caller these are the same moment and splitting them into two
+    writes would leave a window where a checkpoint is recorded with no
+    attempt time behind it.
+    """
+    stored = await read_checkpoints_done(
+        client, headers, game_id=game_id, provider_name=provider_name
+    )
+    merged = stored | frozenset(labels)
+    if merged == stored:
+        return stored
+
+    fields: dict = {"checkpoints_done": sorted(merged)}
+    if now is not None:
+        fields["last_attempt_at"] = now.isoformat()
+    await update_ingestion_state(
+        client, headers, game_id=game_id, provider_name=provider_name, **fields
+    )
+    return merged
+
+
 __all__ = [
     "IngestionStateError",
     "get_ingestion_state",
     "ensure_scheduled_row",
     "promote_due_scheduled_row",
     "claim_game_for_capture",
+    "read_checkpoints_done",
     "read_confirmed_complete_states",
+    "record_checkpoints_done",
     "update_ingestion_state",
 ]

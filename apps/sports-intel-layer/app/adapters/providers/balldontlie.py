@@ -51,6 +51,7 @@ fabricated.
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from typing import Callable
 
 import httpx
@@ -62,7 +63,7 @@ from app.adapters.errors import (
     ProviderRateLimitError,
     ProviderUnavailableError,
 )
-from app.adapters.models import AdapterResponse, InjuryReport
+from app.adapters.models import AdapterResponse, FinalScoreLine, InjuryReport
 
 _logger = logging.getLogger("sports-intel-layer.adapters.balldontlie")
 
@@ -175,3 +176,144 @@ class BallDontLieInjuryAdapter(InjuryAdapter):
 
 
 __all__ = ["BallDontLieInjuryAdapter"]
+
+
+#: The machine-readable completion value on `nfl/v1/games`. CONFIRMED FROM A
+#: REAL 2026 RESPONSE, not documentation: the 2026-09-11 Week 1 recovery
+#: capture (persisted in `game_events`, provider `balldontlie`) carries all
+#: three lifecycle values in one payload -- `final` (NE @ SEA, 10-13),
+#: `in_progress` (SF @ LAR, 3-0 at 1:31 of the 1st) and `scheduled` (null
+#: scores). That single capture is why this constant is a fact rather than an
+#: assumption, and why the adapter branches on `status_state` rather than on
+#: the sibling `status` field, which is a display string ("9/13 - 1:00 PM EDT").
+_STATUS_STATE_FINAL = "final"
+
+
+class BallDontLieFinalScoreAdapter:
+    """Reads completed-game final scores from BALLDONTLIE's `nfl/v1/games`.
+
+    **Bulk by (season, week), deliberately.** One request returns every game
+    in a week -- 16 in the real 2026 Week 1 capture, against a `per_page` of
+    25 -- so a whole Sunday's finalization costs ONE provider call, not
+    sixteen. HQ's directive is explicit that a bulk capability must not be
+    converted into one call per game, and this provider's 5 requests/minute
+    limit (CONFIRMED from its own `x-ratelimit-limit` header in that same
+    capture) makes per-game fetching not merely wasteful but genuinely
+    rate-limited at NFL Sunday scale.
+
+    This adapter deliberately does NOT implement `ScheduleAdapter`. A
+    `ScheduleEntry` has no score fields, and widening it to carry them would
+    push scores into the daily schedule-refresh path, which must never write
+    them -- `app.persistence.schedule` keeps `final_score`/`finalized_at` out
+    of its writable set on purpose. A separate, narrow return type keeps that
+    boundary intact.
+    """
+
+    provider_name = "balldontlie"
+
+    def __init__(self, *, client: httpx.AsyncClient, api_key: str):
+        self._client = client
+        self._api_key = api_key
+
+    async def fetch_week_final_scores(
+        self, *, season: int, week: int, per_page: int = 100
+    ) -> AdapterResponse[list[FinalScoreLine]]:
+        """Fetches every game in (season, week) and returns one
+        `FinalScoreLine` per row, final or not -- the caller decides what to
+        do with a non-final game, because "this game is not over yet" is real
+        information rather than an error, and dropping it here would make a
+        still-running game indistinguishable from one the provider does not
+        know about.
+
+        `per_page` defaults to 100 rather than the provider's own 25 so a
+        16-game NFL week can never be split across pages. Pagination is
+        handled honestly rather than assumed away: if the provider still
+        reports a `next_cursor`, that is surfaced as a `ProviderDataError`
+        instead of silently returning a partial week that a caller would read
+        as "these are all the games".
+        """
+        try:
+            response = await self._client.get(
+                f"/{_SPORT_PATH}/v1/games",
+                params={
+                    "seasons[]": [str(season)],
+                    "weeks[]": [str(week)],
+                    "per_page": str(per_page),
+                },
+                headers={"Authorization": self._api_key},
+            )
+        except httpx.HTTPError as exc:
+            raise ProviderUnavailableError(
+                f"transport error calling /nfl/v1/games: {exc}", provider=self.provider_name
+            ) from exc
+
+        if response.status_code == 401:
+            raise ProviderAuthError("invalid or missing API key", provider=self.provider_name)
+        if response.status_code == 429:
+            raise ProviderRateLimitError("rate limited", provider=self.provider_name)
+        if response.status_code >= 500:
+            raise ProviderUnavailableError(
+                f"provider returned {response.status_code}", provider=self.provider_name
+            )
+        if response.status_code != 200:
+            raise ProviderDataError(
+                f"unexpected status {response.status_code}: {response.text}",
+                provider=self.provider_name,
+            )
+
+        try:
+            body = response.json()
+        except ValueError as exc:
+            raise ProviderDataError(
+                "response body was not valid JSON", provider=self.provider_name
+            ) from exc
+        if not isinstance(body, dict) or not isinstance(body.get("data"), list):
+            raise ProviderDataError(
+                "expected an object with a 'data' array", provider=self.provider_name
+            )
+
+        meta = body.get("meta") or {}
+        if meta.get("next_cursor"):
+            raise ProviderDataError(
+                f"week {season}/{week} paginated unexpectedly (next_cursor present at "
+                f"per_page={per_page}); refusing to return a partial week",
+                provider=self.provider_name,
+            )
+
+        lines: list[FinalScoreLine] = []
+        for row in body["data"]:
+            try:
+                home = row["home_team"]
+                away = row["visitor_team"]
+                status_state = row.get("status_state")
+                lines.append(
+                    FinalScoreLine(
+                        provider_game_id=str(row["id"]),
+                        home_team=home["abbreviation"],
+                        away_team=away["abbreviation"],
+                        scheduled_start=_parse_utc(row["date"]),
+                        # Copied whole-game fields. Never the quarter splits,
+                        # and never a sum of them -- see FinalScoreLine.
+                        home_score=row.get("home_team_score"),
+                        away_score=row.get("visitor_team_score"),
+                        provider_status=row.get("status"),
+                        is_final=status_state == _STATUS_STATE_FINAL,
+                    )
+                )
+            except (KeyError, TypeError, ValueError) as exc:
+                # Row isolation, same discipline as the SportsDataIO schedule
+                # adapter: one malformed row must not lose the other fifteen
+                # games in the week.
+                _logger.warning(
+                    "skipping malformed balldontlie game row (id=%r): %s", row.get("id"), exc
+                )
+                continue
+
+        return AdapterResponse(value=lines, source=self.provider_name, provider_reported_at=None)
+
+
+def _parse_utc(value: str) -> datetime:
+    """BALLDONTLIE ships ISO-8601 with a `Z` suffix (`2026-09-10T00:20:00.000Z`,
+    confirmed from the real capture). `fromisoformat` rejects `Z` before
+    Python 3.11, so it is normalized rather than assumed."""
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))

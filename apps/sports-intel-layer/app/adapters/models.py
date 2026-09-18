@@ -180,6 +180,36 @@ class PlayerProp(BaseModel):
     under_odds: int | None = None
 
 
+class FinalScoreLine(BaseModel):
+    """One completed game's authoritative final score, as a provider
+    reported it (BALLDONTLIE finalization, 2026-09-18).
+
+    **Every field here is COPIED, never derived.** In particular
+    `home_score`/`away_score` are the provider's own whole-game score
+    fields -- not a sum of per-quarter splits, which the 2026-09-03 bake-off
+    recorded can be null even on a game the same provider calls `Final`.
+    Summing them would silently invent a score for exactly the games whose
+    detail is missing.
+
+    `provider_status` and `is_final` are kept as two separate fields on
+    purpose. The provider ships both a human display string (`"Final"`,
+    `"1:31 - 1st"`, `"9/13 - 1:00 PM EDT"`) and a machine enum
+    (`final`/`in_progress`/`scheduled`). Only the enum is safe to branch on,
+    and only `is_final` may gate a write -- a score being present is NOT the
+    same question. The 2026-09-11 capture holds a live proof of why: SF @ LAR
+    carried a real 3-0 with `status_state='in_progress'`, and any rule keyed
+    on "score is not null" would have frozen a first-quarter score as final.
+    """
+    provider_game_id: str
+    home_team: str
+    away_team: str
+    scheduled_start: datetime
+    home_score: int | None = None
+    away_score: int | None = None
+    provider_status: str | None = None
+    is_final: bool = False
+
+
 class InjuryReport(BaseModel):
     game_external_id: str
     player_external_id: str

@@ -677,6 +677,87 @@ class DispatchMSFPostgameResponse(BaseModel):
     paused: bool
 
 
+class BallDontLieFinalizationResponse(BaseModel):
+    status: str
+    games_considered: int
+    weeks_fetched: list[str]
+    provider_requests: int
+    finalized: list[str]
+    not_final_yet: list[str]
+    unresolved: list[str]
+    already_finalized: list[str]
+    failures: list[str]
+    error: str | None = None
+
+
+@app.post(
+    "/v1/internal/balldontlie-finalization/run",
+    dependencies=[Depends(require_internal_token)],
+    response_model=BallDontLieFinalizationResponse,
+)
+async def internal_run_balldontlie_finalization() -> BallDontLieFinalizationResponse:
+    """BALLDONTLIE canonical finalization (2026-09-18, HQ-authorized).
+
+    The target a recurring Railway Cron Job POSTs to
+    (`CRON_DISPATCH_TARGET=balldontlie-finalization`). Thin HTTP-to-function
+    adapter only, same discipline as every other `/v1/internal/*` endpoint
+    here -- all eligibility, claiming, identity resolution, evidence
+    preservation and finalization logic lives in
+    `app.workers.balldontlie_finalization_worker`.
+
+    **Gated explicit-opt-in.** With `BALLDONTLIE_FINALIZATION_ENABLED`
+    anything other than `"true"`, the worker returns `status="paused"`
+    having made no call of any kind -- not to the provider, not to Supabase
+    -- so this endpoint is inert until the flag is deliberately set.
+
+    No credential is read in this module: the BALLDONTLIE key comes from
+    `build_real_balldontlie_client`, preserving the DEMO-1 isolation
+    discipline that `tests/test_environment_safety.py` reserves by name.
+    """
+    from app.master_refresh.production_clients import (
+        MissingCredentialError,
+        build_real_balldontlie_client,
+    )
+    from app.workers.balldontlie_finalization_worker import run_balldontlie_finalization
+
+    supabase_client = httpx.AsyncClient(base_url=os.environ["SUPABASE_URL"], timeout=600.0)
+    async with supabase_client:
+        try:
+            balldontlie_client, api_key = build_real_balldontlie_client()
+        except MissingCredentialError as exc:
+            return BallDontLieFinalizationResponse(
+                status="failed",
+                games_considered=0,
+                weeks_fetched=[],
+                provider_requests=0,
+                finalized=[],
+                not_final_yet=[],
+                unresolved=[],
+                already_finalized=[],
+                failures=[],
+                error=str(exc),
+            )
+        async with balldontlie_client:
+            result = await run_balldontlie_finalization(
+                supabase_client=supabase_client,
+                balldontlie_client=balldontlie_client,
+                balldontlie_api_key=api_key,
+            )
+
+    return BallDontLieFinalizationResponse(
+        status=result.status,
+        games_considered=result.games_considered,
+        weeks_fetched=result.weeks_fetched,
+        provider_requests=result.provider_requests,
+        finalized=result.finalized,
+        not_final_yet=result.not_final_yet,
+        unresolved=result.unresolved,
+        already_finalized=result.already_finalized,
+        failures=result.failures,
+        error=result.error,
+    )
+
+
 @app.post(
     "/v1/internal/msf-postgame/dispatch",
     dependencies=[Depends(require_internal_token)],
