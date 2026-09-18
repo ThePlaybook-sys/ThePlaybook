@@ -68,7 +68,20 @@ async def read_eligible_game_ids(client: httpx.AsyncClient, headers: dict, *, no
             "status": "eq.scheduled",
             "scheduled_start": [f"gte.{now.isoformat()}", f"lt.{window_end.isoformat()}"],
             "select": "id",
-            "order": "scheduled_start.asc",
+            # Chronological, per Volume 5's "Neutral ordering (HQ Final
+            # Decision 1): game-scoped cards order by
+            # `games.scheduled_start` ... Never EV or confidence."
+            #
+            # `id.asc` is a TIEBREAK, not a second ranking rule, and it is
+            # needed: a real NFL Sunday puts eight games at the same
+            # 17:00 UTC kickoff, so `scheduled_start` alone leaves the
+            # order among them unspecified by PostgREST and therefore
+            # irreproducible between calls. A row id carries no
+            # intelligence -- it is not EV, confidence, or any judgment
+            # about the game -- so breaking ties on it keeps the set
+            # "unordered-by-intelligence" exactly as Decision 1 requires,
+            # while making a prefix of the slate deterministic.
+            "order": "scheduled_start.asc,id.asc",
         },
         headers=headers,
     )
