@@ -96,6 +96,13 @@ _NON_ERROR_STATUSES = frozenset(
         "disabled",
         "skipped",
         "no_eligible_run",
+        # A deliberately throttled activation cycle
+        # (`RECOMMENDATION_MAX_GAMES_PER_CYCLE`). Not an error: the slate
+        # was correct and a prefix of it was worked on purpose. It is a
+        # DISTINCT status from "completed" precisely so a partial pass is
+        # never readable as a full slate, and the result carries
+        # `games_deferred` to say how many were held back.
+        "completed_limited",
         # The Odds Worker's own two deliberate, named stop conditions. Both
         # mean "the guard worked", which is the system behaving correctly.
         "skipped_credit_guard",

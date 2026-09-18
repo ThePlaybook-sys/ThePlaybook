@@ -24,6 +24,7 @@ from app.persistence.games import RECOMMENDATION_WINDOW_DAYS, read_eligible_game
 from app.recommendation_worker import (
     CONSECUTIVE_IDENTICAL_FAILURE_LIMIT,
     DEFAULT_MAX_GAMES_PER_RUN,
+    max_games_per_cycle,
     max_games_per_run,
     run_recommendation_worker_cycle,
 )
@@ -414,3 +415,140 @@ def test_no_real_llm_or_provider_call_is_reachable_from_this_suite():
     assert "ai_orchestrator_client" in open(source).read()
     for forbidden in ("anthropic", "openai", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"):
         assert forbidden not in open(source).read(), f"{forbidden} must never appear in the worker service"
+
+
+# ------------------------------------------------------------------- 12
+# Staged activation throttle (2026-09-18): process at most N, explicitly.
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_activation_throttle_processes_exactly_one_game_and_says_so(monkeypatch):
+    """The first live committee run is held to ONE game, and the result
+    makes that impossible to mistake for a full slate."""
+    monkeypatch.setenv("RECOMMENDATION_MAX_GAMES_PER_CYCLE", "1")
+    respx.get(f"{SUPABASE_URL}/rest/v1/master_refresh_runs").mock(
+        return_value=httpx.Response(200, json=[{"id": "run-1", "status": "success"}])
+    )
+    respx.get(f"{SUPABASE_URL}/rest/v1/games").mock(
+        return_value=httpx.Response(200, json=[{"id": f"g{i}"} for i in range(16)])
+    )
+    orch = respx.post(f"{AI_ORCHESTRATOR_URL}/v1/internal/recommendation-worker/run-game").mock(
+        return_value=httpx.Response(200, json={"recommendation_id": "r1", "status": "computed", "candidates": []})
+    )
+    respx.post(f"{AI_ORCHESTRATOR_URL}/v1/internal/recommendation-worker/finalize-strategy").mock(
+        return_value=httpx.Response(200, json={"status": "ok"})
+    )
+
+    async with httpx.AsyncClient(base_url=SUPABASE_URL) as db, httpx.AsyncClient() as orch_client:
+        result = await run_recommendation_worker_cycle(
+            db, _headers(), ai_orchestrator_client=orch_client,
+            ai_orchestrator_base_url=AI_ORCHESTRATOR_URL, internal_token="secret", now=NOW,
+        )
+
+    assert orch.call_count == 1, "exactly one game may reach the LLM path"
+    assert result.status == "completed_limited", "a throttled pass must not report plain 'completed'"
+    assert result.games_selected == 16
+    assert result.games_deferred == 15
+    assert len(result.games) == 1
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_throttle_takes_the_soonest_kickoff_not_an_invented_ranking(monkeypatch):
+    """Ordering is Volume 5's HQ Final Decision 1 -- chronological by
+    `games.scheduled_start`, never EV or confidence. The read already
+    orders `scheduled_start.asc`, so the throttle takes a prefix and
+    invents nothing."""
+    monkeypatch.setenv("RECOMMENDATION_MAX_GAMES_PER_CYCLE", "1")
+    respx.get(f"{SUPABASE_URL}/rest/v1/master_refresh_runs").mock(
+        return_value=httpx.Response(200, json=[{"id": "run-1", "status": "success"}])
+    )
+    # Returned in the order PostgREST would return them under
+    # `order=scheduled_start.asc`.
+    games_route = respx.get(f"{SUPABASE_URL}/rest/v1/games").mock(
+        return_value=httpx.Response(200, json=[{"id": "earliest"}, {"id": "middle"}, {"id": "latest"}])
+    )
+    orch = respx.post(f"{AI_ORCHESTRATOR_URL}/v1/internal/recommendation-worker/run-game").mock(
+        return_value=httpx.Response(200, json={"recommendation_id": "r1", "status": "computed", "candidates": []})
+    )
+    respx.post(f"{AI_ORCHESTRATOR_URL}/v1/internal/recommendation-worker/finalize-strategy").mock(
+        return_value=httpx.Response(200, json={"status": "ok"})
+    )
+
+    async with httpx.AsyncClient(base_url=SUPABASE_URL) as db, httpx.AsyncClient() as orch_client:
+        result = await run_recommendation_worker_cycle(
+            db, _headers(), ai_orchestrator_client=orch_client,
+            ai_orchestrator_base_url=AI_ORCHESTRATOR_URL, internal_token="secret", now=NOW,
+        )
+
+    assert result.games[0].game_id == "earliest"
+    assert orch.call_count == 1
+    # The ordering comes from the query, not from Python re-sorting.
+    # `id.asc` is a tiebreak, not a ranking: eight real games share a
+    # 17:00 UTC kickoff, so chronological alone is irreproducible.
+    assert games_route.calls[0].request.url.params["order"] == "scheduled_start.asc,id.asc"
+
+
+def test_throttle_defaults_to_no_limit(monkeypatch):
+    """Unset is the normal production state -- a throttle must never be
+    accidentally on."""
+    monkeypatch.delenv("RECOMMENDATION_MAX_GAMES_PER_CYCLE", raising=False)
+    assert max_games_per_cycle() is None
+    monkeypatch.setenv("RECOMMENDATION_MAX_GAMES_PER_CYCLE", "")
+    assert max_games_per_cycle() is None
+    # A typo must not silently shrink the slate to something unintended.
+    monkeypatch.setenv("RECOMMENDATION_MAX_GAMES_PER_CYCLE", "one")
+    assert max_games_per_cycle() is None
+    monkeypatch.setenv("RECOMMENDATION_MAX_GAMES_PER_CYCLE", "0")
+    assert max_games_per_cycle() is None
+    monkeypatch.setenv("RECOMMENDATION_MAX_GAMES_PER_CYCLE", "1")
+    assert max_games_per_cycle() == 1
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_throttle_does_not_change_an_unthrottled_run(monkeypatch):
+    """With no throttle set, behaviour is exactly as before -- plain
+    `completed`, nothing deferred."""
+    monkeypatch.delenv("RECOMMENDATION_MAX_GAMES_PER_CYCLE", raising=False)
+    respx.get(f"{SUPABASE_URL}/rest/v1/master_refresh_runs").mock(
+        return_value=httpx.Response(200, json=[{"id": "run-1", "status": "success"}])
+    )
+    respx.get(f"{SUPABASE_URL}/rest/v1/games").mock(
+        return_value=httpx.Response(200, json=[{"id": f"g{i}"} for i in range(16)])
+    )
+    orch = respx.post(f"{AI_ORCHESTRATOR_URL}/v1/internal/recommendation-worker/run-game").mock(
+        return_value=httpx.Response(200, json={"recommendation_id": "r1", "status": "computed", "candidates": []})
+    )
+    respx.post(f"{AI_ORCHESTRATOR_URL}/v1/internal/recommendation-worker/finalize-strategy").mock(
+        return_value=httpx.Response(200, json={"status": "ok"})
+    )
+
+    async with httpx.AsyncClient(base_url=SUPABASE_URL) as db, httpx.AsyncClient() as orch_client:
+        result = await run_recommendation_worker_cycle(
+            db, _headers(), ai_orchestrator_client=orch_client,
+            ai_orchestrator_base_url=AI_ORCHESTRATOR_URL, internal_token="secret", now=NOW,
+        )
+
+    assert orch.call_count == 16
+    assert result.status == "completed"
+    assert result.games_deferred == 0
+
+
+def test_throttled_status_is_not_reported_as_an_error():
+    """A deliberate throttle is normal operation, not a Sentry event --
+    but it is still a DISTINCT status from a full `completed`."""
+    from app.cron_dispatch import _NON_ERROR_STATUSES
+
+    assert "completed_limited" in _NON_ERROR_STATUSES
+    assert result_failure_summary({
+        "status": "completed_limited", "games_selected": 16, "games_deferred": 15,
+        "games": [{"game_id": "g1", "status": "dispatched", "error": None}],
+    }) is None
+    # ...and a throttled run that ALSO failed its one game is still loud.
+    level, _ = result_failure_summary({
+        "status": "completed_limited", "games_deferred": 15,
+        "games": [{"game_id": "g1", "status": "failed", "error": "boom"}],
+    })
+    assert level == "error"

@@ -79,6 +79,52 @@ DEFAULT_MAX_GAMES_PER_RUN = 20
 CONSECUTIVE_IDENTICAL_FAILURE_LIMIT = 3
 
 
+#: An EXPLICIT, opt-in cap on how many eligible games one cycle actually
+#: processes. Unset means no cap, which is the normal production state --
+#: this exists for a staged activation, where the first live committee run
+#: is deliberately held to a single game while its real cost and output
+#: are observed.
+#:
+#: **This is not the same thing as `max_games_per_run()` and must never be
+#: confused with it.** That is a SAFETY ceiling: a slate larger than it
+#: means the eligibility contract is wrong, so the run refuses entirely
+#: and dispatches nothing. This is a THROTTLE: the slate is correct, and
+#: we are choosing to work a prefix of it on purpose.
+#:
+#: **It is not silent truncation.** A throttled cycle reports
+#: `status="completed_limited"` rather than `"completed"`, and carries
+#: `games_selected`/`games_processed`/`games_deferred`, so a partial pass
+#: can never be read as a full slate. The deferred games are not failures
+#: and are not marked -- they are simply untouched, and the next cycle
+#: picks them up normally.
+#:
+#: **Ordering is not invented here.** The games arrive already sorted by
+#: `scheduled_start` ascending (`read_eligible_game_ids`), which is
+#: Volume 5's own "Neutral ordering (HQ Final Decision 1): game-scoped
+#: cards order by `games.scheduled_start` ... Never EV or confidence."
+#: Taking a prefix therefore means "the games kicking off soonest", which
+#: is the architecture's existing rule rather than a new ranking.
+MAX_GAMES_PER_CYCLE_ENV = "RECOMMENDATION_MAX_GAMES_PER_CYCLE"
+
+
+def max_games_per_cycle() -> int | None:
+    """`RECOMMENDATION_MAX_GAMES_PER_CYCLE` as a positive integer, or
+    `None` when unset/blank (no throttle -- the normal state).
+
+    A malformed or non-positive value returns `None` rather than raising:
+    a typo in a throttle must not silently reduce the slate to something
+    unintended, and no-throttle is the documented default. The safety
+    ceiling still applies either way."""
+    raw = os.environ.get(MAX_GAMES_PER_CYCLE_ENV, "").strip()
+    if not raw:
+        return None
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return None
+    return value if value > 0 else None
+
+
 def max_games_per_run() -> int:
     """`RECOMMENDATION_MAX_GAMES_PER_RUN` when set to a positive integer,
     otherwise `DEFAULT_MAX_GAMES_PER_RUN`. A malformed or non-positive
@@ -103,7 +149,7 @@ class GameCycleResult:
 
 @dataclass
 class WorkerCycleResult:
-    #: "no_eligible_run" | "completed" | "failed"
+    #: "no_eligible_run" | "completed" | "completed_limited" | "failed"
     #:
     #: `"failed"` is the FAIL-CLOSED outcome: the run refused to dispatch
     #: anything (the slate exceeded `max_games_per_run`) or stopped
@@ -134,6 +180,13 @@ class WorkerCycleResult:
     #: this run is explicitly INCOMPLETE; it is never presented as a full
     #: slate.
     games_not_attempted: int = 0
+    #: Eligible games deliberately held back by the activation throttle
+    #: (`RECOMMENDATION_MAX_GAMES_PER_CYCLE`). These are NOT failures and
+    #: are NOT marked -- they are untouched, and the next cycle takes them
+    #: normally. Reported separately from `games_not_attempted`'s
+    #: stopped-early meaning so "we chose to defer" never reads as
+    #: "something went wrong".
+    games_deferred: int = 0
 
 
 def _failure_signature(error: str, *, game_id: str) -> str:
@@ -198,6 +251,16 @@ async def run_recommendation_worker_cycle(
             ),
         )
 
+    # The explicit activation throttle, applied AFTER the safety ceiling
+    # and never conflated with it. The slate is already ordered by
+    # `scheduled_start` ascending, so a prefix is "soonest kickoff first"
+    # per Volume 5's HQ Final Decision 1 -- not a new ranking rule.
+    cycle_cap = max_games_per_cycle()
+    deferred = 0
+    if cycle_cap is not None and selected > cycle_cap:
+        deferred = selected - cycle_cap
+        game_ids = game_ids[:cycle_cap]
+
     games: list[GameCycleResult] = []
     consecutive_identical: int = 0
     last_error: str | None = None
@@ -238,6 +301,7 @@ async def run_recommendation_worker_cycle(
                     games=games,
                     games_selected=selected,
                     games_not_attempted=selected - (index + 1),
+                    games_deferred=deferred,
                     error=halt_error,
                 )
             continue
@@ -290,11 +354,15 @@ async def run_recommendation_worker_cycle(
             strategy_error = str(exc)
 
     return WorkerCycleResult(
-        status="completed",
+        # `completed_limited`, never plain `completed`, when the throttle
+        # held games back -- a partial pass must not be readable as a
+        # full slate.
+        status="completed_limited" if deferred else "completed",
         run_id=run["id"],
         games=games,
         strategy=strategy_result,
         strategy_error=strategy_error,
         games_selected=selected,
-        games_not_attempted=0,
+        games_not_attempted=deferred,
+        games_deferred=deferred,
     )
