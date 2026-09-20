@@ -273,7 +273,14 @@ async def test_eligible_game_reaches_fan_out(monkeypatch):
 
     result = await _run(adapter, budget=budget)
 
-    assert result.status == "computed"
+    # HQ "EMPTY NO-BET SAFETY FIX" (2026-09-20): this test's point is that an
+    # ELIGIBLE game reaches the fan-out and spends real budget -- proven below
+    # by `budget.used >= 6`, unchanged. The status is now
+    # `analysis_incomplete` rather than `computed` because this test's adapter
+    # produces no usable analytical output, and a cycle that produces none no
+    # longer reports success. The eligibility gate behaviour under test is
+    # untouched.
+    assert result.status == "analysis_incomplete"
     assert result.sportsbook_used == "draftkings"
     assert budget.used >= 6, (
         f"an eligible game must reach the committee -- the 6 game-level agents "

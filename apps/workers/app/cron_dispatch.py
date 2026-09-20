@@ -161,7 +161,17 @@ def _flush() -> None:
 #: `status` and/or an `error` -- so one rule covers grading's `legs` and
 #: `products`, recommendation's `games`, and anything later that follows
 #: the house convention.
-_NESTED_RESULT_KEYS = ("games", "legs", "products", "items")
+_NESTED_RESULT_KEYS = ("games", "legs", "products", "items", "candidates")
+
+#: Per-item statuses that count as a failure for census purposes.
+#:
+#: `analysis_incomplete` was added by HQ's "EMPTY NO-BET SAFETY FIX"
+#: (2026-09-20). Adding `"candidates"` to the keys above was NOT sufficient on
+#: its own: before that fix a candidate with no usable analytical output still
+#: reported `status="evaluated"`, so a total committee failure presented as a
+#: clean successful run no matter how deeply the census looked. The semantic
+#: status had to be corrected first -- this set is the other half of it.
+_FAILURE_STATUSES = frozenset({"failed", "analysis_incomplete"})
 
 
 def _nested_failure_census(result: dict) -> tuple[int, int, str] | None:
@@ -180,19 +190,37 @@ def _nested_failure_census(result: dict) -> tuple[int, int, str] | None:
     failed = 0
     total = 0
     sample: str | None = None
-    for key in _NESTED_RESULT_KEYS:
-        items = result.get(key)
-        if not isinstance(items, list):
-            continue
-        for item in items:
-            if not isinstance(item, dict):
+
+    def _walk(node: dict) -> None:
+        """Counts this node's nested collections, then descends through each
+        item's own `response` envelope.
+
+        The descent is what makes candidate-level failures visible at all:
+        the Recommendation Worker reports them at
+        `games[].response.candidates[]`, two levels below the top-level
+        result, so a flat scan of `result[key]` could never reach them --
+        which is precisely how a game whose every candidate produced nothing
+        was still reported as a clean success.
+        """
+        nonlocal failed, total, sample
+        for key in _NESTED_RESULT_KEYS:
+            items = node.get(key)
+            if not isinstance(items, list):
                 continue
-            total += 1
-            error = item.get("error")
-            if item.get("status") == "failed" or error:
-                failed += 1
-                if sample is None:
-                    sample = str(error) if error else "status=failed with no detail reported"
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                total += 1
+                error = item.get("error")
+                if item.get("status") in _FAILURE_STATUSES or error:
+                    failed += 1
+                    if sample is None:
+                        sample = str(error) if error else f"status={item.get('status')} with no detail reported"
+                nested = item.get("response")
+                if isinstance(nested, dict):
+                    _walk(nested)
+
+    _walk(result)
     if not failed:
         return None
     return failed, total, sample or "no detail reported"

@@ -122,6 +122,48 @@ class CandidateRunResult:
     strategy_input: EvaluatedCandidate | None = None
 
 
+#: HQ "EMPTY NO-BET SAFETY FIX" (2026-09-20). One internal status, reused at
+#: candidate level and game level, for the state MANSA previously had no word
+#: for: the analytical/model pipeline did not produce enough usable evidence
+#: to make a qualification decision.
+#:
+#: **This is deliberately NOT a customer-facing product outcome.** HQ's
+#: decision is explicit that No Bet keeps its existing meaning -- "analysis
+#: completed and nothing qualified" -- and that an analysis failure is simply
+#: not a No Bet. So this status lives only in the internal worker contract;
+#: no new `GameDecision.outcome`, no new `recommendation_products` type, and
+#: no change to any existing API shape.
+#:
+#: Named rather than reusing the existing `"failed"`, because `"failed"`
+#: already means "this candidate raised an exception". An incomplete analysis
+#: raised nothing -- every step returned, they just returned nothing usable --
+#: and collapsing the two would lose exactly the distinction that let this
+#: defect hide.
+ANALYSIS_INCOMPLETE = "analysis_incomplete"
+
+
+def _analysis_incomplete(shared_chain, strategy_input) -> bool:
+    """Whether this candidate's analytical chain failed to produce the
+    minimum usable output the Strategy Engine needs.
+
+    A candidate is incomplete when it has NO `strategy_input` **and** the
+    chain never produced an EV at all -- i.e. the probability -> EV -> risk
+    sequence did not complete far enough to decide anything.
+
+    It is NOT incomplete when `shared_chain.ev` exists but carries no
+    `ev_per_dollar`. That is the documented, legitimate case of a candidate
+    with no `american_odds`: the analysis ran to completion and simply found
+    nothing EV-computable, which is real information rather than a failure.
+
+    A `partial` chain that still yielded a usable `strategy_input` is also
+    not incomplete -- HQ's STATE 4: some degradation, but a valid decision
+    survives. The degradation stays visible via `shared_chain_status`.
+    """
+    if strategy_input is not None:
+        return False
+    return shared_chain.ev is None
+
+
 @dataclass
 class GameRecommendationResult:
     #: `None` only for `status="skipped_ineligible"` -- the deterministic
@@ -279,7 +321,14 @@ async def _evaluate_one_candidate(
 
     return CandidateRunResult(
         candidate=candidate,
-        status="evaluated",
+        # HQ "EMPTY NO-BET SAFETY FIX" (2026-09-20). `evaluated` used to be
+        # returned unconditionally here, including when the analytical chain
+        # had produced nothing at all. That was the quiet half of the
+        # empty-No-Bet defect: a candidate with no usable output reported
+        # SUCCESS, so neither the nested failure census nor any status check
+        # could see it, and the game went on to be written as an active
+        # No Bet. See `_analysis_incomplete` for the precise distinction.
+        status=ANALYSIS_INCOMPLETE if _analysis_incomplete(shared_chain, strategy_input) else "evaluated",
         shared_chain_status=shared_chain.status,
         consensus_status=shared_consensus.status,
         second_pass_triggered=second_pass_triggered,
@@ -460,12 +509,40 @@ async def run_game_recommendation(
             result = CandidateRunResult(candidate=candidate, status="failed", error=str(exc))
         candidate_results.append(result)
 
+    # HQ "EMPTY NO-BET SAFETY FIX" (2026-09-20), STATE 3. Analysis was
+    # attempted but produced ZERO usable analytical candidates -- every
+    # candidate either raised or came back with no EV at all. That is an
+    # analysis failure, and an analysis failure is NOT a No Bet.
+    #
+    # Returning before the completion marker is the whole point. Left as it
+    # was, this path stamped `cycle_completed_at`, handed an empty candidate
+    # list to the Strategy Engine, and got back `no_bet` -- which the Engine
+    # cannot distinguish from "evaluated, nothing qualified", because in both
+    # cases nothing qualifies. The game was then permanently consumed by
+    # Recomputation V1 while having produced no intelligence at all.
+    #
+    # `cycle_completed_at` stays NULL here, exactly as it does for a crash,
+    # so the game remains eligible for bounded retry on the next cycle.
+    if candidate_results and not any(c.strategy_input is not None for c in candidate_results):
+        return GameRecommendationResult(
+            recommendation_id=recommendation_id,
+            fan_out_status=fan_out_result.status,
+            sportsbook_used=candidate_generation.sportsbook_used,
+            game_skipped_reason=candidate_generation.game_skipped_reason,
+            candidates=candidate_results,
+            status=ANALYSIS_INCOMPLETE,
+        )
+
     # Pre-Phase-6 Operational Readiness Gate, Decision 5: the LAST step,
-    # unconditionally, once every candidate has been attempted (success
-    # or isolated failure -- both mean the cycle itself reached its
-    # normal end). Any exception raised anywhere above this line leaves
-    # `cycle_completed_at` NULL, which is exactly what keeps a crashed
-    # attempt retryable.
+    # once every candidate has been attempted (success or isolated failure
+    # -- both mean the cycle itself reached its normal end). Any exception
+    # raised anywhere above this line leaves `cycle_completed_at` NULL,
+    # which is exactly what keeps a crashed attempt retryable.
+    #
+    # No longer unconditional (HQ fix above): a cycle that produced no usable
+    # analytical candidate returns before reaching this line. Completion now
+    # means what it says -- a recommendation or a genuine No Bet, each after
+    # analysis actually ran.
     await mark_recommendation_cycle_completed(client, headers, recommendation_id=recommendation_id, completed_at_iso=now.isoformat())
 
     return GameRecommendationResult(

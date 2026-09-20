@@ -107,6 +107,22 @@ CONSECUTIVE_IDENTICAL_FAILURE_LIMIT = 3
 #: is the architecture's existing rule rather than a new ranking.
 MAX_GAMES_PER_CYCLE_ENV = "RECOMMENDATION_MAX_GAMES_PER_CYCLE"
 
+#: Game statuses that must never reach the Strategy Engine (HQ "EMPTY NO-BET
+#: SAFETY FIX", 2026-09-20). Both mean "this game contributed no NEW usable
+#: candidates this cycle", and the Strategy Engine cannot tell an empty
+#: candidate list caused by failure apart from one caused by nothing
+#: qualifying -- it returns `no_bet` either way.
+#:
+#: - `skipped_already_computed`: it contributed its input in an earlier cycle.
+#: - `analysis_incomplete`: analysis ran and produced nothing usable. Relaying
+#:   it would manufacture an ACTIVE No Bet out of a failure, which is the
+#:   exact defect that consumed CLE @ TB and CIN @ HOU.
+#:
+#: This extends the rule this module already stated in its own comment below
+#: -- that a game which was never evaluated must not be represented as
+#: no_bet -- to the case of a game that WAS dispatched but came back empty.
+_NON_STRATEGY_GAME_STATUSES = frozenset({"skipped_already_computed", "analysis_incomplete"})
+
 
 def max_games_per_cycle() -> int | None:
     """`RECOMMENDATION_MAX_GAMES_PER_CYCLE` as a positive integer, or
@@ -362,7 +378,8 @@ async def run_recommendation_worker_cycle(
             "candidates": [c["strategy_input"] for c in g.response["candidates"] if c.get("strategy_input")],
         }
         for g in games
-        if g.status == "dispatched" and g.response.get("status") != "skipped_already_computed"
+        if g.status == "dispatched"
+        and g.response.get("status") not in _NON_STRATEGY_GAME_STATUSES
     ]
 
     strategy_result: dict | None = None

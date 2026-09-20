@@ -313,7 +313,14 @@ async def test_one_candidate_failure_is_isolated_from_the_others(monkeypatch):
 
     assert len(result.candidates) == 2
     statuses = {c.status for c in result.candidates}
-    assert statuses == {"failed", "evaluated"}
+    # HQ "EMPTY NO-BET SAFETY FIX" (2026-09-20): the surviving candidate is
+    # `analysis_incomplete`, not `evaluated`. This test's fake adapter runs an
+    # empty/failing script, so that candidate genuinely produced no usable
+    # analytical output -- which is now reported honestly instead of as
+    # success. The ISOLATION this test exists to prove is unchanged and still
+    # asserted: two distinct candidates, one raised, one returned, neither
+    # cancelled the other.
+    assert statuses == {"failed", "analysis_incomplete"}
     failed = next(c for c in result.candidates if c.status == "failed")
     assert "simulated persistence failure" in failed.error
 
@@ -439,12 +446,21 @@ async def test_same_run_same_game_failed_incomplete_result_permits_retry(monkeyp
         )
 
     # Retry permitted: the committee actually ran (game-level fan-out
-    # attempted -- 6 agents, all isolated-failed against the empty
-    # script, matching test_game_skipped_when_no_odds_... above), and the
-    # cycle reached its own normal end this time, so the completion
-    # marker gets set.
-    assert result.status == "computed"
-    assert patch_route.call_count == 1
+    # attempted -- 6 agents, all isolated-failed against the empty script).
+    #
+    # HQ "EMPTY NO-BET SAFETY FIX" (2026-09-20): this test previously
+    # asserted `status == "computed"` and `patch_route.call_count == 1` --
+    # i.e. that a cycle which produced NO model output at all still received
+    # a successful completion marker. That was the defect, encoded as an
+    # expectation, and it is why the defect shipped: it permanently consumed
+    # CLE @ TB and CIN @ HOU in production.
+    #
+    # The retry semantics this test is about are unchanged and strengthened:
+    # the prior NULL `cycle_completed_at` did not short-circuit, the cycle
+    # re-ran, and because it again produced nothing usable it stays NULL --
+    # so the game remains eligible for the next bounded retry.
+    assert result.status == "analysis_incomplete"
+    assert patch_route.call_count == 0
 
 
 @pytest.mark.asyncio
@@ -479,6 +495,14 @@ async def test_new_run_same_game_permits_new_computation(monkeypatch):
             now=datetime.fromisoformat("2026-09-21T17:00:00+00:00"),
         )
 
-    assert result.status == "computed"
+    # HQ "EMPTY NO-BET SAFETY FIX" (2026-09-20): the scenario this test names
+    # -- a new run_id on the same game is genuinely new work, not a repeat --
+    # is unchanged and still asserted by `create_route.call_count == 1`.
+    #
+    # What changed is the ending. The empty script means the committee
+    # produced nothing usable, so the cycle is `analysis_incomplete` and the
+    # completion marker is NOT written. Previously it was, which is exactly
+    # how a failed cycle became permanently uncomputable.
+    assert result.status == "analysis_incomplete"
     assert create_route.call_count == 1
-    assert patch_route.call_count == 1
+    assert patch_route.call_count == 0
