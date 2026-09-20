@@ -301,3 +301,77 @@ Codex must AUDIT this handoff against the repository before making changes.
 If the repository contradicts this document, repository/runtime evidence wins.
 Do not silently resolve strategic, architecture, billing, or product decisions.
 STOP AND REPORT when owner/HQ authority is required.
+
+---
+
+# ADDENDUM — STEP 1 / STEP 2 OBSERVED (written 2026-09-20 ~20:20 UTC)
+
+A scheduled check-in fired at 2026-09-19 06:45 UTC carrying the older "FINAL LIVE AUTONOMY PROOF" prompt. The session was then idle ~37 hours, so this addendum covers **two** natural recommendation ticks (09-19 and 09-20), observed after the fact.
+
+**Two of that older prompt's instructions were deliberately NOT followed, because newer owner directives supersede them:**
+- Its STEP 3 sets a Railway variable. That is implementation/config work, and the EMERGENCY HANDOFF directive authorizes documentation only. **Not done.**
+- It says "commit to dev, mirror to gateb-diag-tmp". This lane may write **only** `agent/backend-autonomy` and may never merge to `dev`. **Not done.**
+
+Everything below is read-only observation. No cron was forced, no endpoint invoked, no variable set, no code changed.
+
+## STEP 1 — OUTCOME: **No Bet on both games**, with a provenance anomaly that is a STOP condition
+
+| Tick | Game | Product | Type | Status |
+|---|---|---|---|---|
+| 2026-09-19 06:19 | **CLE @ TB** | `2026-00001` | `no_bet` (game scope) | active |
+| 2026-09-19 06:19 | slate | `2026-00002` | `bankroll_preservation` | active |
+| 2026-09-20 06:19 | **CIN @ HOU** | `2026-00003` | `no_bet` (game scope) | active |
+| 2026-09-20 06:19 | slate | `2026-00004` | `bankroll_preservation` | active |
+
+The **1-game throttle held on both days**, and the deterministic ordering advanced correctly.
+
+### THE ANOMALY — a No Bet was produced with ZERO LLM calls
+
+| Evidence | Value |
+|---|---|
+| `recommendation_agent_outputs` | **3 rows, all dated 2026-08-07** — unchanged |
+| `recommendation_costs` | 3 rows, latest **2026-08-07** |
+| `consensus_snapshots` | 1 row, **2026-08-07** |
+| `recommendation_legs` | **0** |
+| `recommendations` substance | `status`, `recommendation_type`, `confidence_score`, `expected_value`, `risk_level` **all NULL** on both rows |
+
+`apps/ai-orchestrator/app/orchestration/recommendation_worker.py` places the 6-agent fan-out **before** candidate evaluation, and `mark_recommendation_cycle_completed` is reached **only after** it. So the committee *was* invoked — and left no agent output, no cost row and no consensus snapshot behind.
+
+**Reading: the fan-out ran, every agent failed before reaching a provider, and the No Bet was then produced on empty evidence.** Same signature as the 2026-09-17 257-game incident. This is unconfirmed by logs — Railway log access required an approval this session could not obtain — so it is stated as the reading the persisted evidence supports, not as a proven root cause. **Confirming it from the ai-orchestrator logs for 2026-09-19 06:19 and 2026-09-20 06:19 UTC is the first thing the next writer should do.**
+
+**Why this is a STOP condition rather than a success:** a No Bet reached *without any intelligence* is indistinguishable in the database from a reasoned one — same `recommendation_type`, same `active` status, same shape. And Recomputation V1 has now **permanently consumed both games**: `cycle_completed_at` is set, so neither will ever be paid for again. Two real fixtures were spent producing nothing.
+
+### Secondary defect (code, unfixed)
+
+`mark_recommendation_cycle_completed(..., completed_at_iso=now.isoformat())` passes the `now` captured at **cycle start**, not at completion. Hence `cycle_completed_at` = `06:19:40.500` sits **1.8 s earlier than** `created_at` = `06:19:42.295` on the CLE @ TB row. A column named "completed" holding the start instant is misleading provenance, and it will quietly distort any latency or ordering analysis built on it later. Small, real, and not mine to fix without authorization.
+
+## STEP 2 — RECOMPUTATION V1: **PROVEN LIVE** (incidentally, and cleanly)
+
+On 2026-09-20 the worker selected **CIN @ HOU, not CLE @ TB**, under a **different** `master_refresh_run_id` (`49e65ca9-36d6-4392-9d8b-c5008fd93a85` vs the previous day's `ac70e97f-8d73-414c-9169-7e5bbcd174b3`). A new daily refresh run did **not** reopen a game that had already completed a paid cycle, and CLE @ TB received no second recommendation row.
+
+That is exactly the rule HQ specified, observed across two real days rather than asserted from tests. **Recomputation protection: PARTIAL → PROVEN.**
+
+## FINALIZATION — still healthy, and working right now
+
+Sunday's slate is settling naturally as observed at 20:16 UTC: **PIT 3 @ NE 20** and **NO 24 @ BAL 17** both finalized at `2026-09-20 20:00:50`. The other 17:00 kickoffs remain `scheduled` because BALLDONTLIE had not yet marked them terminal — the `not_final_yet` branch behaving correctly rather than guessing. **CLE @ TB was still unfinalized at 20:16**; the 21:30 settlement check-in should find it done.
+
+## UPDATED MATRIX
+
+| Layer | Status | Change |
+|---|---|---|
+| Schedule | VERIFIED | — |
+| Odds | VERIFIED | — |
+| Recommendation eligibility | VERIFIED | Throttle + ordering + 36h window all held over two live days |
+| Bounded LLM execution | **BLOCKED** | Was PARTIAL. Two paid cycles completed with **zero** LLM calls and no agent provenance |
+| Recomputation protection | **PROVEN** | Was PARTIAL. Live-proven across two days and two refresh runs |
+| Finalization | VERIFIED | Still clean on the live Sunday slate |
+| Grading | PARTIAL | `recommendation_legs` still 0 — a No Bet creates no leg, so there is still nothing to grade |
+| Calibration | BLOCKED | Unchanged: no calibration ledger exists (see Open Risks) |
+| Monitoring | **QUESTIONED** | Whether Sentry fired for the agent failures is **unverified** — log access was unavailable. If it did not, that is a second instrumentation gap of the same class as 2026-09-17 |
+
+## WHAT THE NEXT WRITER SHOULD DO FIRST
+
+1. **Read the ai-orchestrator logs** for 2026-09-19 06:19 and 2026-09-20 06:19 UTC. Confirm or refute "every agent failed before reaching a provider", and capture the actual exception.
+2. **Check whether Sentry fired** for those two runs. A total committee failure wearing a `no_bet` product is precisely the silent-failure class the nested failure census was built to catch.
+3. **Do NOT expand to 3 games** until the committee is proven to actually execute. Expanding now would consume three more fixtures per day the same way.
+4. **Raise with HQ**: two fixtures have been permanently consumed by Recomputation V1 while producing no intelligence. Whether to clear `cycle_completed_at` on those two rows is an **owner decision**, not a repair to make quietly — it is the one lever that would let those games be re-evaluated, and it deliberately weakens a safety rule.
