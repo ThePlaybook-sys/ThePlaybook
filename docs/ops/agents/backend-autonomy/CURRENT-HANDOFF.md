@@ -375,3 +375,59 @@ Sunday's slate is settling naturally as observed at 20:16 UTC: **PIT 3 @ NE 20**
 2. **Check whether Sentry fired** for those two runs. A total committee failure wearing a `no_bet` product is precisely the silent-failure class the nested failure census was built to catch.
 3. **Do NOT expand to 3 games** until the committee is proven to actually execute. Expanding now would consume three more fixtures per day the same way.
 4. **Raise with HQ**: two fixtures have been permanently consumed by Recomputation V1 while producing no intelligence. Whether to clear `cycle_completed_at` on those two rows is an **owner decision**, not a repair to make quietly — it is the one lever that would let those games be re-evaluated, and it deliberately weakens a safety rule.
+
+---
+
+# ADDENDUM 2 — SUNDAY RECOVERY / CURRENT-STATE RECONCILIATION (2026-09-20 20:27 UTC)
+
+Audit-only control-tower pass while Mac was away. Nothing forced, nothing configured, no provider or LLM call, no merge, no code changed.
+
+## TWO CORRECTIONS TO THIS DOCUMENT'S EARLIER CLAIMS
+
+1. **"Exact LLM calls: zero" was an over-claim.** There is **no persisted outbound-request counter anywhere**: `CallBudget` is in-memory only, and **nothing in production writes `recommendation_costs`**. The exact count is **UNKNOWN**, permanently, for any run. Only this is verifiable: no agent outputs, consensus snapshots or cost rows were persisted.
+2. **"No calibration ledger exists / `calibration_exclusion_reason` does not exist anywhere" was too broad.** True of the *database*; false of the *system*. `apps/ai-orchestrator/app/features/calibration.py` (`SettledPrediction`, Brier, log-loss, bucketing) and `app/persistence/calibration_reads.py::read_settled_predictions` both exist and are tested, with `calibration_exclusion_reason` as a dataclass field. **`read_settled_predictions` has zero production callers** — real code, not a live capability.
+
+## SATURDAY + SUNDAY RUNS
+
+| Fact | Finding |
+|---|---|
+| 09-19 06:19:42 cron ran, selected CLE @ TB (`0f659b0a…`) | VERIFIED |
+| Passed horizon / 36h / freshness / sportsbook / candidates | INFERRED (strong) — empty candidates create no row at all |
+| Result | **Legitimate No Bet**, product `2026-00001` active + slate `2026-00002` |
+| Real LLM call | **UNKNOWN** — no persisted counter |
+| 48-ceiling | INFERRED intact — a breach raises and fails the cycle |
+| Legs / probability / EV frozen | **NO** — 0 legs, all substantive fields NULL |
+| predicted_at < kickoff | VERIFIED |
+| Sentry | **UNKNOWN** — Railway log access unavailable this pass |
+| 09-20 06:18 selected CIN @ HOU under run `49e65ca9…` vs CLE @ TB's `ac70e97f…` | **Recomputation V1 VERIFIED LIVE** |
+| Post-kickoff rows | **NONE** — no contamination to quarantine |
+
+## LIVE STATE AT AUDIT TIME
+
+- **Odds — healthy/autonomous**: 2,107 snapshots since Sat, latest 20:16:01, poll state 17 games / **0 consecutive failures**. Ledger `2026-09`: **351 used, 137 provider-reported remaining** (floor 50, not tripped). Daily 09-20: **14** against ceiling 20 with a 6-call ramp reserve — at the reserve boundary.
+- **Finalization — healthy**: today finalized exactly 2, **PIT 3 @ NE 20** and **NO 24 @ BAL 17**, both `confirmed_complete` at 20:00:50. **Six** other 17:00 games correctly held at `eligible_for_postgame_check` (provider not terminal). 20:05/20:25 games not yet candidates. **Duplicates: 0.**
+- **Schedule**: 16 Week-2 games, no duplicates, identity correct. Six in-progress games still read `status='scheduled'` — stale, since status only advances at the daily 09:00 refresh or at finalization. **Not rewritten.**
+- **Grading — 72h rule VERIFIED** at `postgame_grading.py:66`. Eligibility: DET @ BUF **09-21 20:31**, PIT @ NE and NO @ BAL **09-23 20:00:50**. Nothing due; **0 real grade events**.
+- **Calibration**: valid frozen forward predictions **0**, eligible **0**, excluded **0**. No performance claim possible.
+- **Monitoring**: only CRASHED dev deployment remains the known stale-branch `cron-master-refresh` (since 09-16). Sentry state UNKNOWN.
+
+## CROSS-LANE (read from remote refs; nothing merged)
+
+All four lanes are **documentation-only** ahead of `dev` (`fcf9669`): backend-autonomy `8b97926` (+2), ui-ux `d1369b8` (+1), modeling `9ffa9e4` (+1), qa-ops `abe87c7` (+1). **No unmerged code anywhere.** Two lane findings matter operationally:
+
+- **QA/Ops: CI has failed on 59 consecutive pushes to `dev` since 2026-09-14** (last green run #384) while Railway autodeploy is live on `branch: dev` — **recent deploys bypassed the test gate.** Corroborated here: no new CRASHED deployments.
+- **Modeling: the calibration module exists but is unwired** — independently confirmed above.
+
+## THE DEADLINE THAT MATTERS
+
+The **06:15 UTC tick on 2026-09-21** will select **NYG @ LAR** (kickoff 09-22 00:15, inside the 36h window). **If the committee defect is not understood by then, that tick consumes NYG @ LAR the same empty way**, permanently, under Recomputation V1.
+
+## CASE B — LEGITIMATE PRE-KICKOFF OPPORTUNITIES (NOT ACTED ON)
+
+| Game | Mins to kickoff | Odds age | Ref books | Cycles | Legitimate? | Max exposure |
+|---|---|---|---|---|---|---|
+| WAS @ DAL, SEA @ ARI, MIA @ SF | **2** | 7 min | DK+FD | 0 | **No** — not reachable | — |
+| **IND @ KC** | **237** | 202 min | DK+FD | 0 | **Yes** | ≤48 requests |
+| **NYG @ LAR** | **1672** | 202 min | DK+FD | 0 | **Yes** | ≤48 requests |
+
+Odds ceiling is 1445 min, so both are comfortably fresh. **Recommendation: authorize neither yet** — both prior attempts produced empty No Bets, so a recovery run most likely burns another fixture for nothing. Fix the committee first.
