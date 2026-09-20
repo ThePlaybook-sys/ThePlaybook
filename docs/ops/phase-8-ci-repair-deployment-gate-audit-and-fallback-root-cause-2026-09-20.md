@@ -409,3 +409,130 @@ fix exists to end. Calibration is therefore **BLOCKED**, not PARTIAL.
 
 Nothing before item 6 proves the product works. Items 1–5 only make it
 possible to find out safely.
+
+---
+
+# Addendum 2 — HQ decisions executed: PAUSE (option 1) and FALLBACK (option C)
+
+2026-09-21. Two authorized mutations, both scoped, both verified. No merge,
+no deploy, no model or provider call.
+
+## 1. Recommendation cron PAUSED
+
+| | |
+|---|---|
+| Service | `cron-recommendation-worker` `244cbc60-7ded-485b-811a-c1f171777767` |
+| Environment | dev `5c1e630f-f4b7-4d99-933a-231bf1aaca91` **only** (`environmentId` passed explicitly, so no other environment was touched) |
+| **Schedule BEFORE — RESTORE THIS VALUE** | **`15 6 * * *`** |
+| Schedule AFTER | `0 0 29 2 *` |
+
+**Deviation from the approved value, reported not silently substituted.**
+HQ approved `0 0 30 2 *`. **Railway rejected it — `Invalid cron expression`.**
+Railway validates day-of-month against the month, and February 30 does not
+exist. The audit that called it "previously audited" had checked that it never
+fires; it had not checked that Railway would accept it.
+
+`0 0 29 2 *` is the nearest valid never-firing equivalent: February 29 exists
+only in leap years, so the next possible fire is **2028-02-29**, roughly 2.4
+years out. It is a real cron expression, not a corruption, and reverting is a
+single field change back to `15 6 * * *`.
+
+I executed the substitution rather than waiting, because HQ's decision 1 was
+"Suspend cron-recommendation-worker NOW", the intent was unambiguous, and the
+06:15 UTC tick was hours away. Flagging rather than asking, per the standing
+rule that a blocked instruction gets the nearest faithful execution plus a
+loud report.
+
+**Verified after the change, from a fresh `describe-environment`:**
+
+- `cron-recommendation-worker` → `cronSchedule: "0 0 29 2 *"`. It cannot fire
+  at 06:15 UTC.
+- `latestDeployment` is still `19a6f414-…`, unchanged — **the mutation did not
+  trigger a redeploy**, so no stale-snapshot deploy occurred.
+- `stagedChangeCount: 0` on every service in the environment.
+- Untouched and confirmed still live at their original schedules:
+  `cron-schedule-refresh` `0 9 * * *`; `cron-odds-worker` `*/15 * * * *`;
+  `cron-balldontlie-finalization` `*/30 * * * *`; `cron-postgame-grading`
+  `*/30 * * * *`; `cron-weather-worker` `*/15 * * * *`; `cron-msf-postgame`
+  `*/15 * * * *`; `cron-news-worker` `0 */4 * * *`; `cron-adaptive-weighting`
+  `0 8 * * *`.
+- No model or provider call resulted — a schedule field write reaches no
+  provider.
+
+## 2. Fallback option C applied
+
+`update model_routing_rules set fallback_model = null where fallback_model =
+'claude-haiku-4-5-20251001'` — scoped by the exact bad value, so the two rules
+with a working fallback could not be caught by it. **10 rows affected**,
+matching the 10 captured beforehand, id for id.
+
+**Original values, recorded for restoration.** Every one had
+`primary_model = 'claude-sonnet-5'`, `fallback_model =
+'claude-haiku-4-5-20251001'`, `min_tier_for_second_pass = 'elite'`,
+`active = true`:
+
+| id | task_type |
+|---|---|
+| `7156f45c-7727-4919-9e55-7e8256cadfd5` | `bankroll_coach_analysis` |
+| `abe07c0c-0ff3-4a9a-b9fe-6f921713babf` | `closing_line_movement_analysis` |
+| `a4721b0f-7d14-4c55-8ba5-91ce595139fb` | `expected_value_analysis` |
+| `ec5762d7-c3a7-4258-ba0f-752165530491` | `injury_analysis` |
+| `5a00d1c8-e838-4611-80f9-8a1c316c505e` | `meta_agent_review` |
+| `ccc3fc3d-ce65-451f-b092-a6a476a8cf13` | `rest_days_analysis` |
+| `13d60a59-dab3-41a3-a4f3-198226b52fa4` | `risk_manager_analysis` |
+| `062c08ff-a45a-473c-b592-96c73e9bd61b` | `travel_fatigue_analysis` |
+| `34b559f7-c7ea-46a6-a4c0-60099f970d4a` | `vegas_line_analysis` |
+| `3b51db4b-f148-4dc3-a66c-f7baf17b6704` | `weather_analysis` |
+
+To restore: `update model_routing_rules set fallback_model =
+'claude-haiku-4-5-20251001' where id in (…the ten above…)` — but only once
+that model is actually registered in `model_registry`, or the eager-resolution
+failure returns exactly as before.
+
+Not changed, as instructed: no primary model, no ceiling, no qualification
+threshold, no registry row, and neither `consensus_reconciliation` nor
+`probability_modeling_analysis` (both `claude-opus-5` → `claude-sonnet-5`,
+already working).
+
+### Verification — all 12 rules resolve, zero provider calls
+
+Run through the **real `ModelRouter.route()`**, not a DB join, against the live
+registry contents and the live post-change rules. No provider client was
+constructed.
+
+```
+12/12 active routing rules resolve.  0 raise.
+```
+
+Ten now carry `fallback=none`; the two opus rules keep
+`fallback=claude-sonnet-5 (anthropic)`. Compare with the pre-change
+reproduction in the main report, where the same code raised
+`UnknownProviderError` on ten of twelve.
+
+### What this does and does not fix
+
+It removes the **eager-resolution** failure, so the primary model can finally
+be attempted. It does **not** prove the primary works — that needs one real
+cycle. Those ten task types now have no fallback at all, which is the accepted
+temporary trade: if the primary fails, the `analysis_incomplete` semantics on
+this branch keep it from becoming a false No Bet and keep the cycle retryable.
+**That safety net is not deployed yet**, so until the merge lands, a primary
+failure would still produce the old false No Bet.
+
+## 3. Drift flagged, not silently fixed
+
+`supabase/seed.sql:352-385` **still seeds all ten Haiku fallbacks**, and
+`model_registry` is still seeded with only `claude-sonnet-5` and
+`claude-opus-5`. The live dev database and the repository's seed now disagree.
+
+This is not theoretical. Read-only checks confirm **staging
+(`jhpjdjtvzzmhxvprsfaq`) and production (`dronhltumzkngwwktesf`) do not have a
+`model_routing_rules` table at all** — they have never been migrated. The
+moment either is migrated and seeded, `seed.sql` would recreate this exact
+defect, in an environment where it would be far more expensive to notice.
+
+Per CLAUDE.md's blueprint-vs-reality rule this is flagged rather than fixed
+unasked. **HQ decision needed:** either a migration that NULLs these ten
+fallbacks (so the change travels with the schema) plus a `seed.sql` correction,
+or a registry row for the fallback model. Doing neither leaves a loaded gun in
+the seed.
