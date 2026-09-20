@@ -317,3 +317,95 @@ and it must **not** be reported as a failure.
 `CLE @ TB` product `2026-00001` and `CIN @ HOU` product `2026-00003` were read
 only. No recommendation row was created, altered, or deleted in any
 environment during this pass.
+
+---
+
+# Addendum — Sunday settlement (STEP 4) and the final autonomy verdict (STEP 5)
+
+Triggered by the scheduled routine `trig_011pixzhFkSV81UZ4BPSQ5bo` at
+2026-09-20 21:30 UTC, executed 23:10–23:40 UTC. **Observation only** — no
+cron or endpoint was manually invoked, and nothing was written.
+
+Two deviations from the routine's own text, both deliberate:
+
+- Its premise ("the game carrying the frozen prediction") is stale. There is
+  no frozen prediction. The 2026-09-19 06:15 tick produced a product with
+  **zero legs**, for the reason established above.
+- It asks for a commit to `dev` and a mirror to `gateb-diag-tmp`. The current
+  HQ directive forbids merging into `dev` until the deployment gate is real.
+  **The later owner instruction wins.** This is recorded on
+  `agent/backend-autonomy` only.
+
+## STEP 4 — the settlement chain, verified on CLE @ TB
+
+`games.0f659b0a-c6f7-4bec-afe2-43720f7618a0` — **CLE 23 @ TB 19**,
+`status='final'`, `finalized_at = 2026-09-20 22:31:53.329469+00`.
+
+| Check | Result |
+|---|---|
+| Raw evidence preserved in `game_events` | **PASS** — one row, `provider_name='balldontlie'`, `captured_at` identical to `finalized_at`, holding `endpoint`, `request_params`, `matched_provider_game_id` and the **whole 16-game week payload** |
+| Endpoint + params recorded | **PASS** — `https://api.balldontlie.io/nfl/v1/games`, `{"weeks[]": "2", "seasons[]": "2026"}` |
+| Score COPIED, never inferred | **PASS** — provider projection `away_score: 23, home_score: 19` → canonical `final_score {"away": 23, "home": 19}`, byte-identical. No quarter splits exist in the payload at all, so summing was not merely avoided, it was impossible |
+| Terminal machine-readable state drove it | **PASS** — `is_final: true` alongside the display string `provider_status: "Final"`. The boolean is what the code branches on |
+| Finalized EXACTLY ONCE | **PASS** — zero `game_id`s have more than one balldontlie event, across all 13 finalized this way |
+| A later tick does 0 work / 0 requests | **PASS** — the 23:32:22 tick ran and finalized 4 *other* games; CLE @ TB was not re-touched |
+| Identity resolved exactly on (kickoff, home team) | **PASS** — payload `scheduled_start 2026-09-20T17:00:00Z` + `home_team TB` against the canonical row, exact, no tolerance |
+| No already-finalized game overwritten | **PASS** — Week 1's 16 still stamped `2026-09-15 20:16:13.594649+00`; DET @ BUF still `2026-09-18 20:31` |
+| Provider requests for the cycle | **PASS** — 5 ticks today (20:00, 20:30, 21:01, 22:31, 23:32), **exactly 1 distinct bulk request each**, 12 games finalized. The 22:31 tick that finalized CLE @ TB cost **1 request** |
+| Leg received WIN / LOSS / PUSH / VOID | **N/A — there is no leg.** `recommendation_legs` for both proof games: **0 rows** |
+| `predicted_at < scheduled_start` | **N/A** — no leg, so no `predicted_at` |
+| Frozen `modeled_probability` retained | **N/A** — none was ever produced |
+| `calibration_exclusion_reason` NULL | **N/A** — the column exists only as a dataclass field in `app/features/calibration.py`; no table, no row, no production caller |
+| Sentry | No operational error observed for the finalization or grading ticks |
+
+**The grading handoff is nonetheless PROVEN end to end, on both proof games:**
+
+| Game | finalized_at | graded at | outcome | latency |
+|---|---|---|---|---|
+| CIN @ HOU | 20:30:55 | 20:32:00 | `NOT_APPLICABLE` | ~65 s |
+| CLE @ TB | 22:31:53 | 23:02:24 | `NOT_APPLICABLE` | next `*/30` tick |
+
+`NOT_APPLICABLE` with `leg_outcome_counts: null` is the correct grading of a
+product with no legs. The mechanics fired, reached the right products, and
+returned a defensible verdict without manual intervention.
+
+**But this is not the "legitimate No Bet" case the routine anticipated.** The
+routine says a legitimate No Bet leaves calibration PARTIAL. These were
+analysis failures wearing a No Bet label — the exact confusion the Option A+
+fix exists to end. Calibration is therefore **BLOCKED**, not PARTIAL.
+
+## STEP 5 — final autonomy verdict
+
+| # | Layer | Verdict | Evidence |
+|---|---|---|---|
+| 1 | Schedule | **PROVEN** | `cron-schedule-refresh` live at `0 9 * * *`; Week 2's full 16-game slate present with correct kickoffs, independently corroborated by the provider payload |
+| 2 | Odds | **PROVEN** | `cron-odds-worker` live at `*/15`; adaptive cadence proven under repeated stateless invocation, and its test suite is now calendar-independent |
+| 3 | Recommendation eligibility | **PROVEN** | The deterministic gate selected exactly one correct pre-kickoff game per cycle on 09-19 and 09-20, with no post-kickoff selection |
+| 4 | Bounded LLM generation | **BLOCKED** | Not partial. **Zero** outbound model calls have ever been made. 10 of 12 task types cannot route at all. The `MAX_LLM_CALLS_PER_GAME` ceiling has never been exercised because generation never happened |
+| 5 | Recomputation protection | **PROVEN** | It worked exactly as designed — which is precisely why the defect was expensive: it froze two games that had produced nothing. The branch fix stops the completion marker being stamped on an analysis failure, so a failed cycle stays retryable |
+| 6 | Finalization | **PROVEN** | 13 games, exactly once each, zero duplicates, one bulk request per tick, terminal state drives it, score copied verbatim, exact identity, nothing overwritten |
+| 7 | Grading | **PROVEN for pipeline mechanics** | Fired on both games at the next tick and produced a defensible outcome. **Not proven for WIN/LOSS/PUSH/VOID scoring** — no leg has ever existed to score |
+| 8 | Calibration accumulation | **BLOCKED** | Two independent grounds: no scoreable observation has ever existed, and no calibration ledger table exists in the database at all — only an app-side read model with zero production callers |
+| 9 | Monitoring | **PARTIAL** | The census was blind to candidate-level failures (fixed on this branch, unmerged). Sentry saw nothing for two weeks. The root-cause error remains structurally unloggable: `fanout.py`'s blanket `except` discards the message without writing it anywhere |
+
+## Smallest remaining work before full-slate Beta, in order
+
+1. **Pause the recommendation cron.** Owner's word on the mechanism (PART 1).
+2. **Toggle Wait for CI** on the dev services in the Railway dashboard. Only
+   the owner can; it is the prerequisite HQ itself set for merging.
+3. **Merge and deploy the empty-No-Bet fix.** Makes analysis failures
+   visible and keeps failed cycles retryable.
+4. **Fix the fallback routing** (option C: NULL the fallback on the ten
+   rules). This is what actually unblocks the committee.
+5. **Log the blanket `except` in `fanout.py`.** Without it, the next
+   configuration error is equally silent for equally long.
+6. **Run ONE controlled single-game cycle** and verify that
+   `recommendation_agent_outputs` and `recommendation_costs` receive real
+   rows. This is the first genuine paid run the system will ever have made —
+   treat it as a gate, not a resume.
+7. **Then** a real leg → a real grade → the first scoreable calibration
+   observation. Items 7–8 above cannot move before this.
+8. **Then** widen beyond one game per cycle.
+
+Nothing before item 6 proves the product works. Items 1–5 only make it
+possible to find out safely.
