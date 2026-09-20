@@ -486,3 +486,51 @@ A third, narrower piece is safe and independent of both: **`_evaluate_one_candid
 ## MINIMUM FUTURE INSTRUMENTATION (not built)
 
 To make this class provable rather than inferable: persist the `CallBudget` consumed-count per cycle, and record `fan_out_status` on the `recommendations` row. Both are small; neither is authorized here.
+
+---
+
+# ADDENDUM 4 — EMPTY NO-BET SAFETY FIX IMPLEMENTED (2026-09-20 ~20:55 UTC)
+
+HQ chose **Option A+**: no new customer-facing outcome. No Bet keeps its meaning; an analysis failure is simply not a No Bet. Fix implemented on `agent/backend-autonomy` (`073c27e`), **not deployed**, **not merged**.
+
+## MODEL REGISTRY DIAGNOSTIC — A REAL DEFECT FOUND
+
+| | |
+|---|---|
+| Registered models | **2** — `claude-sonnet-5` (active), `claude-opus-5` (active), both provider `anthropic` |
+| Routed primaries | **12/12 registered and active** (`claude-sonnet-5` ×10, `claude-opus-5` ×2) |
+| Routed fallbacks | **`claude-haiku-4-5-20251001` × 10 — NOT REGISTERED.** Only `consensus_reconciliation` and `probability_modeling_analysis` have a registered fallback (`claude-sonnet-5`) |
+
+**Every primary resolves, so this does not by itself explain a total committee failure.** What it does mean: for 10 of 12 task types, any primary failure falls through to an **unregistered** fallback, where `AdapterRegistry.get()` cannot resolve an adapter — converting a recoverable single-model failure into a total agent failure with no output. That is exactly the observed signature, but whether the primary failed first is still **UNKNOWN** without logs. **No registry row was created or modified** (directive forbids it this pass).
+
+## THE FIX (3 changes, all internal)
+
+1. **`_evaluate_one_candidate`** — a candidate with no usable analytical output returns `ANALYSIS_INCOMPLETE`, not `"evaluated"`. Narrow by design: no `strategy_input` **and** no EV at all is incomplete; an EV that exists with a null `ev_per_dollar` (a candidate with no `american_odds`) stays `evaluated`, because the analysis ran and honestly found nothing EV-computable. There is a dedicated test for that case — the obvious implementation would have started failing healthy candidates.
+2. **`_run_one_game`** — a game whose every candidate is unusable returns **before** `mark_recommendation_cycle_completed`. `cycle_completed_at` stays NULL exactly as it does for a crash, so the game remains retryable.
+3. **`apps/workers`** — `_NON_STRATEGY_GAME_STATUSES` withholds such a game from the Strategy Engine entirely, extending the rule the module already stated in its own comment.
+
+**Monitoring:** `_nested_failure_census` now descends through each item's `response` envelope (candidates live at `games[].response.candidates[]`, two levels down) and `_FAILURE_STATUSES` recognises `analysis_incomplete`. Both halves were needed — adding the key alone would have changed nothing while candidates still reported `evaluated`.
+
+## FOUR EXISTING TESTS CHANGED, AND WHY
+
+They asserted that a cycle running `FakeModelAdapter(script=[])` — i.e. producing **no model output at all** — still returned `status="computed"` and stamped the completion marker. **That is the defect written down as an expectation, which is how it shipped.** Their actual subjects (candidate isolation, retry after a NULL marker, a new run being new work, an eligible game reaching the fan-out) are unchanged and still asserted. The **positive path already had coverage** (`test_recommendation_worker.py:202-213`, a real `strategy_input`) and **passed untouched** — that is the evidence real completions still complete.
+
+## SUITES
+
+**ai-orchestrator 1006 passed, 0 failed** (was 1002 + 4). **workers 110 passed** (was 101, +9). **sports-intel-layer 1086 passed** with the same 5 pre-existing wall-clock failures — this diff touches **no** sports-intel-layer file. Diff: 5 files modified, 2 test files added, nothing unrelated.
+
+## CI — RED FOR ONE KNOWN REASON
+
+Run #443 on `dev`: **1 failed job of 8** — `test-python-services (sports-intel-layer)` — and its 5 failures are **exactly** the known wall-clock rot in `tests/test_odds_cadence_persistence.py` (`5 failed, 1086 passed`, byte-identical to the local run). **Not application regressions. Not infrastructure.** All 7 other jobs pass.
+
+**Classification: DEPLOYMENT GATE UNSAFE** — not because this change is risky, but because the gate is non-functional in both directions: permanently red for a stale-test reason unrelated to any change, *and* bypassed entirely by Railway autodeploy on `branch: dev`. Pushing here would deploy with no gate at all.
+
+**Smallest unblock (not authorized, not attempted):** repair those 5 wall-clock tests in `sports-intel-layer`. That alone turns CI green and makes the gate meaningful again.
+
+## NO PAUSE MECHANISM EXISTS — AND A TRAP
+
+There is **no recommendation enable/pause gate anywhere in the codebase.** The only controls are `RECOMMENDATION_MAX_GAMES_PER_CYCLE` / `_PER_RUN`.
+
+**Trap, verified in code:** `max_games_per_cycle()` returns `None` for any non-positive value, and `None` means **no throttle**. Setting the throttle to `0` would therefore release the **entire slate**, not pause it — the exact opposite of the intent. Do not do it.
+
+Per the directive's own conditional, no new pause architecture was invented. The safest available method is reported to Mac: suspend only `cron-recommendation-worker`.
