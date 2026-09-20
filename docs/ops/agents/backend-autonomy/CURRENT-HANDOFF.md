@@ -431,3 +431,58 @@ The **06:15 UTC tick on 2026-09-21** will select **NYG @ LAR** (kickoff 09-22 00
 | **NYG @ LAR** | **1672** | 202 min | DK+FD | 0 | **Yes** | ≤48 requests |
 
 Odds ceiling is 1445 min, so both are comfortably fresh. **Recommendation: authorize neither yet** — both prior attempts produced empty No Bets, so a recovery run most likely burns another fixture for nothing. Fix the committee first.
+
+---
+
+# ADDENDUM 3 — EMPTY NO-BET ROOT CAUSE (2026-09-20 20:35 UTC)
+
+Code trace complete. **No fix implemented** — the correction requires a product-semantics decision (see below). DB and Railway access were lost partway through this pass (tool calls began requiring approval), so runtime-only transitions are marked UNKNOWN rather than guessed.
+
+## THE CAUSAL CHAIN (verified from code + previously-read persisted state)
+
+1. `_evaluate_one_candidate` builds `strategy_input` **only** when `shared_chain.ev is not None and shared_chain.ev.ev_per_dollar is not None` — `apps/ai-orchestrator/app/orchestration/recommendation_worker.py:245`. The shared chain is the LLM-driven probability → EV → risk sequence.
+2. **If the probability agent produced nothing, `shared_chain.ev` is None → `strategy_input` stays None.** Critically, the function still returns `CandidateRunResult(status="evaluated", ...)` — **not** `"failed"`.
+3. `apps/workers/app/recommendation_worker.py:362` relays `[c["strategy_input"] for c in g.response["candidates"] if c.get("strategy_input")]` — every candidate without a `strategy_input` is **silently filtered out**, leaving an **empty candidates list** for a game that dispatched HTTP 200.
+4. `compute_strategy_decision` (`apps/ai-orchestrator/app/features/strategy.py:243`) does `if not qualifying: → outcome="no_bet"`. With an empty candidate list the loop body never runs, so `qualifying` **and** `gate_rejected` are both empty — **identical to "evaluated, nothing qualified."**
+5. `persist_strategy_products` writes one `no_bet` product per such game, **status `active`**.
+6. `mark_recommendation_cycle_completed` is then called **unconditionally** as the last step (`recommendation_worker.py:467`), stamping `cycle_completed_at` — which Recomputation V1 treats as "this game is permanently done."
+
+**Net: a total committee failure becomes an ACTIVE No Bet and permanently consumes the fixture.** That is the hypothesis in the directive, and it is confirmed.
+
+## THE DEEPER PROBLEM — THREE STATES, TWO LABELS
+
+The system has three distinct candidate outcomes but only two labels:
+
+| Real state | Reported as | Distinguishable? |
+|---|---|---|
+| Evaluated, usable output | `status="evaluated"`, `strategy_input` set | yes |
+| **Evaluated, no usable output** (chain produced no EV) | **`status="evaluated"`, `strategy_input=None`** | **NO** |
+| Raised an exception | `status="failed"` | yes |
+
+The middle row is the one that bit us, and it reports **success**. This means the known nested-census gap (`_NESTED_RESULT_KEYS = ("games","legs","products","items")` — `"candidates"` absent, `cron_dispatch.py:164`) would **not** have caught it even if `"candidates"` were added, because the status string says `evaluated`.
+
+`apps/workers` already states the correct rule in its own comment — *"A game that failed to dispatch is OMITTED here, never represented as no_bet — it was never evaluated at all, which is a different fact from 'evaluated, nothing qualified.'"* — and simply does not apply it to a game that dispatched but yielded zero usable candidates.
+
+## WHY NO FIX WAS IMPLEMENTED
+
+Both minimal corrections touch documented product semantics, so PART 2/PART 6's "STOP before changing architecture/product semantics" applies:
+
+- **Option A — omit at the relay.** Extend the workers' existing omission rule to games with zero usable candidates. Smallest diff, preserves strategy semantics exactly. **But it breaks Decision AA** (the per-game `no_bet` guarantee: every analyzed game gets a `no_bet` product).
+- **Option B — a distinct failed state.** Add a third `GameDecision.outcome` (e.g. `analysis_incomplete`) and refuse the completion marker for it. Semantically correct. **But it ripples** into product persistence, explainability, activation snapshots, grading and Recomputation V1.
+
+A third, narrower piece is safe and independent of both: **`_evaluate_one_candidate` should not report `status="evaluated"` when it produced no usable output.** That alone would make the state visible to monitoring without changing any product guarantee — but it does not by itself stop the false No Bet.
+
+## REFERENCE_SPORTSBOOK — HISTORICAL NOISE, NOT THIS INCIDENT
+
+`_run_one_game` returns `skipped_ineligible` **and creates no `recommendations` row at all** when candidate generation yields nothing, which is what an unresolved reference sportsbook produces. **Rows exist for both cycles**, so candidate generation succeeded and the sportsbook resolved. The historical `ConfigError REFERENCE_SPORTSBOOK…` volume in Sentry **predates the fix and is not this incident's cause.** (Live variable *value* unverifiable — OAuth returns names only.)
+
+## WHAT REMAINS UNKNOWN
+
+- **Why the agents produced nothing** — runtime-only. Needs `ai-orchestrator` logs for 2026-09-19 06:19 and 2026-09-20 06:19 UTC.
+- Whether Sentry fired at all for those cycles.
+- Whether `model_registry` (2 rows) covers every model referenced by `model_routing_rules` (12 rows) — a plausible static cause I could not check before losing DB access. **Worth checking first.**
+- Exact outbound LLM request count — unknowable; `CallBudget` is in-memory and nothing writes `recommendation_costs`.
+
+## MINIMUM FUTURE INSTRUMENTATION (not built)
+
+To make this class provable rather than inferable: persist the `CallBudget` consumed-count per cycle, and record `fan_out_status` on the `recommendations` row. Both are small; neither is authorized here.
