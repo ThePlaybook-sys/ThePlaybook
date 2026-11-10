@@ -77,10 +77,11 @@ def _mock_odds_snapshots_stateful(clock: dict):
     endpoint itself sees (the endpoint never receives `clock` -- it always
     calls `datetime.now(timezone.utc)` internally via `run_odds_worker`'s
     own default). The `now` this test controls only sets what a
-    successful INSERT's server-side `captured_at` becomes; the endpoint's
-    real `now` is wall-clock and therefore effectively identical since
-    these tests run near-instantly -- immaterial for what's being proven
-    here (whether persisted history round-trips correctly), which is
+    successful INSERT's server-side `captured_at` becomes. HTTP tests in
+    this file cannot inject the endpoint's wall clock
+    (`internal_run_odds_worker` does not pass `now`, so `run_odds_worker`
+    defaults to `datetime.now(timezone.utc)`), so `_T0` / `_KICKOFF` must
+    stay relative to that clock. Whether persisted history round-trips is
     orthogonal to `classify_window`'s own already-tested boundary math."""
     rows: list[dict] = []
 
@@ -103,8 +104,15 @@ def _mock_odds_snapshots_stateful(clock: dict):
     return post_route, rows
 
 
-_KICKOFF = datetime(2026, 9, 14, 17, 20, tzinfo=timezone.utc)  # 50 min after T0 below
-_T0 = datetime(2026, 9, 14, 16, 30, tzinfo=timezone.utc)  # kickoff - 50min -> RAMP_60M (interval 900s)
+# HTTP tests in this file go through the real endpoint, which has no
+# clock injection and uses wall-clock time. A fixed 2026-09-14 17:20 UTC
+# kickoff made those tests fail after that kickoff: classify_window
+# returned STOPPED, so games_due was 0 (and a mocked provider 500 was
+# never reached, so status was "success"). Keep T0 == now and kickoff
+# 50 minutes later so the window stays RAMP_60M whenever CI runs. Tests
+# that need a precise clock already pass now= into _run_one_cycle.
+_T0 = datetime.now(timezone.utc)
+_KICKOFF = _T0 + timedelta(minutes=50)  # kickoff - 50min -> RAMP_60M (interval 900s)
 
 _GAME_ROW = _game_row(game_id=DB_GAME_KC_BAL, home="KC", away="BAL", scheduled_start=_KICKOFF.isoformat())
 
